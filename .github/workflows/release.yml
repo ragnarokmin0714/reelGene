@@ -1,0 +1,90 @@
+name: Release
+
+# A version tag builds the executables and drafts a GitHub release with them
+# and their SHA-256 checksums, for Roger to look over and publish. A manual
+# run builds the same files as workflow artifacts and drafts nothing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p reelgene
+      - run: Copy-Item target/release/reelgene.exe reelgene.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reelgene-windows
+          path: reelgene.exe
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            file: reelgene-x86_64-linux
+          - target: aarch64-unknown-linux-gnu
+            file: reelgene-aarch64-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: mlugg/setup-zig@v2
+      - run: cargo install cargo-zigbuild --locked
+      # One file that links glibc 2.31: Ubuntu 20.04, Debian 11, RHEL and
+      # Rocky 9, and everything newer. Not static musl: the window loads the
+      # system's X11/Wayland/OpenGL libraries at run time, which a static
+      # binary cannot.
+      - run: cargo zigbuild --release --locked -p reelgene --target ${{ matrix.target }}.2.31
+      - run: cp target/${{ matrix.target }}/release/reelgene ${{ matrix.file }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.file }}
+          path: ${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      # A draft left by a failed try is filled in rather than created again.
+      - name: Draft a release with the executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: dist
+        run: |
+          sha256sum reelgene* > SHA256SUMS
+          cat SHA256SUMS
+          files=(reelgene* SHA256SUMS)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+              --draft --verify-tag --title "reelgene $GITHUB_REF_NAME" \
+              --notes "Portable executables built from $GITHUB_REF_NAME, with SHA-256 checksums in SHA256SUMS. Not code-signed yet: Windows SmartScreen may warn before the first run."
+          fi

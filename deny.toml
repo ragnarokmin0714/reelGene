@@ -1,0 +1,45 @@
+# `cargo deny check`, run in CI: known vulnerabilities, licenses, and the
+# dependencies the design rules out.
+
+# No [graph] targets: listing several merges their graphs, so a crate used on
+# one platform drags in what it would need on another (tray-icon, Windows
+# only here, would bring its Linux GTK stack). CI runs this once per release
+# target with `cargo deny --target <triple> check`.
+
+[advisories]
+# Only a direct dependency going unmaintained fails the build; deeper ones
+# are for the crates that pull them in to replace.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Everything permissive; OFL and the Ubuntu font licence cover egui's
+# bundled font.
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    { crate = "alsa-sys", reason = "linking ALSA stops reelgene starting where it is missing; sounds go through PlaySound or a player program" },
+    { crate = "gtk", reason = "the Linux tray is StatusNotifierItem over D-Bus (ksni); no GTK" },
+    { crate = "wgpu", reason = "the window uses glow" },
+    { crate = "openssl-sys", reason = "TLS is rustls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
