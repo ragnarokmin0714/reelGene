@@ -5,7 +5,7 @@ members = ["crates/reelgene-core", "crates/reelgene"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
@@ -24,6 +24,10 @@ cbc = "0.2.1"
 hex = "0.4.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 clap = { version = "4.6.7", features = ["derive"] }
+# The window. glow (OpenGL) rather than wgpu: smaller, and runs in VMs and on
+# old GPUs. Minor version pinned: egui breaks its API between minors.
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "system_fonts", "wayland", "x11", "clipboard", "accesskit"] }
+egui_kittest = "0.37.0"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

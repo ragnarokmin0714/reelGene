@@ -287,6 +287,12 @@ impl Engine {
         self.shared.registry.ids().collect()
     }
 
+    /// The resolver that would take `url`, if any. Offline and cheap: it is
+    /// how the clipboard watcher decides whether a copied link is worth showing.
+    pub fn claims(&self, url: &Url) -> Option<&'static str> {
+        self.shared.registry.find(url).map(|r| r.id())
+    }
+
     /// Ask a resolver what is behind `url`, without queueing anything. With
     /// `resolver`, that one is used even if it does not claim the link.
     pub async fn discover(&self, url: &Url, resolver: Option<&str>) -> Result<Discovery> {

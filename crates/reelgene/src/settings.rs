@@ -44,6 +44,12 @@ pub struct Settings {
     pub quiet_hours: Option<[u8; 2]>,
     /// `None`: a current browser's.
     pub user_agent: Option<String>,
+    /// `en` or `zh-TW`; `None`: the system's language.
+    pub language: Option<String>,
+    /// Closing the window keeps reelgene running in the tray, if there is one.
+    pub close_to_tray: bool,
+    /// Queue detected links by themselves instead of listing them first.
+    pub auto_add: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +70,9 @@ impl Default for Settings {
             volume: 0.8,
             quiet_hours: None,
             user_agent: None,
+            language: None,
+            close_to_tray: true,
+            auto_add: false,
         }
     }
 }
