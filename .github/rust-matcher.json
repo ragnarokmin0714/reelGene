@@ -1,0 +1,17 @@
+{
+  "problemMatcher": [
+    {
+      "owner": "rustc",
+      "pattern": [
+        { "regexp": "^(warning|error)(?:\\[\\S+\\])?: (.+)$", "severity": 1, "message": 2 },
+        { "regexp": "^\\s+--> (.+):(\\d+):(\\d+)$", "file": 1, "line": 2, "column": 3 }
+      ]
+    },
+    {
+      "owner": "rust-test-panic",
+      "pattern": [
+        { "regexp": "^thread '([^']+)'(?: \\(\\d+\\))? panicked at (.+):(\\d+):(\\d+):$", "message": 1, "file": 2, "line": 3, "column": 4 }
+      ]
+    }
+  ]
+}

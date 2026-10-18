@@ -25,6 +25,9 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      # Compiler errors and test panics become annotations, which the public
+      # API serves; job logs need a login.
+      - run: echo "::add-matcher::.github/rust-matcher.json"
       - if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
       # On both systems: part of the platform code only compiles on one.
