@@ -55,17 +55,16 @@ pub fn find_links(text: &str) -> Vec<Link> {
         let stop = candidate.find(ends_link).unwrap_or(candidate.len());
         // ASCII punctuation that hugs a link in prose is not part of it.
         let token = candidate[..stop].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']']);
-        if let Ok(url) = Url::parse(token) {
-            if matches!(url.scheme(), "http" | "https")
-                && url.host_str().is_some()
-                && !out.iter().any(|l| l.url == url)
-            {
-                out.push(Link {
-                    kind: classify(&url),
-                    private: net::is_private(&url),
-                    url,
-                });
-            }
+        if let Ok(url) = Url::parse(token)
+            && matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && !out.iter().any(|l| l.url == url)
+        {
+            out.push(Link {
+                kind: classify(&url),
+                private: net::is_private(&url),
+                url,
+            });
         }
         rest = &candidate[stop.max(1)..];
     }

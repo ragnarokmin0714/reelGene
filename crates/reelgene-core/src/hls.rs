@@ -152,23 +152,23 @@ fn parse_master(text: &str, base: &Url) -> Result<Master> {
                     url: a.get("URI").map(|u| join(base, u, "audio")).transpose()?,
                 });
             }
-        } else if !line.starts_with('#') {
-            if let Some(attrs) = pending.take() {
-                let height = attrs
-                    .get("RESOLUTION")
-                    .and_then(|r| r.split_once('x'))
-                    .and_then(|(_, h)| h.parse().ok());
-                out.variants.push(Variant {
-                    url: join(base, line, "variant")?,
-                    bandwidth: attrs
-                        .get("BANDWIDTH")
-                        .and_then(|b| b.parse().ok())
-                        .unwrap_or(0),
-                    height,
-                    codecs: attrs.get("CODECS").map(str::to_owned),
-                    audio_group: attrs.get("AUDIO").map(str::to_owned),
-                });
-            }
+        } else if !line.starts_with('#')
+            && let Some(attrs) = pending.take()
+        {
+            let height = attrs
+                .get("RESOLUTION")
+                .and_then(|r| r.split_once('x'))
+                .and_then(|(_, h)| h.parse().ok());
+            out.variants.push(Variant {
+                url: join(base, line, "variant")?,
+                bandwidth: attrs
+                    .get("BANDWIDTH")
+                    .and_then(|b| b.parse().ok())
+                    .unwrap_or(0),
+                height,
+                codecs: attrs.get("CODECS").map(str::to_owned),
+                audio_group: attrs.get("AUDIO").map(str::to_owned),
+            });
         }
     }
     if out.variants.is_empty() {

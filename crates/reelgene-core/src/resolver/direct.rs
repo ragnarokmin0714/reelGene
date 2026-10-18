@@ -51,11 +51,13 @@ impl Resolver for Direct {
             .get("kind")
             .and_then(|k| serde_json::from_value(k.clone()).ok())
             .unwrap_or_else(|| kind_of(&url));
-        Ok(Resolved {
-            url,
-            kind,
-            headers: Vec::new(),
-        })
+        // Headers the user gave when adding (a Referer, typically): part of the
+        // recipe, because a resume weeks later needs them just the same.
+        let headers = spec
+            .get("headers")
+            .and_then(|h| serde_json::from_value(h.clone()).ok())
+            .unwrap_or_default();
+        Ok(Resolved { url, kind, headers })
     }
 }
 
@@ -95,12 +97,13 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let hex = |b: u8| (b as char).to_digit(16);
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -177,6 +180,25 @@ mod tests {
             .unwrap();
         assert_eq!(r.kind, MediaKind::Hls);
         assert_eq!(r.url.as_str(), "https://cdn.example/drama/ep01/index.m3u8");
+    }
+
+    #[tokio::test]
+    async fn stored_headers_come_back_with_every_resolve() {
+        let http = Http::new(HttpConfig::default()).unwrap();
+        let cancel = CancellationToken::new();
+        let cx = Ctx {
+            http: &http,
+            cancel: &cancel,
+        };
+        let spec = json!({
+            "url": "https://cdn.example/a.m3u8",
+            "headers": [["Referer", "https://site.example/"]],
+        });
+        let r = Direct.resolve(&spec, &json!({}), cx).await.unwrap();
+        assert_eq!(
+            r.headers,
+            [("Referer".to_owned(), "https://site.example/".to_owned())]
+        );
     }
 
     #[tokio::test]

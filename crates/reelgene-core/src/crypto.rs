@@ -18,7 +18,7 @@ type Aes128CbcDec = cbc::Decryptor<Aes128>;
 /// padding, but every block is unpadded the same way because encoders are
 /// inconsistent about it.
 pub fn decrypt_aes128(key: &[u8; 16], iv: &[u8; 16], buf: &mut Vec<u8>) -> Result<()> {
-    if buf.len() % 16 != 0 {
+    if !buf.len().is_multiple_of(16) {
         return Err(Error::Decrypt(format!(
             "encrypted segment is {} bytes, not a multiple of 16",
             buf.len()

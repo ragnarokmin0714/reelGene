@@ -1,0 +1,24 @@
+[package]
+name = "reelgene"
+description = "Portable video downloader for Windows and Linux: HLS playlists and direct links, resumable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+reelgene-core.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+clap.workspace = true
+url.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints.rust]
+# Platform glue (console, sound) will need a little FFI; each use gets a local
+# allow and a SAFETY comment instead of opening the whole crate.
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

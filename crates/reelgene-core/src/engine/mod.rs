@@ -449,12 +449,12 @@ impl Scheduler {
                 }
                 Msg::Finished(id, result) => self.finished(id, result).await,
                 Msg::Wake(id) => {
-                    if let Some(slot) = self.slots.get_mut(&id) {
-                        if matches!(slot.run, Run::Waiting { .. }) {
-                            slot.run = Run::Idle;
-                            let (job, status) = (slot.rec.job, status_of(slot));
-                            self.status(job, id, status);
-                        }
+                    if let Some(slot) = self.slots.get_mut(&id)
+                        && matches!(slot.run, Run::Waiting { .. })
+                    {
+                        slot.run = Run::Idle;
+                        let (job, status) = (slot.rec.job, status_of(slot));
+                        self.status(job, id, status);
                     }
                 }
             }
@@ -708,10 +708,8 @@ impl Scheduler {
         if let Some(record) = self.jobs.get(&job) {
             worker::remove_parts(&record.out_dir, id).await;
         }
-        if delete_output {
-            if let Some(output) = &slot.rec.output {
-                let _ = tokio::fs::remove_file(output).await;
-            }
+        if delete_output && let Some(output) = &slot.rec.output {
+            let _ = tokio::fs::remove_file(output).await;
         }
         let _ = self.sh.store.remove_episode(id).await;
         if !self.slots.values().any(|s| s.rec.job == job) {
