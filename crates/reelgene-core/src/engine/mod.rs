@@ -336,7 +336,7 @@ impl Engine {
                 job.out_dir.display()
             )));
         }
-        self.ask(|reply| Msg::Add(job, reply)).await?
+        self.ask(|reply| Msg::Add(Box::new(job), reply)).await?
     }
 
     pub async fn snapshot(&self) -> Result<Vec<JobView>> {
@@ -359,7 +359,7 @@ impl Engine {
 
 enum Msg {
     Command(Command),
-    Add(NewJob, oneshot::Sender<Result<JobId>>),
+    Add(Box<NewJob>, oneshot::Sender<Result<JobId>>),
     Snapshot(oneshot::Sender<Vec<JobView>>),
     Shutdown(oneshot::Sender<()>),
     Finished(EpisodeId, Result<PathBuf>),
@@ -441,7 +441,7 @@ impl Scheduler {
             match msg {
                 Msg::Command(cmd) => self.command(cmd).await,
                 Msg::Add(job, reply) => {
-                    let _ = reply.send(self.add(job).await);
+                    let _ = reply.send(self.add(*job).await);
                 }
                 Msg::Snapshot(reply) => {
                     let _ = reply.send(self.views());

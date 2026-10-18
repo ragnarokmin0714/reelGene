@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// A program on PATH, searching absolute entries only: never the current
 /// directory, which is how a planted binary would get run.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn which(name: &str) -> Option<PathBuf> {
     let exe = if cfg!(windows) && !name.ends_with(".exe") {
         format!("{name}.exe")
