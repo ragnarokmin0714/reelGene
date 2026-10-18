@@ -136,11 +136,19 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// `/home/r` as an absolute path wherever the test runs: on Windows a
+    /// path without a drive letter is not absolute.
+    fn abs(p: &str) -> PathBuf {
+        if cfg!(windows) && p.starts_with('/') {
+            PathBuf::from(format!("C:{p}"))
+        } else {
+            PathBuf::from(p)
+        }
+    }
+
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<PathBuf> {
-        let map: HashMap<String, PathBuf> = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), PathBuf::from(v)))
-            .collect();
+        let map: HashMap<String, PathBuf> =
+            pairs.iter().map(|(k, v)| (k.to_string(), abs(v))).collect();
         move |k| map.get(k).cloned()
     }
 
@@ -149,9 +157,9 @@ mod tests {
         let e = env(&[("HOME", "/home/r"), ("XDG_DATA_HOME", "/data/r")]);
         let dirs = "# comment\nXDG_DOWNLOAD_DIR=\"$HOME/下載\"\n";
         let p = resolve(Os::Unix, None, false, &e, Some(dirs)).unwrap();
-        assert_eq!(p.config_dir, PathBuf::from("/home/r/.config/reelgene"));
-        assert_eq!(p.data_dir, PathBuf::from("/data/r/reelgene"));
-        assert_eq!(p.downloads, PathBuf::from("/home/r/下載/reelgene"));
+        assert_eq!(p.config_dir, abs("/home/r/.config/reelgene"));
+        assert_eq!(p.data_dir, abs("/data/r/reelgene"));
+        assert_eq!(p.downloads, abs("/home/r/下載/reelgene"));
         assert!(!p.portable);
     }
 
@@ -159,31 +167,27 @@ mod tests {
     fn relative_xdg_values_are_ignored() {
         let e = env(&[("HOME", "/home/r"), ("XDG_CONFIG_HOME", "relative/cfg")]);
         let p = resolve(Os::Unix, None, false, &e, None).unwrap();
-        assert_eq!(p.config_dir, PathBuf::from("/home/r/.config/reelgene"));
-        assert_eq!(p.downloads, PathBuf::from("/home/r/Downloads/reelgene"));
+        assert_eq!(p.config_dir, abs("/home/r/.config/reelgene"));
+        assert_eq!(p.downloads, abs("/home/r/Downloads/reelgene"));
     }
 
     #[test]
     fn windows_keeps_settings_roaming_and_the_queue_local() {
-        // Unix-style absolute paths stand in for C:\… so the test runs anywhere.
         let e = env(&[
             ("USERPROFILE", "/Users/r"),
             ("APPDATA", "/Users/r/AppData/Roaming"),
             ("LOCALAPPDATA", "/Users/r/AppData/Local"),
         ]);
         let p = resolve(Os::Windows, None, false, &e, None).unwrap();
-        assert_eq!(
-            p.config_dir,
-            PathBuf::from("/Users/r/AppData/Roaming/reelgene")
-        );
-        assert_eq!(p.data_dir, PathBuf::from("/Users/r/AppData/Local/reelgene"));
-        assert_eq!(p.downloads, PathBuf::from("/Users/r/Downloads/reelgene"));
+        assert_eq!(p.config_dir, abs("/Users/r/AppData/Roaming/reelgene"));
+        assert_eq!(p.data_dir, abs("/Users/r/AppData/Local/reelgene"));
+        assert_eq!(p.downloads, abs("/Users/r/Downloads/reelgene"));
     }
 
     #[test]
     fn the_portable_marker_keeps_everything_beside_the_executable() {
         let e = env(&[("HOME", "/home/r")]);
-        let exe = PathBuf::from("/media/usb/reelgene");
+        let exe = abs("/media/usb/reelgene");
         let p = resolve(Os::Unix, Some(exe.clone()), true, &e, None).unwrap();
         assert!(p.portable);
         assert_eq!(p.data_dir, exe.join("data"));
@@ -193,8 +197,8 @@ mod tests {
     #[test]
     fn reelgene_home_overrides_everything() {
         let e = env(&[("HOME", "/home/r"), ("REELGENE_HOME", "/tmp/rg")]);
-        let p = resolve(Os::Unix, Some(PathBuf::from("/x")), true, &e, None).unwrap();
-        assert_eq!(p.data_dir, PathBuf::from("/tmp/rg"));
+        let p = resolve(Os::Unix, Some(abs("/x")), true, &e, None).unwrap();
+        assert_eq!(p.data_dir, abs("/tmp/rg"));
         assert!(!p.portable);
     }
 
