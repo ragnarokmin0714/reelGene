@@ -1,0 +1,181 @@
+# reelgene
+
+Portable video downloader for Windows and Linux, in Rust: clipboard link
+detection, a resumable queue, HLS and direct downloads, whole series at once,
+an egui window and a CLI over one engine. User-facing docs are in
+`README.md`; what comes next is in `ROADMAP.md`. This file holds the rules and
+the decisions that are not obvious from the code.
+
+## Status
+
+v0.1 was built on 2026-10-18 in four steps — core foundations, engine and
+store, CLI, window — and is tested headless: about 140 tests, including the
+engine against a fake CDN, the real binary against a local server, and the
+window clicked through its accessibility tree (kittest).
+
+**Not yet verified, and the first things to check:**
+- **Windows has never been compiled or run.** The development machine has no
+  MSVC tools, so everything under `cfg(windows)` (tray-icon, PlaySound,
+  console attach, locale, reduced motion, Mark of the Web, explorer
+  `/select`) is checked by CI only.
+- **The window has never been seen.** The development machine has no
+  display; layout, CJK rendering through the system font fallback, the tray
+  and sounds need a look on a real desktop.
+- The ffmpeg remux path is tested for its arguments, not against a real
+  ffmpeg.
+
+## Commands
+
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings   # exactly what CI runs
+cargo fmt --all
+cargo deny check
+```
+
+## Hard rules
+
+1. **Never name a specific video site** in anything that reaches this
+   repository: code, comments, docs, test data, commit messages, branch
+   names. reelgene is a general-purpose downloader. Site resolvers live on a
+   private branch that changes only `crates/reelgene-core/src/resolver/extra.rs`
+   and adds its own modules, so it rebases onto `main` without conflicts:
+   `main` never edits `extra.rs` beyond its placeholder.
+2. **No watermark, logo or overlay removal; no DRM circumvention.** DRM is
+   detected at parse time and refused with the system's name (`hls::check_key`).
+3. **`reelgene-core` has no UI dependencies** — no egui, tray, or terminal
+   progress bars. The window and the CLI are equal consumers of its API.
+4. **Site changes touch only `resolver/`.** If a site fix needs the engine,
+   the store or `hls.rs` changed, the abstraction leaked; that is the bug.
+5. **Nothing shown or logged carries a query string** (`net::redact`):
+   signed URLs keep their credential there.
+6. **External programs** (ffmpeg, sound players, xdg-open, explorer, gsettings)
+   are run by absolute path found in absolute `PATH` entries, with an
+   argument array, never through a shell, never from the current directory.
+
+## Load-bearing decisions
+
+**Recipes, not URLs.** A job stores `resolver` + `spec` (+ each episode's
+`hint`), never a media URL: signed CDN URLs expire in minutes. `resolve()`
+runs before every attempt, every resume and every re-resolve after a
+401/403/410 (at most three per attempt). `discover()` runs once, when a link
+is added.
+
+**Resume granularity.** Series per episode (scheduler), playlist per segment,
+single file per byte (`Range` + `If-Range` with the stored ETag or
+Last-Modified, so a changed remote file is downloaded whole, not spliced).
+A segment's identity is its media sequence number. Stored progress carries a
+playlist fingerprint (variant, segment count, first sequence, init section,
+duration); any change discards the episode's progress — splicing two encodes
+makes a file that plays for 40 seconds and breaks. Workers read resume state
+from the store, never from the scheduler's copy (which never sees what a
+worker wrote; this was a real bug).
+
+**Commands in, events out.** One scheduler task owns all episode state and is
+its only writer; workers report back with a message. Pausing cancels a
+worker's token and keeps everything finished; nothing about "running" is
+persisted, so after a crash running episodes are simply queued. Events go out
+on a broadcast channel (1024 deep; a lagging receiver re-snapshots). Progress
+is throttled to about ten updates a second per episode, with a trailing flush
+so a stalled segment does not hide the real count. `Event::Idle` marks the
+end of a batch: the moment for the "done" sound.
+
+**The store** is SQLite on one thread behind a channel, WAL mode, schema
+version in `PRAGMA user_version`; a database from a newer build is refused,
+not touched. One process per data folder, enforced by an OS file lock
+(`instance.rs`), because the scheduler keeps the queue in memory.
+
+**HTTP policy** (`http.rs`): reqwest's own retry only covers protocol NACKs,
+so reelgene retries transient failures itself (network, 408/425/429/5xx) with
+exponential backoff and equal jitter, honours `Retry-After` (seconds or HTTP
+date; longer than two minutes goes back to the scheduler), and backs off a
+whole host on 429/503. A per-host semaphore caps connections (default 6).
+Timeouts are per read, not per request. Bodies held in memory are capped;
+files stream to disk. A failure counts against the retry budget only if no
+bytes arrived since the last one.
+
+**The local network.** `net::is_private` decides from the URL alone (no DNS).
+Auto-detected private links are listed, never fetched by themselves. A public
+source may not lead into private addresses: redirects (reqwest policy),
+variant, segment and key URLs, and a resolver's output are all checked with
+`net::may_follow`. A link the user adds to their own NAS may go anywhere.
+
+**Files.** Every name from a website goes through `paths::sanitize_component`
+(separators, control characters, Windows device names, trailing dots, a
+200-byte cap at a character boundary); the template renders component by
+component; `output_path` refuses anything that leaves the download folder.
+Partial files live in `<download folder>/.reelgene/<episode id>/` so the
+final rename never crosses filesystems. Single files keep only media
+extensions.
+
+**ffmpeg** is not bundled (size, security updates, GPL obligations) and is
+optional. It only ever gets absolute local paths with a `file:` prefix,
+`-protocol_whitelist file` before every input, `-c copy`, `-nostdin`, a
+timeout, and is killed on cancel. Without it, TS stays TS and separate audio
+is saved beside the video.
+
+**The window** (`gui/`): eframe/egui 0.37 with glow (smaller than wgpu, works
+in VMs). The minor version is pinned because egui breaks its API between
+minors: upgrade in a commit of its own. `model.rs` turns events into rows and
+effects (sounds, toasts) with no egui in it, so it is unit-tested; drawing
+collects `Action`s and `Gui::act` carries them out afterwards. CJK comes from
+eframe's system font fallback; egui 0.37 bundles no symbol font, so the check
+and info marks are painted. The initial Start/Stop state comes from how the
+engine was started, not from settings. Strings live in `gui/text.rs`, one
+struct per language, so a missing translation is a compile error.
+
+**Desktop glue.** Clipboard: a thread polls once a second, ignores what was
+there at startup, and passes on only links that some resolver claims, so
+copying ordinary pages adds nothing. Tray: `ksni` (D-Bus, no GTK) on Linux,
+`tray-icon` on Windows (created on the window's thread). Closing hides to the
+tray only if a tray actually registered; Wayland cannot hide windows, so it
+minimises. Sounds are synthesised WAVs played with PlaySound or
+`pw-play`/`paplay`/`aplay`: linking an audio library would need ALSA on Linux
+and stop reelgene from starting at all where it is missing.
+
+## Layout
+
+```
+crates/reelgene-core/   engine, no UI
+  src/error.rs          one typed error; is_transient / is_expired_url
+  src/net.rs            redact, is_private, may_follow
+  src/hls.rs crypto.rs  M3U8 parsing, AES-128 (from reelhold)
+  src/http.rs           the one client: retries, backoff, ranges, resume
+  src/paths.rs          safe names and the naming template
+  src/detect.rs         links in clipboard text
+  src/resolver/         the site seam: mod.rs, direct.rs, extra.rs
+  src/store.rs          SQLite actor
+  src/engine/           scheduler (mod.rs), worker.rs, meter.rs
+  src/mux.rs            concat, ffmpeg, Mark of the Web
+  tests/                http.rs, engine.rs, support/ (fake CDN)
+crates/reelgene/        the program
+  src/cli.rs app.rs     CLI and what every front end needs
+  src/gui/              window: mod, model, view, dialogs, text, tests
+  src/places.rs settings.rs instance.rs
+  src/clipboard.rs tray.rs sound.rs icon.rs platform.rs term.rs
+  tests/cli.rs          the real binary against a local server
+```
+
+## Testing
+
+The engine is tested against `tests/support`, a hand-rolled HTTP/1.1 server
+with scripted faults (status codes with `Retry-After`, dropped connections,
+stalls). Every behaviour — resume, expiry, pause, shutdown and restart,
+changed playlists, DRM, the local-network guard — has an end-to-end test
+there. GUI tests use English strings (the test context has no CJK fonts; the
+one Chinese test allows missing glyphs) and must give every input widget an
+accessible name, which kittest checks.
+
+## Conventions
+
+- Conventional Commits; a body only for what the diff cannot say, as terse
+  bullets.
+- Comments say why. Match the surrounding code's density.
+- Before every commit, grep for site names (rule 1).
+
+## Releases
+
+A `v*` tag runs `.github/workflows/release.yml`: Windows x86-64 built
+natively, Linux x86-64 and ARM64 with `cargo zigbuild` against glibc 2.31, all
+attached to a draft release with SHA-256 checksums for review before
+publishing.
