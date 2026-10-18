@@ -32,7 +32,8 @@ jobs:
         run: cargo fmt --all -- --check
       # On both systems: part of the platform code only compiles on one.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      # Every failing test in one run, not just the first failing binary.
+      - run: cargo test --workspace --locked --no-fail-fast
 
   deny:
     strategy:
