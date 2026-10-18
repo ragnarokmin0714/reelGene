@@ -1,0 +1,6 @@
+/target
+*.part
+*.tmp
+# Portable-mode data next to a dev build
+/data
+/downloads

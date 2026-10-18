@@ -1,0 +1,32 @@
+[package]
+name = "reelgene-core"
+description = "Download engine for reelgene: resumable HLS/HTTP, queue, resolvers. No UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+url.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+aes.workspace = true
+cbc.workspace = true
+hex.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "net"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
