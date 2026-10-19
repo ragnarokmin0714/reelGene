@@ -148,6 +148,17 @@ pub(crate) struct SettingsForm {
     quiet: bool,
     scheduled: bool,
     paced: bool,
+    pub(crate) tab: Tab,
+}
+
+/// The settings window's pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Tab {
+    #[default]
+    Downloads,
+    Connections,
+    Look,
+    Behaviour,
 }
 
 impl SettingsForm {
@@ -168,6 +179,7 @@ impl SettingsForm {
             quiet: settings.quiet_hours.is_some(),
             scheduled: settings.schedule.is_some(),
             paced: settings.pace.is_some(),
+            tab: Tab::default(),
             s: Settings {
                 quiet_hours: settings.quiet_hours.or(Some([23, 8])),
                 schedule: settings.schedule.or(Some([1, 7])),
@@ -348,16 +360,29 @@ fn settings_ui(
 ) {
     let p = super::theme::palette(ui);
     ui.set_width(500.0);
-    ui.heading(t.settings);
-    let section = |ui: &mut egui::Ui, title: &str| {
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new(title)
-                .font(super::theme::strong(13.0))
-                .color(p.weak),
-        );
-        ui.add_space(2.0);
-    };
+    ui.horizontal(|ui| {
+        ui.heading(t.settings);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!("reelgene {}", reelgene_app::VERSION))
+                    .color(p.weak)
+                    .size(12.0),
+            );
+        });
+    });
+    ui.add_space(8.0);
+    // Pages rather than one long list: room for more settings later.
+    ui.horizontal(|ui| {
+        for (tab, label) in [
+            (Tab::Downloads, t.section_downloads),
+            (Tab::Connections, t.section_connections),
+            (Tab::Look, t.section_look),
+            (Tab::Behaviour, t.section_behaviour),
+        ] {
+            ui.selectable_value(&mut form.tab, tab, label);
+        }
+    });
+    ui.separator();
     // One width for every section's labels, so the fields line up.
     let grid = |id: &str| {
         egui::Grid::new(id)
@@ -367,174 +392,198 @@ fn settings_ui(
     };
     // Scroll, so a small window still reaches Save: the title and the
     // buttons stay put.
-    let room = (ui.ctx().content_rect().height() - 190.0).max(160.0);
+    // One height for every page, so the window does not jump between them.
+    let room = (ui.ctx().content_rect().height() - 230.0).clamp(160.0, 340.0);
     egui::ScrollArea::vertical()
         .max_height(room)
+        .min_scrolled_height(room)
         .show(ui, |ui| {
-            section(ui, t.section_downloads);
-            grid("settings-downloads").show(ui, |ui| {
-                ui.label(t.folder);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut form.folder)
-                            .hint_text(&form.default_folder)
-                            .desired_width(240.0),
-                    )
-                    .on_hover_text(t.folder);
-                    if ui.button(t.browse).clicked() {
-                        actions.push(Action::Browse(Field::Folder));
-                    }
-                });
-                ui.end_row();
-                ui.label(t.naming);
-                ui.vertical(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut form.s.template).desired_width(310.0))
+            ui.set_min_height(room);
+            ui.add_space(6.0);
+            if form.tab == Tab::Downloads {
+                grid("settings-downloads").show(ui, |ui| {
+                    ui.label(t.folder);
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.folder)
+                                .hint_text(&form.default_folder)
+                                .desired_width(240.0),
+                        )
+                        .on_hover_text(t.folder);
+                        if ui.button(t.browse).clicked() {
+                            actions.push(Action::Browse(Field::Folder));
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(t.naming);
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.s.template).desired_width(310.0),
+                        )
                         .on_hover_text(t.naming_help);
-                    ui.label(RichText::new(t.naming_help).color(p.weak).size(12.0));
+                        ui.label(RichText::new(t.naming_help).color(p.weak).size(12.0));
+                    });
+                    ui.end_row();
+                    let label = ui.label(t.quality).id;
+                    quality_combo(t, &mut form.s.quality, "settings-quality", label, ui);
+                    ui.end_row();
                 });
-                ui.end_row();
-                let label = ui.label(t.quality).id;
-                quality_combo(t, &mut form.s.quality, "settings-quality", label, ui);
-                ui.end_row();
-            });
-
-            section(ui, t.section_connections);
-            grid("settings-connections").show(ui, |ui| {
-                ui.label(t.parallel);
-                ui.add(egui::Slider::new(&mut form.s.episodes, 1..=8))
-                    .on_hover_text(t.parallel);
-                ui.end_row();
-                ui.label(t.segments);
-                ui.add(egui::Slider::new(&mut form.s.segments, 1..=16))
-                    .on_hover_text(t.segments);
-                ui.end_row();
-                ui.label(t.per_host);
-                ui.add(egui::Slider::new(&mut form.s.per_host, 1..=16))
-                    .on_hover_text(t.per_host);
-                ui.end_row();
-                span_row(
-                    ui,
-                    t,
-                    t.download_hours,
-                    &mut form.scheduled,
-                    &mut form.s.schedule,
-                    HOURS,
-                );
-                span_row(ui, t, t.pace, &mut form.paced, &mut form.s.pace, SECONDS)
-                    .on_hover_text(t.pace_help);
-                let label = ui.label(t.speed_limit).id;
-                let no_limit = t.no_limit;
-                ui.add(
-                    egui::DragValue::new(&mut form.limit_mb)
-                        .range(0.0..=1000.0)
-                        .speed(0.1)
-                        .max_decimals(1)
-                        .custom_formatter(move |v, _| {
-                            if v <= 0.0 {
-                                no_limit.to_owned()
-                            } else {
-                                format!("{v:.1} MB/s")
+            }
+            if form.tab == Tab::Connections {
+                grid("settings-connections").show(ui, |ui| {
+                    ui.label(t.parallel);
+                    ui.add(egui::Slider::new(&mut form.s.episodes, 1..=8))
+                        .on_hover_text(t.parallel);
+                    ui.end_row();
+                    ui.label(t.segments);
+                    ui.add(egui::Slider::new(&mut form.s.segments, 1..=16))
+                        .on_hover_text(t.segments);
+                    ui.end_row();
+                    ui.label(t.per_host);
+                    ui.add(egui::Slider::new(&mut form.s.per_host, 1..=16))
+                        .on_hover_text(t.per_host);
+                    ui.end_row();
+                    span_row(
+                        ui,
+                        t,
+                        t.download_hours,
+                        &mut form.scheduled,
+                        &mut form.s.schedule,
+                        HOURS,
+                    );
+                    span_row(ui, t, t.pace, &mut form.paced, &mut form.s.pace, SECONDS)
+                        .on_hover_text(t.pace_help);
+                    let label = ui.label(t.speed_limit).id;
+                    let no_limit = t.no_limit;
+                    ui.add(
+                        egui::DragValue::new(&mut form.limit_mb)
+                            .range(0.0..=1000.0)
+                            .speed(0.1)
+                            .max_decimals(1)
+                            .custom_formatter(move |v, _| {
+                                if v <= 0.0 {
+                                    no_limit.to_owned()
+                                } else {
+                                    format!("{v:.1} MB/s")
+                                }
+                            })
+                            .custom_parser(|s| {
+                                let s = s.trim().trim_end_matches("MB/s").trim();
+                                s.parse().ok().or_else(|| s.is_empty().then_some(0.0))
+                            }),
+                    )
+                    .labelled_by(label);
+                    ui.end_row();
+                    ui.label("ffmpeg");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.ffmpeg)
+                                .hint_text(t.ffmpeg)
+                                .desired_width(240.0),
+                        )
+                        .on_hover_text(t.ffmpeg);
+                        // Its own name: the folder's "Browse…" is a different button.
+                        if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
+                            actions.push(Action::Browse(Field::Ffmpeg));
+                        }
+                    });
+                    ui.end_row();
+                    let label = ui.label(t.proxy).id;
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.proxy)
+                                .hint_text(t.proxy_hint)
+                                .desired_width(320.0),
+                        )
+                        .labelled_by(label)
+                        .on_hover_text(t.proxy_help);
+                        if !form.proxy_ok() {
+                            ui.colored_label(ui.visuals().error_fg_color, t.proxy_bad);
+                        }
+                    });
+                    ui.end_row();
+                });
+            }
+            if form.tab == Tab::Look {
+                grid("settings-look").show(ui, |ui| {
+                    let label = ui.label(t.theme).id;
+                    let mut mode = match form.s.theme.as_str() {
+                        "light" => 1,
+                        "dark" => 2,
+                        _ => 0,
+                    };
+                    egui::ComboBox::from_id_salt("theme")
+                        .selected_text([t.follow_system, t.light, t.dark][mode])
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut mode, 0, t.follow_system);
+                            ui.selectable_value(&mut mode, 1, t.light);
+                            ui.selectable_value(&mut mode, 2, t.dark);
+                        })
+                        .response
+                        .labelled_by(label);
+                    form.s.theme = ["system", "light", "dark"][mode].to_owned();
+                    ui.end_row();
+                    let label = ui.label(t.language).id;
+                    let current = super::text::pick(form.s.language.as_deref());
+                    egui::ComboBox::from_id_salt("language")
+                        .selected_text(current.name)
+                        .show_ui(ui, |ui| {
+                            for lang in super::text::ALL {
+                                if ui
+                                    .selectable_label(current.code == lang.code, lang.name)
+                                    .clicked()
+                                {
+                                    form.s.language = Some(lang.code.to_owned());
+                                }
                             }
                         })
-                        .custom_parser(|s| {
-                            let s = s.trim().trim_end_matches("MB/s").trim();
-                            s.parse().ok().or_else(|| s.is_empty().then_some(0.0))
-                        }),
-                )
-                .labelled_by(label);
-                ui.end_row();
-                ui.label("ffmpeg");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut form.ffmpeg)
-                            .hint_text(t.ffmpeg)
-                            .desired_width(240.0),
-                    )
-                    .on_hover_text(t.ffmpeg);
-                    // Its own name: the folder's "Browse…" is a different button.
-                    if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
-                        actions.push(Action::Browse(Field::Ffmpeg));
-                    }
+                        .response
+                        .labelled_by(label);
+                    ui.end_row();
+                    let label = ui.label(t.animations).id;
+                    let mut mode = match form.s.animations {
+                        None => 0,
+                        Some(true) => 1,
+                        Some(false) => 2,
+                    };
+                    egui::ComboBox::from_id_salt("animations")
+                        .selected_text([t.follow_system, t.on, t.off][mode])
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut mode, 0, t.follow_system);
+                            ui.selectable_value(&mut mode, 1, t.on);
+                            ui.selectable_value(&mut mode, 2, t.off);
+                        })
+                        .response
+                        .labelled_by(label);
+                    form.s.animations = [None, Some(true), Some(false)][mode];
+                    ui.end_row();
+                    ui.label(t.sound);
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut form.s.sound, t.on);
+                        ui.add_enabled(
+                            form.s.sound,
+                            egui::Slider::new(&mut form.s.volume, 0.0..=1.0).show_value(false),
+                        )
+                        .on_hover_text(t.volume);
+                    });
+                    ui.end_row();
+                    span_row(
+                        ui,
+                        t,
+                        t.quiet_hours,
+                        &mut form.quiet,
+                        &mut form.s.quiet_hours,
+                        HOURS,
+                    );
                 });
-                ui.end_row();
-                let label = ui.label(t.proxy).id;
-                ui.vertical(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut form.proxy)
-                            .hint_text(t.proxy_hint)
-                            .desired_width(320.0),
-                    )
-                    .labelled_by(label)
-                    .on_hover_text(t.proxy_help);
-                    if !form.proxy_ok() {
-                        ui.colored_label(ui.visuals().error_fg_color, t.proxy_bad);
-                    }
-                });
-                ui.end_row();
-            });
-
-            section(ui, t.section_look);
-            grid("settings-look").show(ui, |ui| {
-                let label = ui.label(t.language).id;
-                let current = super::text::pick(form.s.language.as_deref());
-                egui::ComboBox::from_id_salt("language")
-                    .selected_text(current.name)
-                    .show_ui(ui, |ui| {
-                        for lang in super::text::ALL {
-                            if ui
-                                .selectable_label(current.code == lang.code, lang.name)
-                                .clicked()
-                            {
-                                form.s.language = Some(lang.code.to_owned());
-                            }
-                        }
-                    })
-                    .response
-                    .labelled_by(label);
-                ui.end_row();
-                let label = ui.label(t.animations).id;
-                let mut mode = match form.s.animations {
-                    None => 0,
-                    Some(true) => 1,
-                    Some(false) => 2,
-                };
-                egui::ComboBox::from_id_salt("animations")
-                    .selected_text([t.follow_system, t.on, t.off][mode])
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut mode, 0, t.follow_system);
-                        ui.selectable_value(&mut mode, 1, t.on);
-                        ui.selectable_value(&mut mode, 2, t.off);
-                    })
-                    .response
-                    .labelled_by(label);
-                form.s.animations = [None, Some(true), Some(false)][mode];
-                ui.end_row();
-                ui.label(t.sound);
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut form.s.sound, t.on);
-                    ui.add_enabled(
-                        form.s.sound,
-                        egui::Slider::new(&mut form.s.volume, 0.0..=1.0).show_value(false),
-                    )
-                    .on_hover_text(t.volume);
-                });
-                ui.end_row();
-                span_row(
-                    ui,
-                    t,
-                    t.quiet_hours,
-                    &mut form.quiet,
-                    &mut form.s.quiet_hours,
-                    HOURS,
-                );
-            });
-
-            section(ui, t.section_behaviour);
-            ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
-            ui.checkbox(&mut form.s.auto_add, t.auto_add);
-            ui.checkbox(&mut form.s.autostart, t.autostart);
-            ui.checkbox(&mut form.s.close_to_tray, t.close_to_tray);
-            ui.checkbox(&mut form.s.notify, t.notify);
+            }
+            if form.tab == Tab::Behaviour {
+                ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
+                ui.checkbox(&mut form.s.auto_add, t.auto_add);
+                ui.checkbox(&mut form.s.autostart, t.autostart);
+                ui.checkbox(&mut form.s.close_to_tray, t.close_to_tray);
+                ui.checkbox(&mut form.s.notify, t.notify);
+            }
         });
     ui.add_space(18.0);
     ui.horizontal(|ui| {

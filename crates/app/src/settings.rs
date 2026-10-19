@@ -41,6 +41,8 @@ pub struct Settings {
     pub clipboard: bool,
     /// `None`: follow the system's reduce-motion setting.
     pub animations: Option<bool>,
+    /// `system`, `light` or `dark`.
+    pub theme: String,
     pub sound: bool,
     /// 0.0 – 1.0.
     pub volume: f32,
@@ -82,6 +84,7 @@ impl Default for Settings {
             autostart: true,
             clipboard: true,
             animations: None,
+            theme: "system".to_owned(),
             sound: true,
             volume: 0.8,
             quiet_hours: None,

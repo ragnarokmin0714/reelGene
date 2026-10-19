@@ -26,6 +26,8 @@ pub enum Icon {
     Warning,
     Link,
     Download,
+    Sun,
+    Moon,
 }
 
 /// Draw `icon` filling `rect` (square is best).
@@ -96,6 +98,33 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 line(&[p(0.16, y), p(0.84, y)]);
                 painter.circle_filled(p(knob, y), 0.09 * s, color);
             }
+        }
+        Icon::Sun => {
+            painter.circle_stroke(c, 0.17 * s, stroke);
+            for i in 0..8 {
+                let a = i as f32 * std::f32::consts::FRAC_PI_4;
+                let (x, y) = (a.cos(), a.sin());
+                line(&[c + vec2(x, y) * 0.31 * s, c + vec2(x, y) * 0.42 * s]);
+            }
+        }
+        Icon::Moon => {
+            // A crescent: the outer circle's arc round the left, back along
+            // a circle shifted right that meets it at both tips.
+            use std::f32::consts::PI;
+            let r = 0.32 * s;
+            let (from, to) = (0.3 * PI, 1.7 * PI);
+            let tip = |a: f32| c + vec2(a.cos(), a.sin()) * r;
+            let inner_c = c + vec2(0.56 * r, 0.0);
+            let angle = |q: Pos2| (q.y - inner_c.y).atan2(q.x - inner_c.x);
+            let inner_r = (tip(from) - inner_c).length();
+            let mut pts = arc(c, r, from, to);
+            pts.extend(arc(
+                inner_c,
+                inner_r,
+                angle(tip(to)) + 2.0 * PI,
+                angle(tip(from)),
+            ));
+            painter.add(Shape::closed_line(pts, stroke));
         }
         Icon::Plus => {
             line(&[p(0.5, 0.20), p(0.5, 0.80)]);

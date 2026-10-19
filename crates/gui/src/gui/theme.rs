@@ -99,6 +99,15 @@ pub fn fonts() -> FontDefinitions {
     fonts
 }
 
+/// The `theme` setting: `light`, `dark`, anything else follows the system.
+pub fn preference(setting: &str) -> egui::ThemePreference {
+    match setting {
+        "light" => egui::ThemePreference::Light,
+        "dark" => egui::ThemePreference::Dark,
+        _ => egui::ThemePreference::System,
+    }
+}
+
 pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(fonts());
     ctx.set_style_of(Theme::Dark, style(&DARK, true));

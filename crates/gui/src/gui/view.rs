@@ -112,6 +112,18 @@ fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>
                         let form = dialogs::SettingsForm::new(&g.settings, &g.default_folder());
                         actions.push(Action::Open(Dialog::Settings(Box::new(form))));
                     }
+                    // The other theme at once; Settings can go back to the system's.
+                    let dark = ui.ctx().theme() == egui::Theme::Dark;
+                    let (icon, tip, next) = if dark {
+                        (Icon::Sun, t.to_light, "light")
+                    } else {
+                        (Icon::Moon, t.to_dark, "dark")
+                    };
+                    if widgets::icon_button(ui, icon, tip, None).clicked() {
+                        let mut s = g.settings.clone();
+                        s.theme = next.to_owned();
+                        actions.push(Action::SaveSettings(Box::new(s)));
+                    }
                     let mut watch = g.settings.clipboard;
                     if ui.checkbox(&mut watch, t.watch_clipboard).changed() {
                         let mut s = g.settings.clone();

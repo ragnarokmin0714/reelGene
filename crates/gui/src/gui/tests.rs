@@ -373,7 +373,9 @@ fn settings_are_saved_to_the_file_and_take_effect() {
     let mut h = window(&env, english());
     h.get_by_label(EN.settings).click();
     settle(&mut h);
-    // Further down than a 640-pixel window shows: scroll first, as a person would.
+    h.get_by_label(EN.section_behaviour).click();
+    settle(&mut h);
+    // Scroll first, as a person would, should the page not fit.
     h.get_by_label(EN.auto_add).scroll_to_me();
     settle(&mut h);
     h.get_by_label(EN.auto_add).click();
@@ -400,6 +402,8 @@ fn an_unusable_proxy_cannot_be_saved() {
     let env = env("proxy");
     let mut h = window(&env, english());
     h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_connections).click();
     settle(&mut h);
     let field = || egui::accesskit::Role::TextInput;
     h.get_by_role_and_label(field(), EN.proxy).scroll_to_me();
@@ -433,6 +437,8 @@ fn a_speed_limit_is_typed_in_mb_and_kept_in_kb() {
     let env = env("limit");
     let mut h = window(&env, english());
     h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_connections).click();
     settle(&mut h);
     use egui::accesskit::Role;
     use egui_kittest::kittest::NodeT;
@@ -471,6 +477,31 @@ fn outside_the_download_hours_the_window_says_it_is_waiting() {
     until(&mut h, "the waiting badge", |h| {
         h.query_by_label(&badge).is_some()
     });
+}
+
+#[test]
+fn the_toolbar_switches_the_theme_and_remembers_it() {
+    let env = env("theme");
+    let mut h = window(&env, english());
+    settle(&mut h);
+    let (button, wanted, theme) = if h.query_by_label(EN.to_light).is_some() {
+        (EN.to_light, "light", egui::Theme::Light)
+    } else {
+        (EN.to_dark, "dark", egui::Theme::Dark)
+    };
+    h.get_by_label(button).click();
+    settle(&mut h);
+    assert_eq!(h.state_mut().gui().settings.theme, wanted);
+    assert_eq!(h.ctx.theme(), theme);
+    let saved = std::fs::read_to_string(env.dir.join("settings.json")).unwrap();
+    assert!(
+        saved.contains(&format!("\"theme\": \"{wanted}\"")),
+        "{saved}"
+    );
+    assert!(
+        h.query_by_label(button).is_none(),
+        "the button now offers the other one"
+    );
 }
 
 #[test]
@@ -754,8 +785,14 @@ mod screens {
         setup: impl FnOnce(&mut Gui),
     ) {
         let env = env(name);
+        // The window applies its own theme setting, over the harness's.
+        let named = match theme {
+            egui::Theme::Light => "light",
+            egui::Theme::Dark => "dark",
+        };
         let settings = Settings {
             language: Some(language.into()),
+            theme: named.into(),
             ..Settings::default()
         };
         let builder = Harness::builder()
@@ -819,5 +856,18 @@ mod screens {
             let form = super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
         });
+        use super::super::dialogs::Tab;
+        for (name, theme, lang, tab) in [
+            ("settings-connections", Light, "en", Tab::Connections),
+            ("settings-look", Dark, "zh-TW", Tab::Look),
+            ("settings-behaviour", Dark, "en", Tab::Behaviour),
+        ] {
+            shoot(name, theme, lang, move |g| {
+                let mut form =
+                    super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+                form.tab = tab;
+                g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+            });
+        }
     }
 }

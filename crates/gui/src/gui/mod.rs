@@ -123,6 +123,7 @@ impl Gui {
     pub(crate) fn new(ctx: &egui::Context, desktop: Arc<Desktop>, tray: Option<Rc<Tray>>) -> Self {
         theme::install(ctx);
         let settings = desktop.settings();
+        ctx.set_theme(theme::preference(&settings.theme));
         let t = text::pick(settings.language.as_deref());
         let events = desktop.engine.subscribe();
         let mut model = Model {
@@ -403,6 +404,7 @@ impl Gui {
             || s.proxy != old.proxy
             || (self.tray.is_some() && s.language != old.language);
         self.t = text::pick(s.language.as_deref());
+        self.ctx.set_theme(theme::preference(&s.theme));
         self.apply_motion();
     }
 
