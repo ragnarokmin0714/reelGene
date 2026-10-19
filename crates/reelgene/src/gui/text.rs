@@ -47,6 +47,8 @@ pub struct Text {
     pub not_vod: &'static str,
     pub kept_ts: &'static str,
     pub audio_separate: &'static str,
+    pub short_duration: fn(f64, f64) -> String,
+    pub left: fn(&str) -> String,
 
     pub counts: fn(usize, usize, usize, usize) -> String,
     pub no_ffmpeg: &'static str,
@@ -90,6 +92,10 @@ pub struct Text {
     pub language: &'static str,
     pub save: &'static str,
     pub restart_needed: &'static str,
+    pub browse: &'static str,
+    pub report: &'static str,
+    pub report_help: &'static str,
+    pub report_saved: fn(&str) -> String,
 
     pub show_window: &'static str,
     pub quit: &'static str,
@@ -134,6 +140,10 @@ pub static EN: Text = Text {
     not_vod: "Live playlist: downloading what is listed now",
     kept_ts: "Kept as .ts (with ffmpeg it becomes .mp4)",
     audio_separate: "Sound saved as a separate file",
+    short_duration: |expected, actual| {
+        format!("Plays {actual:.0}s, though the playlist says {expected:.0}s: part may be missing")
+    },
+    left: |t| format!("{t} left"),
     counts: |d, q, ok, f| {
         let mut s = format!("{d} downloading · {q} queued · {ok} done");
         if f > 0 {
@@ -190,6 +200,10 @@ pub static EN: Text = Text {
     language: "Language",
     save: "Save",
     restart_needed: "Some changes apply after reelgene restarts",
+    browse: "Browse…",
+    report: "Export a problem report",
+    report_help: "Settings, the queue and the recent log in one text file; no link secrets, no home folder name",
+    report_saved: |p| format!("Problem report saved: {p}"),
     show_window: "Show reelgene",
     quit: "Quit",
     cannot_start: "reelgene cannot start",
@@ -233,6 +247,10 @@ pub static ZH_TW: Text = Text {
     not_vod: "直播或未完成的清單：只下載目前列出的部分",
     kept_ts: "保留為 .ts（有 ffmpeg 可轉成 .mp4）",
     audio_separate: "聲音另存為獨立檔案",
+    short_duration: |expected, actual| {
+        format!("實際只有 {actual:.0} 秒，清單寫 {expected:.0} 秒：可能缺了一段")
+    },
+    left: |t| format!("剩 {t}"),
     counts: |d, q, ok, f| {
         let mut s = format!("下載中 {d} · 排隊 {q} · 完成 {ok}");
         if f > 0 {
@@ -283,6 +301,10 @@ pub static ZH_TW: Text = Text {
     language: "語言",
     save: "儲存",
     restart_needed: "部分設定重新啟動 reelgene 後生效",
+    browse: "選擇…",
+    report: "匯出問題回報",
+    report_help: "把設定、佇列和最近的紀錄存成一個文字檔；不含網址裡的密鑰，也不含家目錄名稱",
+    report_saved: |p| format!("問題回報已存到：{p}"),
     show_window: "顯示 reelgene",
     quit: "結束",
     cannot_start: "reelgene 無法啟動",
@@ -316,13 +338,14 @@ impl Text {
         }
     }
 
-    pub fn notice(&self, notice: &Notice) -> &'static str {
+    pub fn notice(&self, notice: &Notice) -> String {
         match notice {
-            Notice::UrlExpired { .. } => self.url_expired,
-            Notice::Restarted => self.restarted,
-            Notice::NotVod => self.not_vod,
-            Notice::KeptTs { .. } => self.kept_ts,
-            Notice::AudioSeparate { .. } => self.audio_separate,
+            Notice::UrlExpired { .. } => self.url_expired.into(),
+            Notice::Restarted => self.restarted.into(),
+            Notice::NotVod => self.not_vod.into(),
+            Notice::KeptTs { .. } => self.kept_ts.into(),
+            Notice::AudioSeparate { .. } => self.audio_separate.into(),
+            Notice::ShortDuration { expected, actual } => (self.short_duration)(*expected, *actual),
         }
     }
 }

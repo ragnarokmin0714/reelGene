@@ -14,6 +14,7 @@ mod view;
 
 use crate::app::App;
 use crate::clipboard::Watcher;
+use crate::places::Places;
 use crate::settings::Settings;
 use crate::sound::{Cue, Player};
 use crate::tray::{Notify, Tray, TrayCmd};
@@ -44,6 +45,8 @@ pub(crate) enum Msg {
     Added(Result<String, String>),
     Links(Vec<Link>),
     Tray(TrayCmd),
+    /// A path chosen in the system's file dialog.
+    Picked(dialogs::Field, PathBuf),
 }
 
 pub(crate) struct Grabbed {
@@ -82,6 +85,9 @@ pub(crate) enum Action {
     Close,
     Add(NewJob),
     SaveSettings(Box<Settings>),
+    /// Open the system's folder or file dialog for a field.
+    Browse(dialogs::Field),
+    Report,
 }
 
 /// Everything the window needs to start.
@@ -89,10 +95,9 @@ pub struct Parts {
     pub rt: tokio::runtime::Handle,
     pub engine: Engine,
     pub settings: Settings,
-    /// Where settings are saved; `None` never writes (tests).
-    pub settings_path: Option<PathBuf>,
-    pub default_downloads: PathBuf,
-    pub data_dir: PathBuf,
+    pub places: Places,
+    /// Write settings to `places.settings_file()` when they change.
+    pub save_settings: bool,
     /// "ffmpeg 7.1", or `None` when there is none.
     pub ffmpeg: Option<String>,
     pub warnings: Vec<String>,
@@ -110,7 +115,7 @@ pub struct Gui {
     pub(crate) t: &'static Text,
     pub(crate) settings: Settings,
     settings_path: Option<PathBuf>,
-    default_downloads: PathBuf,
+    places: Places,
     pub(crate) ffmpeg: Option<String>,
     pub(crate) input: String,
     pub(crate) grabbed: Vec<Grabbed>,
@@ -163,7 +168,7 @@ impl Gui {
                 })
             };
             let tray = Tray::spawn(&parts.rt, t, model.running, notify);
-            let sound = Player::new(&parts.settings, parts.data_dir.join("sounds"));
+            let sound = Player::new(&parts.settings, parts.places.data_dir.join("sounds"));
             (
                 Some(watcher),
                 tray,
@@ -181,8 +186,8 @@ impl Gui {
             model,
             t,
             settings: parts.settings,
-            settings_path: parts.settings_path,
-            default_downloads: parts.default_downloads,
+            settings_path: parts.save_settings.then(|| parts.places.settings_file()),
+            places: parts.places,
             ffmpeg: parts.ffmpeg,
             input: String::new(),
             grabbed: Vec::new(),
@@ -309,6 +314,11 @@ impl Gui {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             },
+            Msg::Picked(field, path) => match (&mut self.dialog, field) {
+                (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
+                (Some(Dialog::Settings(form)), field) => form.set(field, &path),
+                _ => {}
+            },
         }
         if self.dialog.is_none()
             && let Some((url, d)) = self.waiting.pop_front()
@@ -357,6 +367,41 @@ impl Gui {
                 self.save_settings(*new);
                 self.act(Action::Close);
             }
+            Action::Browse(field) => self.browse(field),
+            Action::Report => self.report(),
+        }
+    }
+
+    /// The system dialog blocks its thread until it closes: neither the
+    /// window's thread nor the runtime's, so a separate one.
+    fn browse(&self, field: dialogs::Field) {
+        let start = self.download_dir();
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let dialog = rfd::FileDialog::new().set_directory(&start);
+            let picked = match field {
+                dialogs::Field::Ffmpeg => dialog.pick_file(),
+                dialogs::Field::PickFolder | dialogs::Field::Folder => dialog.pick_folder(),
+            };
+            if let Some(path) = picked {
+                let _ = tx.send(Msg::Picked(field, path));
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Write a problem report into the download folder and show it.
+    fn report(&mut self) {
+        let jobs = self.rt.block_on(self.engine.snapshot()).unwrap_or_default();
+        let text =
+            crate::report::build(&self.places, &self.settings, self.ffmpeg.as_deref(), &jobs);
+        match crate::report::write(&self.download_dir(), &text) {
+            Ok(path) => {
+                crate::platform::reveal(&path);
+                let msg = (self.t.report_saved)(&path.display().to_string());
+                self.toast(msg, false);
+            }
+            Err(e) => self.toast(e.to_string(), true),
         }
     }
 
@@ -400,7 +445,7 @@ impl Gui {
         self.settings
             .download_dir
             .clone()
-            .unwrap_or_else(|| self.default_downloads.clone())
+            .unwrap_or_else(|| self.places.downloads.clone())
     }
 
     fn save_settings(&mut self, new: Settings) {
@@ -468,6 +513,12 @@ impl eframe::App for Gui {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         view::draw(self, ui);
     }
+
+    /// Only the window's size and place are remembered, not egui's UI state:
+    /// stale UI state survives updates and hides layout changes.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
 }
 
 /// Repaint whenever the engine has news, even with the window hidden.
@@ -510,20 +561,16 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
         rt: rt.handle().clone(),
         engine: engine.clone(),
         settings: app.settings.clone(),
-        settings_path: Some(app.places.settings_file()),
-        default_downloads: app.places.downloads.clone(),
-        data_dir: app.places.data_dir.clone(),
-        ffmpeg: app
-            .ffmpeg
-            .as_ref()
-            .map(|f| format!("ffmpeg {}", f.version())),
+        places: app.places.clone(),
+        save_settings: true,
+        ffmpeg: app.ffmpeg_label(),
         warnings: app.warnings.clone(),
         running: app.settings.autostart,
         desktop: true,
     };
     let result = eframe::run_native(
         "reelgene",
-        native_options([860.0, 600.0]),
+        native_options([860.0, 600.0], Some(app.places.data_dir.join("window.ron"))),
         Box::new(move |cc| Ok(Box::new(Gui::new(&cc.egui_ctx, parts)))),
     );
     // Workers flush what they have; the next start continues from there.
@@ -540,7 +587,8 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
     }
 }
 
-fn native_options(size: [f32; 2]) -> eframe::NativeOptions {
+/// `remember`: where the window's size and place are kept between runs.
+fn native_options(size: [f32; 2], remember: Option<PathBuf>) -> eframe::NativeOptions {
     let icon = egui::IconData {
         rgba: crate::icon::rgba(64),
         width: 64,
@@ -553,6 +601,8 @@ fn native_options(size: [f32; 2]) -> eframe::NativeOptions {
             .with_inner_size(size)
             .with_min_inner_size([480.0, 320.0])
             .with_icon(Arc::new(icon)),
+        persist_window: remember.is_some(),
+        persistence_path: remember,
         ..Default::default()
     }
 }
@@ -565,7 +615,7 @@ fn error_window(message: &str) -> ExitCode {
     let message = message.to_owned();
     let _ = eframe::run_native(
         "reelgene",
-        native_options([420.0, 160.0]),
+        native_options([420.0, 160.0], None),
         Box::new(move |_| Ok(Box::new(ErrorWindow { t, message }) as Box<dyn eframe::App>)),
     );
     ExitCode::FAILURE

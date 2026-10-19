@@ -225,7 +225,8 @@ impl Http {
                         failures = 0;
                     }
                     failures += 1;
-                    self.wait_to_retry(e, failures, &gate, cancel).await?;
+                    self.wait_to_retry(e, failures, &gate, job.url, cancel)
+                        .await?;
                 }
             }
         }
@@ -254,7 +255,7 @@ impl Http {
                 Ok(v) => return Ok(v),
                 Err(e) => {
                     failures += 1;
-                    self.wait_to_retry(e, failures, &gate, cancel).await?;
+                    self.wait_to_retry(e, failures, &gate, url, cancel).await?;
                 }
             }
         }
@@ -266,6 +267,7 @@ impl Http {
         e: Error,
         failures: u32,
         gate: &Gate,
+        url: &Url,
         cancel: &CancellationToken,
     ) -> Result<()> {
         let Some(wait) = self.retry_delay(&e, failures) else {
@@ -279,8 +281,16 @@ impl Http {
             }
         ) {
             // Everyone talking to this host waits, not just this request.
+            log::warn!(
+                "{}: {e}; the whole host waits {wait:?}",
+                net::host_key(url).unwrap_or_default()
+            );
             gate.back_off(wait);
         } else {
+            log::info!(
+                "{}: {e}; try {failures} failed, again in {wait:?}",
+                net::redact(url)
+            );
             cancel
                 .run_until_cancelled(tokio::time::sleep(wait))
                 .await

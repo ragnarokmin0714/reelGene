@@ -30,6 +30,20 @@ pub struct EpRow {
 }
 
 impl EpRow {
+    /// Time left at the current speed. For a playlist the remaining size is
+    /// guessed from the segments done so far.
+    pub fn eta(&self) -> Option<std::time::Duration> {
+        let p = self.progress.as_ref().filter(|p| p.speed > 0.0)?;
+        let remaining = match (p.segments, p.total) {
+            (Some((done, total)), _) if done > 0 => {
+                p.bytes as f64 / done as f64 * total.saturating_sub(done) as f64
+            }
+            (None, Some(total)) => total.saturating_sub(p.bytes) as f64,
+            _ => return None,
+        };
+        Some(std::time::Duration::from_secs_f64(remaining / p.speed))
+    }
+
     /// 0.0 – 1.0 when known.
     pub fn fraction(&self) -> Option<f32> {
         let p = self.progress.as_ref()?;
@@ -272,6 +286,36 @@ mod tests {
             "no speed from finished work"
         );
         assert_eq!(m.finished(), [EpisodeId(1)]);
+    }
+
+    #[test]
+    fn time_left_comes_from_speed_and_what_remains() {
+        let ep = |segments, total, bytes, speed| EpRow {
+            id: EpisodeId(1),
+            index: 1,
+            title: String::new(),
+            status: Status::Downloading,
+            progress: Some(Progress {
+                job: JobId(1),
+                episode: EpisodeId(1),
+                bytes,
+                total,
+                segments,
+                speed,
+            }),
+            notice: None,
+            changed: 0.0,
+        };
+        let secs = std::time::Duration::from_secs;
+        // 4 of 10 segments took 400 bytes: 600 to go at 100 B/s.
+        assert_eq!(ep(Some((4, 10)), None, 400, 100.0).eta(), Some(secs(6)));
+        assert_eq!(ep(None, Some(1000), 250, 50.0).eta(), Some(secs(15)));
+        assert_eq!(
+            ep(Some((0, 10)), None, 0, 100.0).eta(),
+            None,
+            "nothing to go on yet"
+        );
+        assert_eq!(ep(None, Some(1000), 250, 0.0).eta(), None, "stalled");
     }
 
     #[test]

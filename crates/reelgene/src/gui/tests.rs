@@ -1,6 +1,7 @@
 //! The window, driven headless through its accessibility tree: what a user
 //! sees and clicks, against a real engine and a local server.
 
+use super::dialogs::Field;
 use super::text::EN;
 use super::{Gui, Msg, Parts};
 use crate::settings::Settings;
@@ -149,6 +150,17 @@ fn env(tag: &str) -> Env {
     }
 }
 
+/// Everything inside the test's folder, as `REELGENE_HOME` would lay it out.
+fn places(env: &Env) -> crate::places::Places {
+    crate::places::Places {
+        portable: false,
+        config_dir: env.dir.clone(),
+        data_dir: env.dir.clone(),
+        downloads: env.dir.join("downloads"),
+        exe_dir: None,
+    }
+}
+
 struct State {
     parts: Option<Parts>,
     gui: Option<Gui>,
@@ -167,9 +179,8 @@ fn window(env: &Env, settings: Settings) -> Harness<'static, State> {
         rt: env.rt.handle().clone(),
         engine: env.engine.clone(),
         settings,
-        settings_path: Some(env.dir.join("settings.json")),
-        default_downloads: env.dir.join("downloads"),
-        data_dir: env.dir.clone(),
+        places: places(env),
+        save_settings: true,
         ffmpeg: None,
         warnings: Vec::new(),
         running: false,
@@ -248,10 +259,11 @@ fn a_pasted_playlist_is_read_queued_and_downloaded() {
     until(&mut h, "the job row", |h| {
         h.query_all_by_label("ep01").next().is_some()
     });
-    assert!(
-        h.query_by_label_contains("Added: ep01").is_some(),
-        "a toast confirms it"
-    );
+    // The row comes from the engine's event, the toast from `add` returning:
+    // either may be first.
+    until(&mut h, "the toast that confirms it", |h| {
+        h.query_by_label_contains("Added: ep01").is_some()
+    });
 
     h.get_by_label(EN.start).click();
     until(&mut h, "the download to finish", |h| {
@@ -363,9 +375,8 @@ fn the_window_speaks_traditional_chinese_when_asked() {
         rt: env.rt.handle().clone(),
         engine: env.engine.clone(),
         settings,
-        settings_path: None,
-        default_downloads: env.dir.join("downloads"),
-        data_dir: env.dir.clone(),
+        places: places(&env),
+        save_settings: false,
         ffmpeg: None,
         warnings: Vec::new(),
         running: false,
@@ -387,4 +398,49 @@ fn the_window_speaks_traditional_chinese_when_asked() {
     settle(&mut h);
     let _ = h.get_by_label("開始");
     let _ = h.get_by_label("設定");
+}
+
+#[test]
+fn a_folder_picked_in_the_system_dialog_lands_in_settings() {
+    let env = env("browse");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    // What the system dialog sends back once a folder is chosen.
+    let picked = env.dir.join("videos");
+    let _ = h
+        .state_mut()
+        .gui()
+        .tx
+        .send(Msg::Picked(Field::Folder, picked.clone()));
+    settle(&mut h);
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    assert_eq!(h.state_mut().gui().settings.download_dir, Some(picked));
+}
+
+#[test]
+fn the_problem_report_is_written_to_the_download_folder() {
+    let env = env("report");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.report).click();
+    settle(&mut h);
+    let reports: Vec<_> = std::fs::read_dir(env.dir.join("downloads"))
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("reelgene-report-")
+        })
+        .collect();
+    assert_eq!(reports.len(), 1);
+    let text = std::fs::read_to_string(reports[0].path()).unwrap();
+    assert!(text.contains("reelgene problem report") && text.contains("== queue (0 jobs)"));
+    assert!(
+        h.query_by_label_contains("Problem report saved").is_some(),
+        "a toast says where"
+    );
 }

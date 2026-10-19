@@ -26,6 +26,17 @@ impl App {
     pub async fn open() -> Result<Self, String> {
         let places = Places::detect()?;
         let instance = Instance::acquire(&places.data_dir)?;
+        crate::logging::init(&places.data_dir);
+        log::info!(
+            "reelgene {} starting ({}), data in {}",
+            env!("CARGO_PKG_VERSION"),
+            if places.portable {
+                "portable"
+            } else {
+                "installed"
+            },
+            places.data_dir.display()
+        );
         let file = places.settings_file();
         let (settings, warning) = Settings::load(&file);
         let mut warnings: Vec<String> = warning.into_iter().collect();
@@ -37,6 +48,9 @@ impl App {
         }
         let (ffmpeg, ff_warning) = find_ffmpeg(&settings, &places).await;
         warnings.extend(ff_warning);
+        for w in &warnings {
+            log::warn!("{w}");
+        }
         Ok(Self {
             warnings,
             places,
@@ -61,7 +75,7 @@ impl App {
         if let Some(ua) = &self.settings.user_agent {
             http.user_agent.clone_from(ua);
         }
-        Engine::start(EngineConfig {
+        let engine = Engine::start(EngineConfig {
             db_path: Some(self.places.queue_db()),
             http,
             episodes: self.settings.episodes,
@@ -71,7 +85,16 @@ impl App {
             ..EngineConfig::default()
         })
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        crate::logging::follow(&engine);
+        Ok(engine)
+    }
+
+    /// "ffmpeg 7.1", for status lines and the problem report.
+    pub fn ffmpeg_label(&self) -> Option<String> {
+        self.ffmpeg
+            .as_ref()
+            .map(|f| format!("ffmpeg {}", f.version()))
     }
 }
 

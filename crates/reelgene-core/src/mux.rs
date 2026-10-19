@@ -49,6 +49,88 @@ pub async fn concat(parts: &[PathBuf], out: &Path) -> Result<u64> {
     Ok(total)
 }
 
+/// Whether bytes that should be media are a web page, JSON or XML instead —
+/// what some CDNs send with status 200 when they refuse a request. Only clear
+/// text is rejected: every media container starts with binary.
+pub fn looks_like_text(head: &[u8]) -> bool {
+    let head = &head[..head.len().min(512)];
+    let head = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
+    let start = head.iter().position(|b| !b.is_ascii_whitespace());
+    let Some(start) = start else { return false };
+    matches!(head[start], b'<' | b'{' | b'[')
+        && head[start..]
+            .iter()
+            .all(|&b| b >= 0x20 || matches!(b, b'\t' | b'\n' | b'\r') || b >= 0x80)
+}
+
+/// Rough length of an MPEG-TS file in seconds: the last video timestamp minus
+/// the first (PTS, 90 kHz), read from the head and tail only. `None` when no
+/// timestamps are found — not TS, or an unusual layout.
+pub async fn ts_duration(path: &Path) -> Option<f64> {
+    const WINDOW: u64 = 2 << 20;
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let len = f.metadata().await.ok()?.len();
+    let mut head = vec![0; WINDOW.min(len) as usize];
+    f.read_exact(&mut head).await.ok()?;
+    let mut tail = vec![0; WINDOW.min(len) as usize];
+    tokio::io::AsyncSeekExt::seek(&mut f, std::io::SeekFrom::Start(len - tail.len() as u64))
+        .await
+        .ok()?;
+    f.read_exact(&mut tail).await.ok()?;
+    let first = timestamps(&head).into_iter().min()?;
+    let last = timestamps(&tail).into_iter().max()?;
+    // PTS is 33 bits and wraps after about 26.5 hours.
+    let span = if last >= first {
+        last - first
+    } else {
+        last + (1 << 33) - first
+    };
+    Some(span as f64 / 90_000.0)
+}
+
+/// PTS of the video PES headers in a run of TS packets, or of the audio ones
+/// when there is no video.
+fn timestamps(buf: &[u8]) -> Vec<u64> {
+    const PACKET: usize = 188;
+    let Some(sync) = (0..PACKET.min(buf.len()))
+        .find(|&k| buf.get(k) == Some(&0x47) && buf.get(k + PACKET).is_none_or(|b| *b == 0x47))
+    else {
+        return Vec::new();
+    };
+    let (mut video, mut audio) = (Vec::new(), Vec::new());
+    let (packets, _) = buf[sync..].as_chunks::<PACKET>();
+    for p in packets {
+        if p[0] != 0x47 || p[1] & 0x40 == 0 {
+            continue; // not a sync byte, or no PES starts here
+        }
+        let mut at = 4;
+        if p[3] & 0x20 != 0 {
+            at += 1 + p[4] as usize; // adaptation field
+        }
+        let Some(pes) = p
+            .get(at..)
+            .filter(|pes| pes.len() >= 14 && pes[..3] == [0, 0, 1])
+        else {
+            continue;
+        };
+        if pes[7] & 0x80 == 0 {
+            continue; // no PTS
+        }
+        let b = &pes[9..14];
+        let pts = (u64::from(b[0] >> 1) & 0x07) << 30
+            | u64::from(b[1]) << 22
+            | u64::from(b[2] >> 1) << 15
+            | u64::from(b[3]) << 7
+            | u64::from(b[4] >> 1);
+        match pes[3] {
+            0xE0..=0xEF => video.push(pts),
+            0xC0..=0xDF => audio.push(pts),
+            _ => {}
+        }
+    }
+    if video.is_empty() { audio } else { video }
+}
+
 /// `path`, or `path (2)`, `path (3)`… — the first that does not exist yet.
 pub fn unique_path(path: &Path) -> PathBuf {
     if !path.exists() {
@@ -290,6 +372,63 @@ mod tests {
         let err = concat(&[dir.join("nope.part")], &out).await.unwrap_err();
         assert!(matches!(err, Error::Io { .. }));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A TS packet starting a PES with this PTS on `stream`.
+    pub(crate) fn pes_packet(stream: u8, pts: u64) -> Vec<u8> {
+        let mut p = vec![0x47, 0x41, 0x00, 0x10, 0, 0, 1, stream, 0, 0, 0x80, 0x80, 5];
+        p.extend([
+            0x21 | ((pts >> 29) & 0x0E) as u8,
+            (pts >> 22) as u8,
+            (((pts >> 14) & 0xFE) | 1) as u8,
+            (pts >> 7) as u8,
+            (((pts << 1) & 0xFE) | 1) as u8,
+        ]);
+        p.resize(188, 0xFF);
+        p
+    }
+
+    #[tokio::test]
+    async fn ts_duration_spans_the_first_and_last_video_timestamps() {
+        let dir = scratch("tsdur");
+        let mut ts = Vec::new();
+        ts.extend(pes_packet(0xC0, 80_000)); // audio, ignored while there is video
+        ts.extend(pes_packet(0xE0, 90_000));
+        for _ in 0..50 {
+            let mut filler = vec![0x47, 0x01, 0x00, 0x10];
+            filler.resize(188, 0xFF);
+            ts.extend(filler);
+        }
+        ts.extend(pes_packet(0xE0, 90_000 * 41));
+        let path = dir.join("a.ts");
+        std::fs::write(&path, &ts).unwrap();
+        assert_eq!(ts_duration(&path).await, Some(40.0));
+
+        std::fs::write(&path, b"not a transport stream at all").unwrap();
+        assert_eq!(ts_duration(&path).await, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn web_pages_are_told_apart_from_media() {
+        assert!(looks_like_text(
+            b"<!DOCTYPE html><html><body>Access denied</body></html>"
+        ));
+        assert!(looks_like_text(b"  {\"code\": 403, \"msg\": \"expired\"}"));
+        assert!(looks_like_text(
+            b"\xEF\xBB\xBF<?xml version=\"1.0\"?><Error/>"
+        ));
+        assert!(
+            !looks_like_text(&pes_packet(0xE0, 0)),
+            "TS starts with 0x47"
+        );
+        assert!(!looks_like_text(b"\x00\x00\x00\x18ftypmp42"), "MP4");
+        assert!(!looks_like_text(b"ID3\x04\x00"), "packed audio");
+        assert!(
+            !looks_like_text(b"<\x00\x01binary"),
+            "binary after a '<' is not text"
+        );
+        assert!(!looks_like_text(b""));
     }
 
     #[test]

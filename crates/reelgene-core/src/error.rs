@@ -48,6 +48,11 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// A web page or error document where media should be, sent with a
+    /// success status: usually a signature the CDN no longer accepts.
+    #[error("{0} sent a web page instead of video")]
+    NotMedia(String),
+
     /// A response bigger than anything legitimate of its kind.
     #[error("too large: {0}")]
     TooLarge(String),
@@ -70,13 +75,15 @@ impl Error {
     }
 
     /// What a signed URL past its expiry answers. Re-resolving gets a fresh one.
+    /// A web page in place of a segment counts too: a fresh URL is the
+    /// likeliest cure, and three tries the limit.
     pub fn is_expired_url(&self) -> bool {
         matches!(
             self,
             Error::Status {
                 status: 401 | 403 | 410,
                 ..
-            }
+            } | Error::NotMedia(_)
         )
     }
 
@@ -132,5 +139,9 @@ mod tests {
         assert!(status(401).is_expired_url());
         assert!(!status(404).is_expired_url());
         assert!(!status(500).is_expired_url());
+        assert!(
+            Error::NotMedia("x".into()).is_expired_url(),
+            "a web page for a segment"
+        );
     }
 }

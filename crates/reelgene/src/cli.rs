@@ -58,6 +58,9 @@ pub enum Cmd {
     },
     /// Show where reelgene keeps things, which ffmpeg it uses, its resolvers.
     Doctor,
+    /// Write a problem report (settings, queue, recent log; no links' secrets,
+    /// no home folder name) to the current folder.
+    Report,
 }
 
 #[derive(Args, Debug)]
@@ -140,6 +143,19 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
                 delete_output: delete_files,
             };
             change(&engine, remove).await?
+        }
+        Cmd::Report => {
+            let jobs = snapshot(&engine).await?;
+            let text = crate::report::build(
+                &app.places,
+                &app.settings,
+                app.ffmpeg_label().as_deref(),
+                &jobs,
+            );
+            let here = std::env::current_dir().map_err(|e| e.to_string())?;
+            let path = crate::report::write(&here, &text).map_err(|e| e.to_string())?;
+            println!("report written: {}", path.display());
+            ExitCode::SUCCESS
         }
         Cmd::Doctor => unreachable!("handled above"),
     };
@@ -353,6 +369,9 @@ fn describe(notice: &Notice) -> String {
         Notice::AudioSeparate { path, reason } => {
             format!("sound saved separately as {} ({reason})", path.display())
         }
+        Notice::ShortDuration { expected, actual } => format!(
+            "plays {actual:.0}s though the playlist says {expected:.0}s; part may be missing"
+        ),
     }
 }
 
@@ -405,6 +424,10 @@ async fn doctor() -> Result<ExitCode, String> {
     println!("mode       {mode}");
     println!("settings   {}", places.settings_file().display());
     println!("queue      {}", places.queue_db().display());
+    println!(
+        "logs       {}",
+        crate::logging::dir(&places.data_dir).display()
+    );
     println!("downloads  {}", downloads.display());
     match &ffmpeg {
         Some(ff) => println!(

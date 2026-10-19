@@ -92,6 +92,10 @@ pub(super) async fn run(
         match result {
             Err(e) if e.is_expired_url() && refreshed < MAX_REFRESH => {
                 refreshed += 1;
+                log::info!(
+                    "episode {}: {e}; resolving again ({refreshed}/{MAX_REFRESH})",
+                    ep.id.0
+                );
                 w.notice(Notice::UrlExpired { attempt: refreshed });
             }
             other => return other,
@@ -193,6 +197,10 @@ impl Worker<'_> {
         if self.plan.as_ref().is_some_and(|p| *p != plan) {
             self.sh.store.clear_progress(self.ep.id).await?;
             let _ = tokio::fs::remove_dir_all(&self.dir).await;
+            log::warn!(
+                "episode {}: the playlist changed; starting over",
+                self.ep.id.0
+            );
             self.notice(Notice::Restarted);
         }
         if self.plan.as_ref() != Some(&plan) || self.kind != Some(MediaKind::Hls) {
@@ -211,6 +219,8 @@ impl Worker<'_> {
         // file that is gone or the wrong size is fetched again.
         let total: usize = tracks.iter().map(|(_, m)| m.segments.len()).sum();
         let (mut bytes, mut done) = (0u64, 0usize);
+        // Bytes per part, to check the joined file against.
+        let mut sizes: HashMap<(Track, u64), u64> = HashMap::new();
         let mut todo = Vec::new();
         for (track, m) in &tracks {
             let recorded = self.sh.store.segments(self.ep.id, *track).await?;
@@ -220,6 +230,7 @@ impl Worker<'_> {
                     Some(&n) if file_len(&path).await == Some(n) => {
                         bytes += n;
                         done += 1;
+                        sizes.insert((*track, seg.seq), n);
                     }
                     // Owned: borrowed items in a buffered stream trip up `Send`.
                     _ => todo.push((*track, seg.clone())),
@@ -233,6 +244,7 @@ impl Worker<'_> {
         let keys = KeyCache::default();
 
         // Init sections are small and carry no sequence number: fetched every time.
+        let mut init_sizes: HashMap<Track, u64> = HashMap::new();
         for (track, m) in &tracks {
             if let Some(init) = &m.init {
                 let body = self
@@ -246,6 +258,7 @@ impl Worker<'_> {
                     )
                     .await?;
                 write_atomic(&self.init_path(*track), &body).await?;
+                init_sizes.insert(*track, body.len() as u64);
             }
         }
 
@@ -272,7 +285,7 @@ impl Worker<'_> {
                         .store
                         .mark_segment(this.ep.id, track, seg.seq, n)
                         .await?;
-                    Ok::<_, Error>(n)
+                    Ok::<_, Error>((track, seg.seq, n))
                 }
             })
             .buffer_unordered(this.sh.segments);
@@ -286,9 +299,10 @@ impl Worker<'_> {
             tokio::select! {
                 result = results.next() => match result {
                     None => break,
-                    Some(Ok(n)) => {
+                    Some(Ok((track, seq, n))) => {
                         bytes += n;
                         done += 1;
+                        sizes.insert((track, seq), n);
                         pending = !this.progress(&mut meter, bytes, Some((done, total)), done == total);
                     }
                     // Every other segment would hit the same expired signature.
@@ -312,17 +326,30 @@ impl Worker<'_> {
         }
 
         self.status(Status::Assembling);
+        let expected = |track: Track, m: &MediaPlaylist| {
+            init_sizes.get(&track).copied().unwrap_or(0)
+                + m.segments
+                    .iter()
+                    .map(|s| sizes.get(&(track, s.seq)).copied().unwrap_or(0))
+                    .sum::<u64>()
+        };
         let main_ext = if main.init.is_some() { "mp4" } else { "ts" };
         let main_file = self.dir.join(format!("main.{main_ext}"));
-        mux::concat(&self.parts(Track::Main, &main), &main_file).await?;
+        let joined = mux::concat(&self.parts(Track::Main, &main), &main_file).await?;
+        self.check_joined(joined, expected(Track::Main, &main))
+            .await?;
         let audio_file = match &audio {
             Some(a) => {
                 let path = self.dir.join(format!("audio.{}", audio_ext(a)));
-                mux::concat(&self.parts(Track::Audio, a), &path).await?;
+                let joined = mux::concat(&self.parts(Track::Audio, a), &path).await?;
+                self.check_joined(joined, expected(Track::Audio, a)).await?;
                 Some(path)
             }
             None => None,
         };
+        if main_ext == "ts" && !main.segments.iter().any(|s| s.discontinuity) {
+            self.check_duration(&main_file, main.duration()).await;
+        }
         self.assemble(main_file, main_ext, audio_file).await
     }
 
@@ -352,6 +379,12 @@ impl Worker<'_> {
                 "{} came back empty",
                 net::redact(url)
             )));
+        }
+        // Checked before decrypting: an error page for an encrypted segment
+        // would otherwise surface as a puzzling decryption failure.
+        if mux::looks_like_text(&body) {
+            log::warn!("{} sent text instead of media", net::redact(url));
+            return Err(Error::NotMedia(net::redact(url)));
         }
         let Some(k) = key else { return Ok(body) };
         if !k.method.eq_ignore_ascii_case("AES-128") {
@@ -398,9 +431,20 @@ impl Worker<'_> {
                 Some(ff) => {
                     let out = self.dir.join("out.mp4");
                     match ff.remux(&main, audio.as_deref(), &out, self.cancel).await {
-                        Ok(()) => return self.finish(&out, "mp4").await,
+                        Ok(()) if remux_plausible(&main, audio.as_deref(), &out).await => {
+                            return self.finish(&out, "mp4").await;
+                        }
+                        // Stream copy changes the size a little, not by half:
+                        // a much smaller MP4 lost a stream, so keep the source.
+                        Ok(()) => {
+                            problem =
+                                Some("ffmpeg's MP4 came out far smaller than its input".into())
+                        }
                         Err(Error::Cancelled) => return Err(Error::Cancelled),
                         Err(e) => problem = Some(e.to_string()),
+                    }
+                    if let Some(p) = &problem {
+                        log::warn!("episode {}: remux failed: {p}", self.ep.id.0);
                     }
                 }
                 None => problem = Some("ffmpeg was not found".to_owned()),
@@ -474,6 +518,14 @@ impl Worker<'_> {
             .await;
         self.validator = validator;
         let done = result?;
+        if file_head_is_text(&part).await {
+            // Gone, so the next try starts clean instead of resuming the page.
+            let _ = tokio::fs::remove_file(&part).await;
+            self.sh.store.set_validator(self.ep.id, None);
+            self.validator = None;
+            log::warn!("{} sent text instead of media", net::redact(&r.url));
+            return Err(Error::NotMedia(net::redact(&r.url)));
+        }
         self.sh.emit(Event::Progress(Progress {
             job,
             episode,
@@ -512,6 +564,39 @@ impl Worker<'_> {
             .map_err(|e| Error::io(&target, e))?;
         mux::mark_of_the_web(&target, &self.job.source);
         Ok(target)
+    }
+
+    /// The joined file must hold exactly the parts that were recorded. A
+    /// part changed on disk since (antivirus, a disk error, a hand) means the
+    /// episode is downloaded again rather than saved broken.
+    async fn check_joined(&self, joined: u64, expected: u64) -> Result<()> {
+        if joined == expected {
+            return Ok(());
+        }
+        log::warn!(
+            "episode {}: joined {joined} bytes, expected {expected}; downloading again",
+            self.ep.id.0
+        );
+        self.sh.store.clear_progress(self.ep.id).await?;
+        let _ = tokio::fs::remove_dir_all(&self.dir).await;
+        Err(Error::Network(
+            "downloaded parts changed on disk before they were joined".into(),
+        ))
+    }
+
+    /// Far shorter than the playlist says means content went missing, though
+    /// every segment arrived: worth saying, not worth refusing the file.
+    async fn check_duration(&self, file: &Path, expected: f64) {
+        let Some(actual) = mux::ts_duration(file).await else {
+            return;
+        };
+        if actual < expected * 0.9 - 2.0 {
+            log::warn!(
+                "episode {}: plays {actual:.0}s, the playlist says {expected:.0}s",
+                self.ep.id.0
+            );
+            self.notice(Notice::ShortDuration { expected, actual });
+        }
     }
 
     fn parts(&self, track: Track, m: &MediaPlaylist) -> Vec<PathBuf> {
@@ -604,6 +689,25 @@ fn file_ext(url: &Url) -> String {
         .filter(|e| FILE_EXTS.contains(e))
         .unwrap_or("mp4")
         .to_owned()
+}
+
+async fn remux_plausible(main: &Path, audio: Option<&Path>, out: &Path) -> bool {
+    let input = file_len(main).await.unwrap_or(0)
+        + match audio {
+            Some(a) => file_len(a).await.unwrap_or(0),
+            None => 0,
+        };
+    file_len(out).await.is_some_and(|n| n >= input / 2)
+}
+
+async fn file_head_is_text(path: &Path) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(mut f) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut head = vec![0; 512];
+    let n = f.read(&mut head).await.unwrap_or(0);
+    mux::looks_like_text(&head[..n])
 }
 
 async fn file_len(path: &Path) -> Option<u64> {

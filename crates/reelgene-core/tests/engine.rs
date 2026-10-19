@@ -667,3 +667,90 @@ async fn discover_then_add_names_the_file_from_the_link() {
     assert_eq!(job.id, id);
     assert!(!job.source.contains('?'));
 }
+
+const ERROR_PAGE: &str = "<!DOCTYPE html><html><body><h1>403 Forbidden</h1></body></html>";
+
+#[tokio::test]
+async fn a_web_page_instead_of_a_segment_is_refused_after_fresh_links() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve("/index.m3u8", playlist("seg", 2, false));
+    cdn.serve("/seg000.ts", vec![0x47u8; 188]);
+    // Some CDNs answer an expired signature with an error page and status 200.
+    cdn.serve("/seg001.ts", ERROR_PAGE);
+    let mut h = harness("not-media").await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    let error = h.failed(ep).await;
+    assert!(error.contains("web page instead of video"), "{error}");
+    assert_eq!(
+        cdn.hits("/index.m3u8").len(),
+        4,
+        "resolved again three times first"
+    );
+    assert!(
+        !h.out().join("Test Drama").exists(),
+        "nothing saved from it"
+    );
+}
+
+#[tokio::test]
+async fn a_web_page_instead_of_a_file_is_not_saved_as_video() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve("/movie.mp4", ERROR_PAGE);
+    let mut h = harness("not-media-file").await;
+    let url = cdn.url("/movie.mp4");
+    let ep = h.add(&url, &url).await;
+
+    let error = h.failed(ep).await;
+    assert!(error.contains("web page instead of video"), "{error}");
+    assert!(!h.out().join("Test Drama").exists());
+}
+
+/// A TS packet starting a video PES at `pts` (90 kHz).
+fn pes_packet(pts: u64) -> Vec<u8> {
+    let mut p = vec![0x47, 0x41, 0x00, 0x10, 0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 5];
+    p.extend([
+        0x21 | ((pts >> 29) & 0x0E) as u8,
+        (pts >> 22) as u8,
+        (((pts >> 14) & 0xFE) | 1) as u8,
+        (pts >> 7) as u8,
+        (((pts << 1) & 0xFE) | 1) as u8,
+    ]);
+    p.resize(188, 0xFF);
+    p
+}
+
+#[tokio::test]
+async fn a_file_far_shorter_than_its_playlist_is_flagged() {
+    let cdn = FakeCdn::start().await;
+    // Three 4-second segments on paper; the video inside spans one second.
+    cdn.serve("/index.m3u8", playlist("seg", 3, false));
+    cdn.serve("/seg000.ts", pes_packet(90_000));
+    cdn.serve("/seg001.ts", pes_packet(135_000));
+    cdn.serve("/seg002.ts", pes_packet(180_000));
+    let mut h = harness("short").await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    let notice = h
+        .until("the duration notice", |e| {
+            matches!(
+                e,
+                Event::Notice {
+                    notice: Notice::ShortDuration { .. },
+                    ..
+                }
+            )
+        })
+        .await;
+    let Event::Notice {
+        notice: Notice::ShortDuration { expected, actual },
+        ..
+    } = notice
+    else {
+        unreachable!()
+    };
+    assert_eq!((expected, actual), (12.0, 1.0));
+    h.done(ep).await; // flagged, still saved
+}

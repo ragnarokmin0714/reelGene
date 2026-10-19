@@ -273,7 +273,12 @@ fn episode_row(
                 };
                 ui.add(bar);
                 if let Some(p) = ep.progress.as_ref().filter(|p| p.speed > 0.0) {
-                    ui.weak(format!("{}/s", term::bytes(p.speed)));
+                    let mut line = format!("{}/s", term::bytes(p.speed));
+                    if let Some(eta) = ep.eta() {
+                        line.push_str(" · ");
+                        line.push_str(&(t.left)(&term::duration(eta)));
+                    }
+                    ui.weak(line);
                 }
             }
             Status::Done { .. } => {

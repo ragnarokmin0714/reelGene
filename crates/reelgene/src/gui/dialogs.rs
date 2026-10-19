@@ -6,8 +6,19 @@ use eframe::egui::{self, RichText};
 use reelgene_core::engine::{Command, Discovery};
 use reelgene_core::hls::Quality;
 use reelgene_core::paths::{self, NameVars};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use url::Url;
+
+/// A text field that can be filled from the system's file dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Field {
+    /// The episode picker's download folder.
+    PickFolder,
+    /// The download folder in settings.
+    Folder,
+    /// The ffmpeg program in settings.
+    Ffmpeg,
+}
 
 /// Choosing episodes from a series: the multiselect from the design.
 pub(crate) struct Pick {
@@ -38,6 +49,10 @@ impl Pick {
             folder: folder.display().to_string(),
             template: settings.template.clone(),
         }
+    }
+
+    pub(crate) fn set_folder(&mut self, path: &Path) {
+        self.folder = path.display().to_string();
     }
 
     /// Check exactly the episodes a range like `1-10,15` names.
@@ -139,6 +154,15 @@ impl SettingsForm {
         }
     }
 
+    pub(crate) fn set(&mut self, field: Field, path: &Path) {
+        let text = path.display().to_string();
+        match field {
+            Field::Folder => self.folder = text,
+            Field::Ffmpeg => self.ffmpeg = text,
+            Field::PickFolder => {}
+        }
+    }
+
     fn finish(&self) -> Settings {
         let path = |s: &str| {
             let p = PathBuf::from(s.trim());
@@ -203,8 +227,13 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
             quality_combo(t, &mut pick.quality, "pick-quality", label, ui);
             ui.end_row();
             ui.label(t.folder);
-            ui.add(egui::TextEdit::singleline(&mut pick.folder).desired_width(320.0))
-                .on_hover_text(t.folder);
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut pick.folder).desired_width(250.0))
+                    .on_hover_text(t.folder);
+                if ui.button(t.browse).clicked() {
+                    actions.push(Action::Browse(Field::PickFolder));
+                }
+            });
             ui.end_row();
         });
     ui.separator();
@@ -265,8 +294,13 @@ fn settings_ui(
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label(t.folder);
-            ui.add(egui::TextEdit::singleline(&mut form.folder).desired_width(300.0))
-                .on_hover_text(t.folder);
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut form.folder).desired_width(230.0))
+                    .on_hover_text(t.folder);
+                if ui.button(t.browse).clicked() {
+                    actions.push(Action::Browse(Field::Folder));
+                }
+            });
             ui.end_row();
 
             ui.label(t.naming);
@@ -295,12 +329,18 @@ fn settings_ui(
             ui.end_row();
 
             ui.label("ffmpeg");
-            ui.add(
-                egui::TextEdit::singleline(&mut form.ffmpeg)
-                    .hint_text(t.ffmpeg)
-                    .desired_width(300.0),
-            )
-            .on_hover_text(t.ffmpeg);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.ffmpeg)
+                        .hint_text(t.ffmpeg)
+                        .desired_width(230.0),
+                )
+                .on_hover_text(t.ffmpeg);
+                // Its own name: the folder's "Browse…" is a different button.
+                if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
+                    actions.push(Action::Browse(Field::Ffmpeg));
+                }
+            });
             ui.end_row();
 
             let label = ui.label(t.animations).id;
@@ -381,6 +421,11 @@ fn settings_ui(
         if ui.button(t.cancel).clicked() {
             actions.push(Action::Close);
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(t.report).on_hover_text(t.report_help).clicked() {
+                actions.push(Action::Report);
+            }
+        });
     });
 }
 

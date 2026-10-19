@@ -153,6 +153,8 @@ pub enum Notice {
     KeptTs { reason: String },
     /// The sound came as a separate rendition and could not be merged.
     AudioSeparate { path: PathBuf, reason: String },
+    /// The saved file plays much shorter than the playlist says, in seconds.
+    ShortDuration { expected: f64, actual: f64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
