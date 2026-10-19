@@ -82,7 +82,7 @@ fn top_bar(g: &mut Gui, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
                 s.clipboard = watch;
                 actions.push(Action::SaveSettings(Box::new(s)));
             }
-            if g.reading > 0 {
+            if g.reading() > 0 {
                 ui.spinner();
                 ui.weak(t.reading);
             }
@@ -157,7 +157,7 @@ fn status_bar(g: &Gui, ui: &mut egui::Ui) {
                 ui.label(format!("{}/s", format::bytes(c.speed)));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                match &g.ffmpeg {
+                match g.ffmpeg() {
                     Some(v) => ui.weak(v),
                     None => ui.weak(t.no_ffmpeg),
                 };

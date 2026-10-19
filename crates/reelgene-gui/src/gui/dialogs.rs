@@ -51,6 +51,11 @@ impl Pick {
         }
     }
 
+    /// Back to a queued discovery, when the window closes with the picker open.
+    pub(crate) fn into_waiting(self) -> (Url, Discovery) {
+        (self.url, self.discovery)
+    }
+
     pub(crate) fn set_folder(&mut self, path: &Path) {
         self.folder = path.display().to_string();
     }

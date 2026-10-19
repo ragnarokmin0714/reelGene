@@ -1,9 +1,11 @@
 //! The window, driven headless through its accessibility tree: what a user
 //! sees and clicks, against a real engine and a local server.
 
+use super::desktop::Desktop;
 use super::dialogs::Field;
 use super::text::EN;
-use super::{Gui, Msg, Parts};
+use super::{Gui, Msg};
+use crate::tray::TrayCmd;
 use async_trait::async_trait;
 use eframe::egui;
 use egui_kittest::Harness;
@@ -20,6 +22,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
@@ -162,7 +165,7 @@ fn places(env: &Env) -> reelgene_app::places::Places {
 }
 
 struct State {
-    parts: Option<Parts>,
+    desktop: Arc<Desktop>,
     gui: Option<Gui>,
 }
 
@@ -174,34 +177,45 @@ impl State {
     }
 }
 
-fn window(env: &Env, settings: Settings) -> Harness<'static, State> {
-    let parts = Parts {
-        rt: env.rt.handle().clone(),
-        engine: env.engine.clone(),
+/// What `run` sets up once: the part that outlives windows.
+fn desktop(env: &Env, settings: Settings, save: bool) -> Arc<Desktop> {
+    Desktop::start(
+        env.rt.handle().clone(),
+        env.engine.clone(),
         settings,
-        places: places(env),
-        save_settings: true,
-        ffmpeg: None,
-        warnings: Vec::new(),
-        running: false,
-        desktop: false,
-    };
-    let state = State {
-        parts: Some(parts),
-        gui: None,
-    };
-    let mut h = Harness::builder().with_size([900.0, 640.0]).build_ui_state(
+        places(env),
+        save,
+        None,
+        Vec::new(),
+        false,
+        false,
+    )
+}
+
+/// A window onto `desktop`, as each `run_native` opens one.
+fn open_with(
+    builder: egui_kittest::HarnessBuilder<State>,
+    desktop: Arc<Desktop>,
+) -> Harness<'static, State> {
+    let mut h = builder.build_ui_state(
         |ui: &mut egui::Ui, s: &mut State| {
             if s.gui.is_none() {
-                let parts = s.parts.take().expect("parts");
-                s.gui = Some(Gui::new(ui.ctx(), parts));
+                s.gui = Some(Gui::new(ui.ctx(), Arc::clone(&s.desktop), None));
             }
             s.gui().frame(ui);
         },
-        state,
+        State { desktop, gui: None },
     );
     settle(&mut h);
     h
+}
+
+fn open(desktop: Arc<Desktop>) -> Harness<'static, State> {
+    open_with(Harness::builder().with_size([900.0, 640.0]), desktop)
+}
+
+fn window(env: &Env, settings: Settings) -> Harness<'static, State> {
+    open(desktop(env, settings, true))
 }
 
 fn english() -> Settings {
@@ -312,7 +326,8 @@ fn detected_links_are_listed_and_web_pages_are_not() {
     let links = detect::find_links(
         "https://cdn.example/a.m3u8 http://192.168.1.1/x.mp4 https://site.example/some/page",
     );
-    let _ = h.state_mut().gui().tx.send(Msg::Links(links));
+    // Through the desktop, as the clipboard watcher delivers them.
+    h.state_mut().desktop.links(links);
     settle(&mut h);
     let _ = h.get_by_label("Detected links (2)");
     let _ = h.get_by_label(EN.private_link);
@@ -371,29 +386,10 @@ fn the_window_speaks_traditional_chinese_when_asked() {
         language: Some("zh-TW".into()),
         ..Settings::default()
     };
-    let parts = Parts {
-        rt: env.rt.handle().clone(),
-        engine: env.engine.clone(),
-        settings,
-        places: places(&env),
-        save_settings: false,
-        ffmpeg: None,
-        warnings: Vec::new(),
-        running: false,
-        desktop: false,
-    };
     // The test context has no system fonts for CJK; the real window loads them.
-    let mut h = Harness::builder().allow_missing_glyphs().build_ui_state(
-        |ui: &mut egui::Ui, s: &mut State| {
-            if s.gui.is_none() {
-                s.gui = Some(Gui::new(ui.ctx(), s.parts.take().expect("parts")));
-            }
-            s.gui().frame(ui);
-        },
-        State {
-            parts: Some(parts),
-            gui: None,
-        },
+    let mut h = open_with(
+        Harness::builder().allow_missing_glyphs(),
+        desktop(&env, settings, false),
     );
     settle(&mut h);
     let _ = h.get_by_label("開始");
@@ -410,7 +406,7 @@ fn a_folder_picked_in_the_system_dialog_lands_in_settings() {
     let picked = env.dir.join("videos");
     let _ = h
         .state_mut()
-        .gui()
+        .desktop
         .tx
         .send(Msg::Picked(Field::Folder, picked.clone()));
     settle(&mut h);
@@ -443,4 +439,76 @@ fn the_problem_report_is_written_to_the_download_folder() {
         h.query_by_label_contains("Problem report saved").is_some(),
         "a toast says where"
     );
+}
+
+#[test]
+fn detected_links_survive_the_window_closing_into_the_tray() {
+    let env = env("reopen-links");
+    let d = desktop(&env, english(), false);
+    let mut h = open(Arc::clone(&d));
+    d.links(detect::find_links("https://cdn.example/a.m3u8"));
+    settle(&mut h);
+    let _ = h.get_by_label("Detected links (1)");
+    drop(h); // closed into the tray (Wayland: the window is really gone)
+
+    // The clipboard keeps working with no window open.
+    d.links(detect::find_links("https://cdn.example/b.m3u8"));
+    let h = open(Arc::clone(&d));
+    let _ = h.get_by_label("Detected links (2)");
+}
+
+#[test]
+fn a_series_waiting_for_the_picker_survives_the_window_closing() {
+    let env = env("reopen-pick");
+    let d = desktop(&env, english(), false);
+    let mut h = open(Arc::clone(&d));
+    type_link(&mut h, "https://series.test/show/1");
+    until(&mut h, "the picker", |h| {
+        h.query_by_label(EN.pick_title).is_some()
+    });
+    drop(h);
+
+    let h = open(Arc::clone(&d));
+    let _ = h.get_by_label(EN.pick_title);
+    let _ = h.get_by_label("Add 5 episodes");
+}
+
+#[test]
+fn a_single_video_is_queued_even_with_no_window_open() {
+    let env = env("headless-add");
+    let d = desktop(&env, english(), false);
+    d.read(Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap());
+    for _ in 0..300 {
+        if !env.rt.block_on(env.engine.snapshot()).unwrap().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut h = open(Arc::clone(&d));
+    until(&mut h, "the queued job", |h| {
+        h.query_all_by_label("ep01").next().is_some()
+    });
+    assert!(
+        h.query_by_label_contains("Added: ep01").is_some(),
+        "its toast waited for the window"
+    );
+}
+
+#[test]
+fn with_no_window_the_tray_starts_the_queue_and_brings_the_window_back() {
+    let env = env("tray");
+    let d = desktop(&env, english(), false);
+    let tray = d.tray_sender();
+    tray(TrayCmd::Start);
+    tray(TrayCmd::Show);
+    assert!(d.wait_for_tray(), "Show asks for a window");
+    for _ in 0..300 {
+        if d.running() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(d.running(), "Start reached the engine");
+    tray(TrayCmd::Quit);
+    assert!(!d.wait_for_tray(), "Quit ends the program");
 }

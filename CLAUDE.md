@@ -149,12 +149,23 @@ state survives updates and hides layout changes. Folder and file pickers are
 `rfd` (the desktop portal on Linux, no GTK), run on a thread of their own
 because the dialog blocks its thread until it closes.
 
+**Windows that come and go.** Wayland cannot hide a window, so there
+closing to the tray really closes it: `run` loops over `run_native`, and with
+no window open `Desktop::wait_for_tray` carries out tray commands until one
+asks for a window again. Everything that must outlive a window lives in
+`gui/desktop.rs`: the clipboard watcher, sounds (decided from engine events,
+not from the window), links being read (a single video is queued from the
+background task itself), and the message queue to the window. A closing
+`Gui` hands its unfinished business (detected links, series waiting for the
+picker) to the stash, and the next one takes it. On Windows and X11 the
+window hides instead; Windows could not reopen anyway, because its tray's
+clicks arrive through the window's message loop.
+
 **Desktop glue.** Clipboard: a thread polls once a second, ignores what was
 there at startup, and passes on only links that some resolver claims, so
 copying ordinary pages adds nothing. Tray: `ksni` (D-Bus, no GTK) on Linux,
-`tray-icon` on Windows (created on the window's thread). Closing hides to the
-tray only if a tray actually registered; Wayland cannot hide windows, so it
-minimises. Sounds are synthesised WAVs played with PlaySound or
+`tray-icon` on Windows (created on the window's thread). Closing goes to the
+tray only if a tray actually registered. Sounds are synthesised WAVs played with PlaySound or
 `pw-play`/`paplay`/`aplay`: linking an audio library would need ALSA on Linux
 and stop reelgene from starting at all where it is missing.
 
@@ -180,7 +191,7 @@ crates/reelgene-app/    what the front ends share; no UI library
   src/places.rs settings.rs instance.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
 crates/reelgene-gui/    the window; the only crate that knows egui
-  src/gui/              mod (Gui, run), model, view, dialogs, text, tests
+  src/gui/              mod (Gui, run), desktop, model, view, dialogs, text, tests
   src/tray.rs sound.rs clipboard.rs icon.rs
 crates/reelgene/        the executable: main.rs, cli.rs, term.rs
   tests/cli.rs          the real binary against a local server

@@ -86,8 +86,6 @@ impl Counts {
 /// What an event means beyond the rows.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    /// An episode failed for good: worth a sound.
-    Failed,
     /// The batch is over.
     BatchDone { done: usize, failed: usize },
     /// Events were missed; take a fresh snapshot.
@@ -116,8 +114,6 @@ impl Model {
                 episode, status, ..
             } => {
                 let ep = self.episode_mut(episode)?;
-                let failed = matches!(status, Status::Failed { .. })
-                    && !matches!(ep.status, Status::Failed { .. });
                 let working = matches!(
                     status,
                     Status::Resolving | Status::Downloading | Status::Assembling
@@ -130,9 +126,6 @@ impl Model {
                 }
                 ep.status = status;
                 ep.changed = now;
-                if failed {
-                    return Some(Effect::Failed);
-                }
             }
             Event::Progress(p) => {
                 let ep = self.episode_mut(p.episode)?;
@@ -319,15 +312,14 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_makes_one_sound_and_the_batch_end_another() {
+    fn the_end_of_a_batch_is_an_effect() {
         let mut m = Model::default();
         m.load(vec![job(1, &[1])], 0.0);
-        let fail = || status(1, Status::Failed { error: "x".into() });
-        assert_eq!(m.apply(fail(), 1.0), Some(Effect::Failed));
+        let fail = status(1, Status::Failed { error: "x".into() });
         assert_eq!(
-            m.apply(fail(), 1.1),
+            m.apply(fail, 1.0),
             None,
-            "the same failure reported twice is one sound"
+            "sounds are the desktop's business"
         );
         assert_eq!(
             m.apply(Event::Idle { done: 3, failed: 1 }, 2.0),
