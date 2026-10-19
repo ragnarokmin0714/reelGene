@@ -10,7 +10,8 @@
     {
       "owner": "rust-test-panic",
       "pattern": [
-        { "regexp": "^thread '([^']+)'(?: \\(\\d+\\))? panicked at (.+):(\\d+):(\\d+):$", "message": 1, "file": 2, "line": 3, "column": 4 }
+        { "regexp": "^thread '([^']+)'(?: \\(\\d+\\))? panicked at (.+):(\\d+):(\\d+):$", "code": 1, "file": 2, "line": 3, "column": 4 },
+        { "regexp": "^(.+)$", "message": 1 }
       ]
     }
   ]
