@@ -11,7 +11,10 @@ the decisions that are not obvious from the code.
 v0.1 was built on 2026-10-18 in four steps — core foundations, engine and
 store, CLI, window — and is tested headless: about 150 tests, including the
 engine against a fake CDN, the real binary against a local server, and the
-window clicked through its accessibility tree (kittest).
+window clicked through its accessibility tree (kittest). The rest of
+v0.1.0 (hand-off, disk space, notifications, proxy, speed limit, download
+hours, yt-dlp) followed on 2026-10-19; about 190 tests. What is held back
+for later is in `ROADMAP.md`.
 
 **Not yet verified, and the first things to check:**
 - **Windows has never been compiled or run.** The development machine has no

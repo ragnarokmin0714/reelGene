@@ -1,28 +1,27 @@
 # Roadmap
 
-## v0.1 — built, awaiting verification
+## v0.1.0 — the first release
 
 Clipboard detection, the queue (add, pause, resume, retry, remove; survives
 restarts), HLS and direct downloads (AES-128, fMP4, byte ranges, separate
 audio), series with an episode picker, naming templates, the window (tray,
-animations, sounds, English and Traditional Chinese), the CLI, portable mode.
+animations, sounds, notifications, English and Traditional Chinese), the
+CLI, portable mode; single-instance hand-off (starting reelgene again
+brings the window back; `reelgene get/add URL` passes its links to the one
+running); a free-space check; a proxy (the system's, none, or HTTP/SOCKS); a
+speed limit changeable while downloads run; download hours; a yt-dlp
+fallback for pages without a resolver, using the user's own yt-dlp.
 
-Since then, from the v0.2 list: **single-instance hand-off** (starting
-reelgene again brings the window back; `reelgene get/add URL` passes its
-links to the reelgene already running); **a free-space check** (a download
-that cannot fit stops early with how much it needs); **system
-notifications** when a batch ends and the window is in the background; **a
-proxy** (the system's, none, or HTTP/SOCKS); **a speed limit** over all
-downloads, changeable while they run; **download hours** (the queue waits
-outside them); **a yt-dlp fallback** for pages without a resolver, using
-the user's own yt-dlp.
+The tag drafts a release; before publishing it:
+- run the Windows executable on a real Windows machine (CI compiles and
+  tests it; nobody has run the window there);
+- look at the window on a real Linux desktop, Chinese titles included;
+- one download through a real ffmpeg, and one through a real yt-dlp.
 
-Before calling it released:
-- build and run on a real Windows machine (CI compiles it; nobody has run it);
-- look at the window on a real screen, Chinese titles included;
-- one download through a real ffmpeg.
+## Held
 
-## v0.2
+Not needed for reelgene to work; each waits for something only a person can
+supply (a browser to test in, real samples, a site to try).
 
 - **Video link detection from the browser**: an extension watches network
   requests for playlists and hands them over through Native Messaging — never

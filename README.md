@@ -4,7 +4,7 @@ A portable video downloader for Windows and Linux. Copy a link and it shows
 up; pick episodes; the downloads survive closing the program, losing the
 network or leaving it overnight, and pick up where they stopped.
 
-> **Status: v0.1 preview.** Everything below is built and tested — 150-odd
+> **Status: v0.1.0 preview.** Everything below is built and tested — 190
 > automated tests, including the window driven headless — but it has not yet
 > been used on a real Windows machine or looked at on a real screen. Treat it
 > as a preview until a release says otherwise. What comes next is in
