@@ -93,7 +93,11 @@ hours are a second switch, `Command::Hold`, apart from the user's
 Start/Stop: a queue started outside the hours waits for them, one the user
 stopped stays stopped when they come. The engine has no clock; the app's
 `schedule.rs` checks local time every half minute (and at once when the
-hours change). Events go out on a broadcast channel (1024 deep; a lagging receiver re-snapshots). Progress
+hours change). Pacing (`EngineConfig::pace`, `Command::SetPace`) is per site,
+keyed by the job's source host: one item a site at a time, and a random
+pause in `[least, most]` seconds after each before the next starts (a
+`Msg::Tick` wakes the scheduler). Items start with their resolver asking the
+site, so that is paced too; segments from the CDN are not. Events go out on a broadcast channel (1024 deep; a lagging receiver re-snapshots). Progress
 is throttled to about ten updates a second per episode, with a trailing flush
 so a stalled segment does not hide the real count. `Event::Idle` marks the
 end of a batch: the moment for the "done" sound.

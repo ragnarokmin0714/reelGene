@@ -758,8 +758,8 @@ fn backoff_delay(base: Duration, max: Duration, failures: u32, jitter: f64) -> D
 }
 
 /// A number in [0, 1). `RandomState` is randomly keyed per instance, which is
-/// plenty for spreading retries and saves a dependency.
-fn jitter() -> f64 {
+/// plenty for spreading retries and pauses, and saves a dependency.
+pub(crate) fn jitter() -> f64 {
     let bits = std::collections::hash_map::RandomState::new()
         .build_hasher()
         .finish();

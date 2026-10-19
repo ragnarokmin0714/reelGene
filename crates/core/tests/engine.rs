@@ -956,3 +956,32 @@ async fn yt_dlp_saying_drm_is_refused_like_any_drm() {
     assert!(matches!(e, reelgene_core::Error::Drm(_)));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[tokio::test]
+async fn pacing_runs_one_item_per_site_with_a_pause_between() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    cdn.serve("/second.m3u8", playlist("seg", SEGMENTS, true));
+    let mut h = harness_with("pace", |c| c.pace = Some([1, 1])).await;
+    let (a, b) = (cdn.url("/index.m3u8"), cdn.url("/second.m3u8"));
+    let first = h.add(&a, &a).await;
+    let second = h.add(&b, &b).await;
+
+    let mut done_at = None;
+    let started = h
+        .until("the second item to start", |e| {
+            match e {
+                Event::Status { episode, status: Status::Done { .. }, .. } if *episode == first => {
+                    done_at = Some(std::time::Instant::now());
+                }
+                _ => {}
+            }
+            matches!(e, Event::Status { episode, status: Status::Resolving, .. } if *episode == second)
+        })
+        .await;
+    drop(started);
+    let done_at = done_at.expect("one item at a time: the first ended before the second began");
+    let gap = done_at.elapsed();
+    assert!(gap >= Duration::from_millis(900), "paused {gap:?}");
+    h.done(second).await;
+}

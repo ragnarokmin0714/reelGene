@@ -9,8 +9,9 @@ animations, sounds, notifications, English and Traditional Chinese), the
 CLI, portable mode; single-instance hand-off (starting reelgene again
 brings the window back; `reelgene get/add URL` passes its links to the one
 running); a free-space check; a proxy (the system's, none, or HTTP/SOCKS); a
-speed limit changeable while downloads run; download hours; a yt-dlp
-fallback for pages without a resolver, using the user's own yt-dlp.
+speed limit changeable while downloads run; download hours; pacing (one
+item a site at a time, with a random pause between); a yt-dlp fallback for
+pages without a resolver, using the user's own yt-dlp.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:
@@ -28,12 +29,6 @@ Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 - **Cookie import**, treated as passwords: DPAPI on Windows, the system
   keyring on Linux; not stored at all in portable mode by default. Many
   sites show posts only to someone signed in.
-- **Pacing**, a switch in settings: a random pause (say 3–8 s) before each
-  next item from the same site, and before a resolver's own requests to it,
-  with one item at a time from that site while it is on. Not between the
-  segments of one video, which come from a CDN. A resolver may suggest its
-  site's pause; the user's setting decides. Today reelgene only backs off
-  once a site says so (429/503, `Retry-After`); this slows down before.
 - The resolvers that find such posts live on the private branch, as all
   site resolvers do.
 

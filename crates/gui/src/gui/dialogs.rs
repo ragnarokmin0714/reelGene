@@ -147,6 +147,7 @@ pub(crate) struct SettingsForm {
     limit_mb: f64,
     quiet: bool,
     scheduled: bool,
+    paced: bool,
 }
 
 impl SettingsForm {
@@ -166,9 +167,11 @@ impl SettingsForm {
                 .unwrap_or_default(),
             quiet: settings.quiet_hours.is_some(),
             scheduled: settings.schedule.is_some(),
+            paced: settings.pace.is_some(),
             s: Settings {
                 quiet_hours: settings.quiet_hours.or(Some([23, 8])),
                 schedule: settings.schedule.or(Some([1, 7])),
+                pace: settings.pace.or(Some([3, 8])),
                 ..settings.clone()
             },
         }
@@ -202,6 +205,7 @@ impl SettingsForm {
             },
             quiet_hours: self.s.quiet_hours.filter(|_| self.quiet),
             schedule: self.s.schedule.filter(|_| self.scheduled),
+            pace: self.s.pace.filter(|_| self.paced),
             ..self.s.clone()
         }
     }
@@ -408,13 +412,16 @@ fn settings_ui(
                 ui.add(egui::Slider::new(&mut form.s.per_host, 1..=16))
                     .on_hover_text(t.per_host);
                 ui.end_row();
-                hours_row(
+                span_row(
                     ui,
                     t,
                     t.download_hours,
                     &mut form.scheduled,
                     &mut form.s.schedule,
+                    HOURS,
                 );
+                span_row(ui, t, t.pace, &mut form.paced, &mut form.s.pace, SECONDS)
+                    .on_hover_text(t.pace_help);
                 let label = ui.label(t.speed_limit).id;
                 let no_limit = t.no_limit;
                 ui.add(
@@ -512,12 +519,13 @@ fn settings_ui(
                     .on_hover_text(t.volume);
                 });
                 ui.end_row();
-                hours_row(
+                span_row(
                     ui,
                     t,
                     t.quiet_hours,
                     &mut form.quiet,
                     &mut form.s.quiet_hours,
+                    HOURS,
                 );
             });
 
@@ -553,26 +561,38 @@ fn settings_ui(
     });
 }
 
-/// A grid row: a switch and a span of clock hours, `from`–`to`.
-fn hours_row(
+/// Clock hours, 0:00 to 23:00.
+const HOURS: (u8, &str) = (23, ":00");
+/// Seconds, up to two minutes.
+const SECONDS: (u8, &str) = (120, " s");
+
+/// A grid row: a switch and a span `from`–`to`, in `unit` (its largest value
+/// and suffix). Returns the label's response, for a tooltip.
+fn span_row(
     ui: &mut egui::Ui,
     t: &super::text::Text,
     label: &str,
     on: &mut bool,
-    hours: &mut Option<[u8; 2]>,
-) {
-    ui.label(label);
+    span: &mut Option<[u8; 2]>,
+    unit: (u8, &str),
+) -> egui::Response {
+    let (max, suffix) = unit;
+    let response = ui.label(label);
     ui.horizontal(|ui| {
         ui.checkbox(on, t.on);
-        if let Some([from, to]) = hours {
-            ui.add_enabled(*on, egui::DragValue::new(from).range(0..=23).suffix(":00"))
-                .on_hover_text(label);
+        if let Some([from, to]) = span {
+            ui.add_enabled(
+                *on,
+                egui::DragValue::new(from).range(0..=max).suffix(suffix),
+            )
+            .on_hover_text(label);
             ui.label("–");
-            ui.add_enabled(*on, egui::DragValue::new(to).range(0..=23).suffix(":00"))
+            ui.add_enabled(*on, egui::DragValue::new(to).range(0..=max).suffix(suffix))
                 .on_hover_text(label);
         }
     });
     ui.end_row();
+    response
 }
 
 fn quality_combo(
@@ -602,6 +622,27 @@ fn quality_combo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pacing_is_off_until_switched_on_and_then_keeps_its_span() {
+        let settings = Settings::default();
+        let mut form = SettingsForm::new(&settings, Path::new("/downloads"));
+        assert_eq!(form.finish().pace, None, "off by default");
+        form.paced = true;
+        assert_eq!(
+            form.finish().pace,
+            Some([3, 8]),
+            "a sensible span to start from"
+        );
+        form.s.pace = Some([5, 20]);
+        assert_eq!(form.finish().pace, Some([5, 20]));
+        form.paced = false;
+        assert_eq!(
+            form.finish().pace,
+            None,
+            "switched off, the span is not saved"
+        );
+    }
 
     #[test]
     fn ranges_select_exactly_what_they_name() {

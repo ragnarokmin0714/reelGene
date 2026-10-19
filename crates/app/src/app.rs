@@ -126,6 +126,7 @@ impl App {
             autostart,
             held: crate::schedule::held_now(self.settings.schedule),
             registry: registry(self.yt_dlp.clone()),
+            pace: self.settings.pace,
             ..EngineConfig::default()
         })
         .await

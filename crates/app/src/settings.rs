@@ -48,6 +48,9 @@ pub struct Settings {
     pub quiet_hours: Option<[u8; 2]>,
     /// Download only between these hours, e.g. `[1, 7]`; `None`: any time.
     pub schedule: Option<[u8; 2]>,
+    /// A random pause in seconds, `[least, most]`, before the next item from
+    /// the same site, one item a site at a time; `None`: no pacing.
+    pub pace: Option<[u8; 2]>,
     /// `None`: a current browser's.
     pub user_agent: Option<String>,
     /// `system`, `none`, or a proxy URL such as `socks5h://127.0.0.1:1080`
@@ -83,6 +86,7 @@ impl Default for Settings {
             volume: 0.8,
             quiet_hours: None,
             schedule: None,
+            pace: None,
             user_agent: None,
             proxy: "system".to_owned(),
             language: None,

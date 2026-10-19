@@ -383,6 +383,9 @@ impl Gui {
         }
         self.desktop.configure(&self.settings);
         let s = &self.settings;
+        if s.pace != old.pace {
+            self.desktop.engine.send(Command::SetPace(s.pace));
+        }
         if s.speed_limit != old.speed_limit {
             self.desktop
                 .engine

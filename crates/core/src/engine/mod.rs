@@ -25,7 +25,7 @@ use crate::paths;
 use crate::resolver::{Ctx, Discovered, Registry};
 use crate::store::{EpisodeRecord, EpisodeState, JobRecord, NewJob, Store};
 use futures::FutureExt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -55,6 +55,11 @@ pub struct EngineConfig {
     pub autostart: bool,
     /// Start held (see `Command::Hold`): outside the download hours.
     pub held: bool,
+    /// A random pause of so many seconds, `[least, most]`, before the next
+    /// item from a site whose last one just ended; one item from a site at a
+    /// time. Each item starts with its resolver asking the site, so this
+    /// paces those requests too. `None`: no pacing.
+    pub pace: Option<[u8; 2]>,
     /// When an episode fails for a transient reason (network down, server
     /// overloaded), wait this long and try again, once per entry; then fail.
     pub retry_delays: Vec<Duration>,
@@ -72,6 +77,7 @@ impl Default for EngineConfig {
             ffmpeg: None,
             autostart: true,
             held: false,
+            pace: None,
             retry_delays: [60, 300, 900].map(Duration::from_secs).to_vec(),
             free_space: Arc::new(|p: &Path| fs4::available_space(p)),
         }
@@ -126,6 +132,8 @@ pub enum Command {
     },
     /// Episodes downloading at once.
     SetConcurrency(usize),
+    /// Pacing (`EngineConfig::pace`), changed while running.
+    SetPace(Option<[u8; 2]>),
     /// Outside the download hours: what runs stops (progress kept, still
     /// queued) and nothing starts until released. Separate from Start and
     /// Stop, which are the user's: a queue started outside the hours waits
@@ -281,6 +289,8 @@ impl Engine {
             slots: BTreeMap::new(),
             running: cfg.autostart,
             held: cfg.held,
+            pace: cfg.pace,
+            next_start: HashMap::new(),
             max: cfg.episodes.max(1),
             retry_delays: cfg.retry_delays,
             batch: Batch::default(),
@@ -397,6 +407,8 @@ enum Msg {
     Shutdown(oneshot::Sender<()>),
     Finished(EpisodeId, Result<PathBuf>),
     Wake(EpisodeId),
+    /// A paced site may start its next item.
+    Tick,
 }
 
 struct Slot {
@@ -442,6 +454,9 @@ struct Scheduler {
     slots: BTreeMap<EpisodeId, Slot>,
     running: bool,
     held: bool,
+    pace: Option<[u8; 2]>,
+    /// When each paced site may start its next item.
+    next_start: HashMap<String, tokio::time::Instant>,
     max: usize,
     retry_delays: Vec<Duration>,
     batch: Batch,
@@ -488,6 +503,7 @@ impl Scheduler {
                     }
                 }
                 Msg::Finished(id, result) => self.finished(id, result).await,
+                Msg::Tick => {}
                 Msg::Wake(id) => {
                     if let Some(slot) = self.slots.get_mut(&id)
                         && matches!(slot.run, Run::Waiting { .. })
@@ -548,6 +564,12 @@ impl Scheduler {
                 self.sh.emit(Event::Held(on));
             }
             Command::Hold(_) => {}
+            Command::SetPace(pace) => {
+                self.pace = pace;
+                if pace.is_none() {
+                    self.next_start.clear();
+                }
+            }
             Command::Pause(target) => {
                 for id in self.matching(target) {
                     let slot = self.slots.get_mut(&id).expect("matching returns live ids");
@@ -631,6 +653,14 @@ impl Scheduler {
                 return;
             }
         };
+        if let Some([least, most]) = self.pace
+            && let Some(site) = site(&self.jobs, &slot.rec)
+        {
+            let (least, most) = (least.min(most), least.max(most));
+            let secs = f64::from(least) + f64::from(most - least) * crate::http::jitter();
+            let at = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+            self.next_start.insert(site, at);
+        }
         match (then, result) {
             (Then::Remove { delete_output }, result) => {
                 if let Ok(output) = result {
@@ -681,16 +711,52 @@ impl Scheduler {
         if !self.running || self.held || !self.stopping.is_empty() {
             return;
         }
-        let room = self.max.saturating_sub(self.active());
-        let ready: Vec<EpisodeId> = self
-            .slots
-            .iter()
-            .filter(|(_, s)| s.rec.state == EpisodeState::Queued && matches!(s.run, Run::Idle))
-            .map(|(id, _)| *id)
-            .take(room)
-            .collect();
+        let mut room = self.max.saturating_sub(self.active());
+        let now = tokio::time::Instant::now();
+        // Paced sites with an item running wait for it.
+        let mut busy: HashSet<String> = match self.pace {
+            Some(_) => self
+                .slots
+                .values()
+                .filter(|s| matches!(s.run, Run::Running { .. }))
+                .filter_map(|s| site(&self.jobs, &s.rec))
+                .collect(),
+            None => HashSet::new(),
+        };
+        let mut ready = Vec::new();
+        let mut earliest: Option<tokio::time::Instant> = None;
+        for (id, s) in &self.slots {
+            if room == 0 {
+                break;
+            }
+            if s.rec.state != EpisodeState::Queued || !matches!(s.run, Run::Idle) {
+                continue;
+            }
+            if self.pace.is_some()
+                && let Some(site) = site(&self.jobs, &s.rec)
+            {
+                if busy.contains(&site) {
+                    continue;
+                }
+                if let Some(&at) = self.next_start.get(&site).filter(|at| **at > now) {
+                    earliest = Some(earliest.map_or(at, |e| e.min(at)));
+                    continue;
+                }
+                busy.insert(site);
+            }
+            ready.push(*id);
+            room -= 1;
+        }
         for id in ready {
             self.spawn(id);
+        }
+        if let Some(at) = earliest
+            && let Some(tx) = self.tx.upgrade()
+        {
+            tokio::spawn(async move {
+                tokio::time::sleep_until(at).await;
+                let _ = tx.send(Msg::Tick);
+            });
         }
     }
 
@@ -856,6 +922,11 @@ fn stop(slot: &mut Slot, next: Then) {
         }
         cancel.cancel();
     }
+}
+
+/// The site an episode comes from, for pacing: its job's source host.
+fn site(jobs: &BTreeMap<JobId, JobRecord>, ep: &EpisodeRecord) -> Option<String> {
+    jobs.get(&ep.job).and_then(|j| net::host_key(&j.source))
 }
 
 fn status_of(slot: &Slot) -> Status {
