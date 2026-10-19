@@ -11,7 +11,11 @@ brings the window back; `reelgene get/add URL` passes its links to the one
 running); a free-space check; a proxy (the system's, none, or HTTP/SOCKS); a
 speed limit changeable while downloads run; download hours; pacing (one
 item a site at a time, with a random pause between); for pages without a
-resolver, the video the page names in its HTML, then the user's own yt-dlp.
+resolver, the video the page names in its HTML, then the user's own yt-dlp,
+with episodes added one page at a time filed under their series; choosing
+among qualities, with sizes, one or several; settings in pages; a light/dark
+switch; the version shown in the window; a tools folder for ffmpeg, with
+directions in Settings and no restart needed.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:

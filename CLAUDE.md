@@ -81,6 +81,15 @@ fallback only when found, so queued jobs say "not found" instead of naming
 an unknown resolver. Run with `--ignore-config` (a config could add
 downloads or `--exec`), the link after `--`, a timeout, capped output.
 
+**Choosing qualities.** `Engine::qualities` resolves the first episode and
+lists its master playlist's variants, one per height (the richest, which is
+what `Quality::Height` then picks), sized from `AVERAGE-BANDWIDTH` (else
+`BANDWIDTH`) times the length of one variant's playlist. A link the user adds
+that offers two or more opens the picker even for one episode
+(`Settings::ask_quality`); one job per quality ticked, and with several the
+template gains ` [720p]` so the files stay apart. Links queued by themselves
+never ask.
+
 **Resume granularity.** Series per episode (scheduler), playlist per segment,
 single file per byte (`Range` + `If-Range` with the stored ETag or
 Last-Modified, so a changed remote file is downloaded whole, not spliced).

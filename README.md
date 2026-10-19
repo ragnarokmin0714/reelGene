@@ -84,7 +84,12 @@ picker first. **Start** and **Stop** run or hold the whole queue; each series
 and episode has its own pause, resume, retry, remove and open-folder buttons.
 **Settings** covers the download folder, file names, quality, how much runs
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
-export a problem report. The window remembers its size and place. Starting
+export a problem report; it is split into pages (downloads, connections,
+look and sounds, behaviour), and the theme can follow the system or stay
+light or dark — the sun/moon button switches at once. When a video comes in
+several qualities, reelgene lists them with their estimated sizes; tick one,
+or several to get each. The window shows its version in the title bar and
+remembers its size and place. Starting
 reelgene again while it runs brings the window back instead of opening a
 second one. When a batch ends while the window is closed or in the
 background, a system notification says how it went (Settings can turn it

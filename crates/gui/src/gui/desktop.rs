@@ -19,7 +19,7 @@ use reelgene_app::places::Places;
 use reelgene_app::schedule::Schedule;
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
-use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, Status};
+use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, QualityOption, Status};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use std::collections::{HashSet, VecDeque};
@@ -29,11 +29,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak, mpsc};
 use tokio::sync::broadcast::error::RecvError;
 use url::Url;
 
+/// A link read, waiting for the picker: what was found, and the qualities
+/// to choose from (empty: no choice to make).
+pub(crate) type Waiting = (Url, Discovery, Vec<QualityOption>);
+
 /// A window's unfinished business, kept while no window is open.
 #[derive(Default)]
 pub(crate) struct Stash {
     pub grabbed: Vec<Grabbed>,
-    pub waiting: VecDeque<(Url, Discovery)>,
+    pub waiting: VecDeque<Waiting>,
     /// Shown once, by the first window.
     pub warnings: Vec<String>,
 }
@@ -287,7 +291,8 @@ impl Desktop {
             }
             if auto && !link.private {
                 if !queued.contains(&net::redact(&link.url)) {
-                    self.read(link.url);
+                    // Queued by itself: no questions.
+                    self.read_as(link.url, false);
                 }
             } else {
                 listed.push(link);
@@ -301,20 +306,33 @@ impl Desktop {
 
     /// Read what is behind a link, in the background. A single video is
     /// queued right away; a series goes to the window for the episode picker.
+    /// A link the user added: may ask which episodes, and which qualities.
     pub fn read(self: &Arc<Self>, url: Url) {
+        self.read_as(url, true);
+    }
+
+    fn read_as(self: &Arc<Self>, url: Url, ask: bool) {
         self.reading.fetch_add(1, Ordering::Relaxed);
         let me = Arc::clone(self);
         let settings = self.settings();
         self.rt.spawn(async move {
             let msg = match me.engine.discover(&url, None).await {
-                Ok(d) if d.found.episodes.len() == 1 => {
-                    let job = job(&settings, &me.places, url.clone(), d);
-                    me.added(url, job).await
+                Ok(d) => {
+                    // A failed look at the qualities is no reason to stop.
+                    let qualities = match ask && settings.ask_quality {
+                        true => me.engine.qualities(&url, &d).await.unwrap_or_default(),
+                        false => Vec::new(),
+                    };
+                    if d.found.episodes.len() == 1 && qualities.len() < 2 {
+                        let job = job(&settings, &me.places, url.clone(), d);
+                        me.added(url, job).await
+                    } else {
+                        Msg::Discovered {
+                            url,
+                            result: Ok(Box::new((d, qualities))),
+                        }
+                    }
                 }
-                Ok(d) => Msg::Discovered {
-                    url,
-                    result: Ok(Box::new(d)),
-                },
                 Err(e) => Msg::Discovered {
                     url,
                     result: Err(e.to_string()),

@@ -23,7 +23,7 @@ use reelgene_app::app::{App, OpenError};
 use reelgene_app::handoff::{self, Reply, Request};
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
-use reelgene_core::engine::{Command, Discovery, Event, Target};
+use reelgene_core::engine::{Command, Discovery, Event, QualityOption, Target};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use std::collections::VecDeque;
@@ -45,7 +45,7 @@ pub(crate) enum Msg {
     /// A series, for the episode picker; or why a link could not be read.
     Discovered {
         url: Url,
-        result: Result<Box<Discovery>, String>,
+        result: Result<Box<(Discovery, Vec<QualityOption>)>, String>,
     },
     /// A job queued (its title), or why not.
     Added {
@@ -116,7 +116,7 @@ pub struct Gui {
     pub(crate) grabbed: Vec<Grabbed>,
     pub(crate) dialog: Option<Dialog>,
     /// Multi-episode discoveries waiting for the picker to be free.
-    waiting: VecDeque<(Url, Discovery)>,
+    waiting: VecDeque<desktop::Waiting>,
     pub(crate) toasts: Vec<Toast>,
     ctx: egui::Context,
     default_animation_time: f32,
@@ -261,7 +261,10 @@ impl Gui {
             Msg::Discovered { url, result } => {
                 self.grabbed.retain(|g| g.link.url != url);
                 match result {
-                    Ok(d) => self.waiting.push_back((url, *d)),
+                    Ok(found) => {
+                        let (d, qualities) = *found;
+                        self.waiting.push_back((url, d, qualities));
+                    }
                     Err(e) => self.toast(format!("{}: {e}", net::redact(&url)), true),
                 }
             }
@@ -316,9 +319,9 @@ impl Gui {
     /// Open the episode picker for the next series waiting, if it is free.
     fn next_pick(&mut self) {
         if self.dialog.is_none()
-            && let Some((url, d)) = self.waiting.pop_front()
+            && let Some((url, d, qualities)) = self.waiting.pop_front()
         {
-            let pick = dialogs::Pick::new(url, d, &self.settings, self.download_dir());
+            let pick = dialogs::Pick::new(url, d, &self.settings, self.download_dir(), qualities);
             self.dialog = Some(Dialog::Pick(Box::new(pick)));
         }
     }

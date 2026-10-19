@@ -66,6 +66,9 @@ pub struct Settings {
     pub close_to_tray: bool,
     /// Queue detected links by themselves instead of listing them first.
     pub auto_add: bool,
+    /// When a video comes in several qualities, ask which (one or more)
+    /// rather than take `quality`. Links queued by themselves never ask.
+    pub ask_quality: bool,
     /// A system notification when a batch ends and the window is not in front.
     pub notify: bool,
 }
@@ -98,6 +101,7 @@ impl Default for Settings {
             language: None,
             close_to_tray: true,
             auto_add: false,
+            ask_quality: true,
             notify: true,
         }
     }

@@ -12,7 +12,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use reelgene_app::settings::Settings;
 use reelgene_core::detect;
-use reelgene_core::engine::{Engine, EngineConfig};
+use reelgene_core::engine::{Engine, EngineConfig, Status};
 use reelgene_core::resolver::{
     Ctx, Discovered, EpisodeRef, MediaKind, Registry, Resolved, Resolver,
 };
@@ -112,6 +112,23 @@ fn playlist_routes() -> HashMap<&'static str, Vec<u8>> {
             b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\na.ts\n#EXT-X-ENDLIST\n".to_vec(),
         ),
         ("/show/ep02/a.ts", b"more video".to_vec()),
+        (
+            "/multi/master.m3u8",
+            b"#EXTM3U\n\
+              #EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\nv1080.m3u8\n\
+              #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nv360.m3u8\n"
+                .to_vec(),
+        ),
+        (
+            "/multi/v1080.m3u8",
+            b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\nhi.ts\n#EXT-X-ENDLIST\n".to_vec(),
+        ),
+        (
+            "/multi/v360.m3u8",
+            b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\nlo.ts\n#EXT-X-ENDLIST\n".to_vec(),
+        ),
+        ("/multi/hi.ts", b"sharp".to_vec()),
+        ("/multi/lo.ts", b"soft".to_vec()),
     ])
 }
 
@@ -541,6 +558,54 @@ fn ffmpeg_put_in_the_tools_folder_is_found_without_a_restart() {
 }
 
 #[test]
+fn a_video_in_several_qualities_asks_which_and_can_take_two() {
+    let env = env("qualities");
+    let mut h = window(&env, english());
+    type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
+    until(&mut h, "the qualities with their sizes", |h| {
+        h.query_by_label_contains("1080p · 5.0 Mbps · about")
+            .is_some()
+    });
+    // The default quality (best) is ticked; take the small one as well.
+    h.get_by_label_contains("360p").click();
+    settle(&mut h);
+    let _ = h.get_by_label_contains("for the 2 chosen");
+    h.get_by_label(&(EN.add_n)(2)).click();
+    settle(&mut h);
+    h.get_by_label(EN.start).click();
+    settle(&mut h);
+    let mut names = Vec::new();
+    for _ in 0..300 {
+        let jobs = env.rt.block_on(env.engine.snapshot()).unwrap();
+        names = jobs
+            .iter()
+            .flat_map(|j| &j.episodes)
+            .filter_map(|e| match &e.status {
+                Status::Done { output } => {
+                    let name = output.file_name().unwrap().to_string_lossy().into_owned();
+                    Some(format!(
+                        "{name} = {}",
+                        std::fs::read_to_string(output).unwrap()
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+        if names.len() == 2 {
+            break;
+        }
+        h.run_steps(2);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    names.sort();
+    assert_eq!(
+        names,
+        ["01 multi [1080p].ts = sharp", "01 multi [360p].ts = soft"],
+        "one of each, apart by name, each its own quality"
+    );
+}
+
+#[test]
 fn removing_a_job_asks_first() {
     let env = env("remove");
     let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();
@@ -885,7 +950,16 @@ mod screens {
                 found,
             };
             let url = Url::parse("https://example.com/drama/123").unwrap();
-            let pick = super::super::dialogs::Pick::new(url, d, &g.settings, g.download_dir());
+            let qualities = [(1080, 4_200_000), (720, 2_100_000), (480, 900_000)]
+                .map(|(height, bitrate)| reelgene_core::engine::QualityOption {
+                    quality: reelgene_core::hls::Quality::Height(height),
+                    height,
+                    bitrate,
+                    size: Some(bitrate / 8 * 120),
+                })
+                .to_vec();
+            let pick =
+                super::super::dialogs::Pick::new(url, d, &g.settings, g.download_dir(), qualities);
             g.dialog = Some(super::super::Dialog::Pick(Box::new(pick)));
         });
         shoot("settings-light", Light, "en", |g| {

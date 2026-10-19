@@ -4,7 +4,7 @@ use super::widgets::{self, Kind};
 use super::{Action, Dialog, Gui};
 use eframe::egui::{self, RichText};
 use reelgene_app::settings::Settings;
-use reelgene_core::engine::{Command, Discovery};
+use reelgene_core::engine::{Command, Discovery, QualityOption};
 use reelgene_core::hls::Quality;
 use reelgene_core::paths::{self, NameVars};
 use std::path::{Path, PathBuf};
@@ -29,6 +29,9 @@ pub(crate) struct Pick {
     checked: Vec<bool>,
     range: String,
     quality: String,
+    /// The qualities on offer, ticked or not; fewer than two: the
+    /// `quality` choice instead.
+    qualities: Vec<(QualityOption, bool)>,
     folder: String,
     template: String,
 }
@@ -39,7 +42,18 @@ impl Pick {
         discovery: Discovery,
         settings: &Settings,
         folder: PathBuf,
+        qualities: Vec<QualityOption>,
     ) -> Self {
+        // Ticked to start with: the one the default quality would pick.
+        let want: reelgene_core::hls::Quality = settings.quality.parse().unwrap_or_default();
+        let start = match want {
+            reelgene_core::hls::Quality::Best => 0,
+            reelgene_core::hls::Quality::Worst => qualities.len().saturating_sub(1),
+            reelgene_core::hls::Quality::Height(h) => qualities
+                .iter()
+                .position(|q| q.height <= h)
+                .unwrap_or(qualities.len().saturating_sub(1)),
+        };
         Self {
             url,
             title: discovery.found.title.clone(),
@@ -47,14 +61,24 @@ impl Pick {
             discovery,
             range: String::new(),
             quality: settings.quality.clone(),
+            qualities: qualities
+                .into_iter()
+                .enumerate()
+                .map(|(i, q)| (q, i == start))
+                .collect(),
             folder: folder.display().to_string(),
             template: settings.template.clone(),
         }
     }
 
     /// Back to a queued discovery, when the window closes with the picker open.
-    pub(crate) fn into_waiting(self) -> (Url, Discovery) {
-        (self.url, self.discovery)
+    pub(crate) fn into_waiting(self) -> super::desktop::Waiting {
+        let qualities = self.qualities.into_iter().map(|(q, _)| q).collect();
+        (self.url, self.discovery, qualities)
+    }
+
+    fn choosing_quality(&self) -> bool {
+        self.qualities.len() > 1
     }
 
     pub(crate) fn set_folder(&mut self, path: &Path) {
@@ -69,19 +93,43 @@ impl Pick {
         }
     }
 
-    fn job(&self) -> Option<reelgene_core::store::NewJob> {
+    /// A job per quality chosen; empty when nothing can be added yet.
+    fn jobs(&self) -> Vec<reelgene_core::store::NewJob> {
         let folder = PathBuf::from(self.folder.trim());
         if !folder.is_absolute() {
-            return None;
+            return Vec::new();
         }
         let mut job = self.discovery.clone().into_job(self.url.clone(), folder);
         job.title = self.title.trim().to_owned();
         let mut checked = self.checked.iter();
         job.episodes
             .retain(|_| checked.next().copied().unwrap_or(false));
-        job.quality = self.quality.parse().unwrap_or_default();
         job.template.clone_from(&self.template);
-        (!job.episodes.is_empty() && !job.title.is_empty()).then_some(job)
+        if job.episodes.is_empty() || job.title.is_empty() {
+            return Vec::new();
+        }
+        if !self.choosing_quality() {
+            job.quality = self.quality.parse().unwrap_or_default();
+            return vec![job];
+        }
+        let chosen: Vec<&QualityOption> = self
+            .qualities
+            .iter()
+            .filter_map(|(q, on)| on.then_some(q))
+            .collect();
+        // Several of one episode: the quality in the name keeps them apart.
+        let several = chosen.len() > 1;
+        chosen
+            .into_iter()
+            .map(|q| {
+                let mut job = job.clone();
+                job.quality = q.quality;
+                if several {
+                    job.template = format!("{} [{}p]", job.template, q.height);
+                }
+                job
+            })
+            .collect()
     }
 
     /// Where the first chosen episode will land, to show before adding.
@@ -91,8 +139,13 @@ impl Pick {
             .iter()
             .zip(&self.discovery.found.episodes)
             .find_map(|(c, e)| c.then_some(e))?;
+        // With several qualities, the first one's name.
+        let template = self
+            .jobs()
+            .first()
+            .map_or_else(|| self.template.clone(), |j| j.template.clone());
         let rel = paths::render_template(
-            &self.template,
+            &template,
             &NameVars {
                 series: self.title.trim(),
                 title: &first.title,
@@ -275,9 +328,11 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
             ui.add(egui::TextEdit::singleline(&mut pick.title).desired_width(320.0))
                 .on_hover_text(t.series);
             ui.end_row();
-            let label = ui.label(t.quality).id;
-            quality_combo(t, &mut pick.quality, "pick-quality", label, ui);
-            ui.end_row();
+            if !pick.choosing_quality() {
+                let label = ui.label(t.quality).id;
+                quality_combo(t, &mut pick.quality, "pick-quality", label, ui);
+                ui.end_row();
+            }
             ui.label(t.folder);
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut pick.folder).desired_width(250.0))
@@ -288,56 +343,63 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
             });
             ui.end_row();
         });
-    ui.separator();
-    ui.horizontal(|ui| {
-        if ui.button(t.all).clicked() {
-            pick.checked.fill(true);
-        }
-        if ui.button(t.none).clicked() {
-            pick.checked.fill(false);
-        }
-        ui.add(
-            egui::TextEdit::singleline(&mut pick.range)
-                .hint_text(t.range_hint)
-                .desired_width(140.0),
-        )
-        .on_hover_text(t.range_hint);
-        if ui.button(t.apply).clicked() {
-            pick.apply_range();
-        }
-    });
-    // Columns, not one long list: short dramas run to 80 episodes and more.
-    let width = ui.available_width();
-    let columns = ((width / 150.0).floor() as usize).clamp(1, 6);
-    let cell = width / columns as f32 - 8.0;
-    egui::ScrollArea::vertical()
-        .max_height(260.0)
-        .show(ui, |ui| {
-            egui::Grid::new("pick-episodes")
-                .num_columns(columns)
-                .spacing([8.0, 4.0])
-                .show(ui, |ui| {
-                    let episodes = pick.checked.iter_mut().zip(&pick.discovery.found.episodes);
-                    for (i, (check, ep)) in episodes.enumerate() {
-                        ui.allocate_ui(egui::vec2(cell, 22.0), |ui| {
-                            ui.set_max_width(cell);
-                            let text = format!("{:02}  {}", ep.index, ep.title);
-                            ui.checkbox(check, text).on_hover_text(&ep.title);
-                        });
-                        if (i + 1) % columns == 0 {
-                            ui.end_row();
-                        }
-                    }
-                });
+    if pick.choosing_quality() {
+        quality_list(t, pick, ui);
+    }
+    // One episode: nothing to pick among.
+    let single = pick.discovery.found.episodes.len() == 1;
+    if !single {
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button(t.all).clicked() {
+                pick.checked.fill(true);
+            }
+            if ui.button(t.none).clicked() {
+                pick.checked.fill(false);
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut pick.range)
+                    .hint_text(t.range_hint)
+                    .desired_width(140.0),
+            )
+            .on_hover_text(t.range_hint);
+            if ui.button(t.apply).clicked() {
+                pick.apply_range();
+            }
         });
+        // Columns, not one long list: short dramas run to 80 episodes and more.
+        let width = ui.available_width();
+        let columns = ((width / 150.0).floor() as usize).clamp(1, 6);
+        let cell = width / columns as f32 - 8.0;
+        egui::ScrollArea::vertical()
+            .max_height(260.0)
+            .show(ui, |ui| {
+                egui::Grid::new("pick-episodes")
+                    .num_columns(columns)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        let episodes = pick.checked.iter_mut().zip(&pick.discovery.found.episodes);
+                        for (i, (check, ep)) in episodes.enumerate() {
+                            ui.allocate_ui(egui::vec2(cell, 22.0), |ui| {
+                                ui.set_max_width(cell);
+                                let text = format!("{:02}  {}", ep.index, ep.title);
+                                ui.checkbox(check, text).on_hover_text(&ep.title);
+                            });
+                            if (i + 1) % columns == 0 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+            });
+    }
     if let Some(preview) = pick.preview() {
         ui.add(egui::Label::new(RichText::new((t.saved_as)(&preview)).weak().small()).truncate());
     }
     ui.add_space(6.0);
-    let chosen = pick.checked.iter().filter(|c| **c).count();
+    let jobs = pick.jobs();
+    let chosen = jobs.iter().map(|j| j.episodes.len()).sum();
     ui.horizontal(|ui| {
-        let job = pick.job();
-        ui.add_enabled_ui(job.is_some(), |ui| {
+        ui.add_enabled_ui(!jobs.is_empty(), |ui| {
             if widgets::button(
                 ui,
                 Kind::Primary,
@@ -345,15 +407,46 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
                 &(t.add_n)(chosen),
             )
             .clicked()
-                && let Some(job) = job
             {
-                actions.push(Action::Add(job));
+                actions.extend(jobs.into_iter().map(Action::Add));
             }
         });
         if widgets::button(ui, Kind::Secondary, None, t.cancel).clicked() {
             actions.push(Action::Close);
         }
     });
+}
+
+/// The qualities on offer, each with its size; a series also shows the
+/// total for the episodes and qualities ticked.
+fn quality_list(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui) {
+    let p = super::theme::palette(ui);
+    ui.separator();
+    ui.label(RichText::new(t.quality).font(super::theme::strong(14.0)));
+    ui.label(RichText::new(t.qualities_hint).color(p.weak).size(12.0));
+    for (q, on) in &mut pick.qualities {
+        let size = q.size.map(|b| reelgene_app::format::bytes(b as f64));
+        let text = (t.quality_option)(q.height, q.bitrate as f64 / 1e6, size.as_deref());
+        ui.checkbox(on, text);
+    }
+    let episodes = pick.checked.iter().filter(|c| **c).count();
+    let per_episode: Option<u64> = pick
+        .qualities
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(q, _)| q.size)
+        .sum();
+    let items = episodes * pick.qualities.iter().filter(|(_, on)| *on).count();
+    if items > 1
+        && let Some(each) = per_episode
+    {
+        let total = reelgene_app::format::bytes((each * episodes as u64) as f64);
+        ui.label(
+            RichText::new((t.quality_total)(&total, items))
+                .color(p.weak)
+                .size(12.0),
+        );
+    }
 }
 
 /// What the settings window shows about ffmpeg: what was found, and where to
@@ -601,6 +694,7 @@ fn settings_ui(
                 ui.checkbox(&mut form.s.autostart, t.autostart);
                 ui.checkbox(&mut form.s.close_to_tray, t.close_to_tray);
                 ui.checkbox(&mut form.s.notify, t.notify);
+                ui.checkbox(&mut form.s.ask_quality, t.ask_quality);
             }
         });
     ui.add_space(18.0);
