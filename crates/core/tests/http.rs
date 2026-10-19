@@ -172,15 +172,13 @@ async fn per_request_headers_are_sent() {
     );
 }
 
+/// A fresh folder per call. A counter, not the clock: Windows' clock ticks in
+/// 100 ns, and two tests in parallel once got the same folder and wrote over
+/// each other's `v.mp4.part`.
 fn dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "reelgene-http-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("reelgene-http-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
