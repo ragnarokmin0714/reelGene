@@ -568,7 +568,7 @@ fn native_options(size: [f32; 2], remember: Option<PathBuf>) -> eframe::NativeOp
     };
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("reelgene")
+            .with_title(format!("reelgene {}", reelgene_app::VERSION))
             .with_app_id("reelgene")
             .with_inner_size(size)
             .with_min_inner_size([480.0, 320.0])

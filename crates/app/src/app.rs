@@ -60,7 +60,7 @@ impl App {
         crate::logging::init(&places.data_dir);
         log::info!(
             "reelgene {} starting ({}), data in {}",
-            env!("CARGO_PKG_VERSION"),
+            crate::VERSION,
             if places.portable {
                 "portable"
             } else {

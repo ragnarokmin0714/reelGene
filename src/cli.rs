@@ -25,7 +25,7 @@ use url::Url;
 #[derive(Parser, Debug)]
 #[command(
     name = "reelgene",
-    version,
+    version = reelgene_app::VERSION,
     about = "Portable video downloader: HLS playlists and direct links, resumable."
 )]
 pub struct Cli {
@@ -128,7 +128,7 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         return doctor().await;
     }
     if let Cmd::Licenses = cmd {
-        println!("reelgene {}: MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"));
+        println!("reelgene {}: MIT OR Apache-2.0", reelgene_app::VERSION);
         println!(
             "Source and full licence texts: {}\n",
             env!("CARGO_PKG_REPOSITORY")
@@ -685,7 +685,7 @@ async fn doctor() -> Result<ExitCode, String> {
         .download_dir
         .clone()
         .unwrap_or_else(|| places.downloads.clone());
-    println!("reelgene   {}", env!("CARGO_PKG_VERSION"));
+    println!("reelgene   {}", reelgene_app::VERSION);
     let mode = if places.portable {
         "portable (files beside the program)"
     } else {

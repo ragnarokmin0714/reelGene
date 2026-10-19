@@ -24,7 +24,7 @@ pub fn build(
     let _ = writeln!(
         out,
         "version    {} ({} {})",
-        env!("CARGO_PKG_VERSION"),
+        crate::VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH
     );
