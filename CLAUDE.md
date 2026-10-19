@@ -38,7 +38,7 @@ cargo deny check
 1. **Never name a specific video site** in anything that reaches this
    repository: code, comments, docs, test data, commit messages, branch
    names. reelgene is a general-purpose downloader. Site resolvers live on a
-   private branch that changes only `crates/reelgene-core/src/resolver/extra.rs`
+   private branch that changes only `crates/core/src/resolver/extra.rs`
    and adds its own modules, so it rebases onto `main` without conflicts:
    `main` never edits `extra.rs` beyond its placeholder.
 2. **No watermark, logo or overlay removal; no DRM circumvention.** DRM is
@@ -190,10 +190,15 @@ and stop reelgene from starting at all where it is missing.
 
 ## Layout
 
-Four crates, each depending only on the ones above it:
+Four packages, each depending only on the ones below it in this picture. The
+program is the root package; the three libraries it is built from are under
+`crates/` (their package names keep the `reelgene-` prefix):
 
 ```
-crates/reelgene-core/   engine, no UI
+src/                    package `reelgene`: the executable
+  main.rs cli.rs term.rs  start-up, the command line
+tests/cli.rs            the real binary against a local server
+crates/core/            package `reelgene-core`: the engine, no UI
   src/error.rs          one typed error; is_transient / is_expired_url
   src/net.rs            redact, is_private, may_follow
   src/hls.rs crypto.rs  M3U8 parsing, AES-128 (from reelhold)
@@ -205,17 +210,15 @@ crates/reelgene-core/   engine, no UI
   src/engine/           scheduler (mod.rs), worker.rs, meter.rs
   src/mux.rs            concat, ffmpeg, media checks, Mark of the Web
   tests/                http.rs, engine.rs, support/ (fake CDN)
-crates/reelgene-app/    what the front ends share; no UI library
+crates/app/             package `reelgene-app`: what the front ends share, no UI
   src/app.rs            App::open (places, lock, settings, ffmpeg, log) and the engine
   src/places.rs settings.rs instance.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
-crates/reelgene-gui/    the window; the only crate that knows egui
+crates/gui/             package `reelgene-gui`: the window; the only one that knows egui
   src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,
                         theme, widgets, tests
-  assets/               Inter fonts; font licences
   src/tray.rs sound.rs clipboard.rs icon.rs
-crates/reelgene/        the executable: main.rs, cli.rs, term.rs
-  tests/cli.rs          the real binary against a local server
+  assets/               Inter fonts; font licences
 ```
 
 The rest of the program reaches the window only through `reelgene_gui::run`,

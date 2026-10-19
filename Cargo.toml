@@ -1,6 +1,39 @@
+# The program itself is the root package (src/); the three libraries it is
+# built from sit under crates/.
+[package]
+name = "reelgene"
+description = "Portable video downloader for Windows and Linux: HLS playlists and direct links, resumable."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ragnarokmin0714/reelgene"
+publish = false
+
+[features]
+default = ["gui"]
+# Without it: the command line only, no window toolkit linked (servers).
+gui = ["dep:reelgene-gui"]
+
+[dependencies]
+reelgene-core.workspace = true
+reelgene-app.workspace = true
+reelgene-gui = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["signal"] }
+clap.workspace = true
+url.workspace = true
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
 [workspace]
 resolver = "3"
-members = ["crates/reelgene-core", "crates/reelgene-app", "crates/reelgene-gui", "crates/reelgene"]
+members = ["crates/core", "crates/app", "crates/gui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,9 +44,9 @@ repository = "https://github.com/ragnarokmin0714/reelgene"
 publish = false
 
 [workspace.dependencies]
-reelgene-core = { path = "crates/reelgene-core" }
-reelgene-app = { path = "crates/reelgene-app" }
-reelgene-gui = { path = "crates/reelgene-gui" }
+reelgene-core = { path = "crates/core" }
+reelgene-app = { path = "crates/app" }
+reelgene-gui = { path = "crates/gui" }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "process", "io-util"] }
 tokio-util = "0.7.20"
 futures = "0.3.34"

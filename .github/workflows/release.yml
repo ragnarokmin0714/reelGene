@@ -79,7 +79,7 @@ jobs:
         run: |
           {
             echo "Fonts built into reelgene, and their licences."
-            for f in crates/reelgene-gui/assets/licenses/*.txt; do
+            for f in crates/gui/assets/licenses/*.txt; do
               printf '\n==== %s ====\n\n' "$(basename "$f" .txt)"
               cat "$f"
             done

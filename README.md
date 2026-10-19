@@ -184,5 +184,5 @@ MIT or Apache-2.0, at your option: [`LICENSE-MIT`](LICENSE-MIT),
 
 The window uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font
 License 1.1) and egui's built-in fonts; their licences are in
-`crates/reelgene-gui/assets/licenses/`, come with each release as
+`crates/gui/assets/licenses/`, come with each release as
 `THIRD-PARTY-NOTICES.txt`, and are shown by `reelgene licenses`.
