@@ -47,6 +47,18 @@ impl Resolver for Page {
                 .to_owned()
         });
         let several = videos.len() > 1;
+        // One episode of a series: file it under the series, by its number.
+        if !several && let Some(ep) = super::title::split_episode(&title) {
+            return Ok(Discovered {
+                spec: json!({ "url": url.as_str() }),
+                episodes: vec![EpisodeRef {
+                    index: ep.index,
+                    title: ep.label,
+                    hint: json!({ "n": 0 }),
+                }],
+                title: ep.series,
+            });
+        }
         Ok(Discovered {
             spec: json!({ "url": url.as_str() }),
             episodes: (0..videos.len())

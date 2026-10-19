@@ -1043,3 +1043,48 @@ async fn a_page_without_a_player_says_so_and_points_at_yt_dlp() {
     assert!(e.contains("found no video on this page"), "{e}");
     assert!(e.contains("with yt-dlp installed"), "{e}");
 }
+
+#[tokio::test]
+async fn episodes_added_page_by_page_share_their_series_folder() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    for n in [1, 2] {
+        cdn.serve(
+            &format!("/watch/{n}"),
+            format!(
+                r#"<html><head><meta property="og:title" content="《Show》第{n}集"></head>
+                   <body><video><source src="/index.m3u8"></video></body></html>"#
+            ),
+        );
+    }
+    let mut h = harness("page-series").await;
+    let mut outputs = Vec::new();
+    for n in [2, 1] {
+        let page = cdn.url(&format!("/watch/{n}"));
+        let found = h.engine.discover(&page, None).await.unwrap();
+        assert_eq!(found.found.title, "Show");
+        let id = h
+            .engine
+            .add(found.into_job(page.clone(), h.out()))
+            .await
+            .unwrap();
+        let ep = h
+            .engine
+            .snapshot()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap()
+            .episodes[0]
+            .id;
+        outputs.push(h.done(ep).await);
+    }
+    assert_eq!(
+        outputs,
+        [
+            h.out().join("Show").join("02 第2集.ts"),
+            h.out().join("Show").join("01 第1集.ts")
+        ]
+    );
+}

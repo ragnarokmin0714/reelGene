@@ -19,6 +19,7 @@
 pub mod direct;
 mod extra;
 pub mod page;
+mod title;
 pub mod ytdlp;
 
 use crate::error::{Error, Result};

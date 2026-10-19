@@ -113,6 +113,18 @@ impl Resolver for YtDlp {
                     hint: json!({ "url": link.as_str() }),
                 })
                 .collect()
+        } else if let Some(ep) = super::title::split_episode(&title) {
+            // One episode of a series: file it under the series, by its number.
+            let episodes = vec![EpisodeRef {
+                index: ep.index,
+                title: ep.label,
+                hint: json!({}),
+            }];
+            return Ok(Discovered {
+                title: ep.series,
+                spec: json!({ "url": url.as_str() }),
+                episodes,
+            });
         } else {
             vec![EpisodeRef {
                 index: 1,
