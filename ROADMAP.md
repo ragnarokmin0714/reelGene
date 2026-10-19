@@ -35,8 +35,6 @@ Before calling it released:
   of refusing.
 - **`reelgene doctor` resolver checks**: one real request per resolver, to
   tell which ones a site change has broken.
-- **A colour-range fix on remux**, if a washed-out "film" seen on some videos
-  turns out to be a mislabelled colour range (waiting on an example).
 
 ## Later
 
