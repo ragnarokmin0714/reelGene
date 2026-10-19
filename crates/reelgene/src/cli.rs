@@ -1,10 +1,11 @@
 //! The command line: the same engine as the window, drawn as text.
 
-use crate::app::{self, App};
-use crate::places::Places;
-use crate::settings::Settings;
-use crate::term::{self, Line};
+use crate::term::Line;
 use clap::{Args, Parser, Subcommand};
+use reelgene_app::app::{self, App};
+use reelgene_app::format;
+use reelgene_app::places::Places;
+use reelgene_app::settings::Settings;
 use reelgene_core::engine::{
     Command, Engine, EpisodeId, Event, JobId, JobView, Notice, Status, Target,
 };
@@ -146,14 +147,14 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         }
         Cmd::Report => {
             let jobs = snapshot(&engine).await?;
-            let text = crate::report::build(
+            let text = reelgene_app::report::build(
                 &app.places,
                 &app.settings,
                 app.ffmpeg_label().as_deref(),
                 &jobs,
             );
             let here = std::env::current_dir().map_err(|e| e.to_string())?;
-            let path = crate::report::write(&here, &text).map_err(|e| e.to_string())?;
+            let path = reelgene_app::report::write(&here, &text).map_err(|e| e.to_string())?;
             println!("report written: {}", path.display());
             ExitCode::SUCCESS
         }
@@ -283,7 +284,7 @@ async fn drive(engine: &Engine) -> Result<ExitCode, String> {
                         Status::Failed { error } => line.say(&format!("failed   {name}: {error}")),
                         Status::Waiting { retry_in, error } => line.say(&format!(
                             "waiting  {name}: {error} (trying again in {})",
-                            term::duration(*retry_in)
+                            format::duration(*retry_in)
                         )),
                         _ => {}
                     }
@@ -319,7 +320,7 @@ async fn drive(engine: &Engine) -> Result<ExitCode, String> {
                 let speed: f64 = speeds.values().sum();
                 line.draw(&format!(
                     "{running} downloading · {queued} queued · {done} done · {}/s",
-                    term::bytes(speed)
+                    format::bytes(speed)
                 ));
             }
             _ = &mut ctrl_c => {
@@ -426,7 +427,7 @@ async fn doctor() -> Result<ExitCode, String> {
     println!("queue      {}", places.queue_db().display());
     println!(
         "logs       {}",
-        crate::logging::dir(&places.data_dir).display()
+        reelgene_app::logging::dir(&places.data_dir).display()
     );
     println!("downloads  {}", downloads.display());
     match &ffmpeg {

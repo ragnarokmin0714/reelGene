@@ -4,8 +4,8 @@
 use super::model::{EpRow, JobRow};
 use super::text::Text;
 use super::{Action, Dialog, Gui, dialogs};
-use crate::term;
 use eframe::egui::{self, Align, Color32, Layout, RichText};
+use reelgene_app::format;
 use reelgene_core::detect::{self, LinkKind};
 use reelgene_core::engine::{Command, Status, Target};
 use reelgene_core::net;
@@ -154,7 +154,7 @@ fn status_bar(g: &Gui, ui: &mut egui::Ui) {
             let c = g.model.counts();
             ui.label((t.counts)(c.downloading, c.queued, c.done, c.failed));
             if c.downloading > 0 {
-                ui.label(format!("{}/s", term::bytes(c.speed)));
+                ui.label(format!("{}/s", format::bytes(c.speed)));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 match &g.ffmpeg {
@@ -273,10 +273,10 @@ fn episode_row(
                 };
                 ui.add(bar);
                 if let Some(p) = ep.progress.as_ref().filter(|p| p.speed > 0.0) {
-                    let mut line = format!("{}/s", term::bytes(p.speed));
+                    let mut line = format!("{}/s", format::bytes(p.speed));
                     if let Some(eta) = ep.eta() {
                         line.push_str(" · ");
-                        line.push_str(&(t.left)(&term::duration(eta)));
+                        line.push_str(&(t.left)(&format::duration(eta)));
                     }
                     ui.weak(line);
                 }

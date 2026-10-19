@@ -1,0 +1,45 @@
+[package]
+name = "reelgene-gui"
+description = "reelgene's window: egui, the tray, sounds, clipboard watching."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+reelgene-core.workspace = true
+reelgene-app.workspace = true
+tokio.workspace = true
+url.workspace = true
+eframe.workspace = true
+# Text only: the image feature would pull in a whole image codec stack.
+arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
+# Local time for quiet hours; std has none.
+jiff = "0.2.38"
+# The system's folder/file picker: the desktop portal over D-Bus on Linux (no
+# GTK), the common dialog on Windows.
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Tray over D-Bus (StatusNotifierItem): pure Rust, no GTK.
+ksni = "0.3.6"
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.26.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Media_Audio"] }
+
+[dev-dependencies]
+egui_kittest.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+
+[lints.rust]
+# PlaySound on Windows is the one FFI call; it gets a local allow and a SAFETY
+# comment.
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

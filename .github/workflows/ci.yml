@@ -32,6 +32,9 @@ jobs:
         run: cargo fmt --all -- --check
       # On both systems: part of the platform code only compiles on one.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The command-line-only build links no window toolkit, so features the
+      # window switches on for everything else go missing here.
+      - run: cargo clippy -p reelgene --no-default-features --all-targets --locked -- -D warnings
       # Every failing test in one run, not just the first failing binary.
       - run: cargo test --workspace --locked --no-fail-fast
 

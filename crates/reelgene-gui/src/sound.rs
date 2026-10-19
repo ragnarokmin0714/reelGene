@@ -7,7 +7,7 @@
 //! without it, the CLI included. Windows has `PlaySound`; Linux gets the first
 //! of `pw-play`, `paplay`, `aplay` found, or silence.
 
-use crate::settings::Settings;
+use reelgene_app::settings::Settings;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -109,7 +109,7 @@ impl Player {
         let players: [(&str, &[&str]); 3] = [("pw-play", &[]), ("paplay", &[]), ("aplay", &["-q"])];
         let Some((path, args)) = players
             .iter()
-            .find_map(|(name, args)| crate::platform::which(name).map(|p| (p, *args)))
+            .find_map(|(name, args)| reelgene_app::platform::which(name).map(|p| (p, *args)))
         else {
             return;
         };
@@ -122,7 +122,7 @@ impl Player {
         }
         let mut cmd = Command::new(path);
         cmd.args(args).arg(&file);
-        crate::platform::spawn_detached(cmd);
+        reelgene_app::platform::spawn_detached(cmd);
     }
 }
 

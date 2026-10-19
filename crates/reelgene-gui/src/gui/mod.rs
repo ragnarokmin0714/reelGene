@@ -12,14 +12,14 @@ mod tests;
 pub mod text;
 mod view;
 
-use crate::app::App;
 use crate::clipboard::Watcher;
-use crate::places::Places;
-use crate::settings::Settings;
 use crate::sound::{Cue, Player};
 use crate::tray::{Notify, Tray, TrayCmd};
 use eframe::egui;
 use model::{Effect, Model};
+use reelgene_app::app::App;
+use reelgene_app::places::Places;
+use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
 use reelgene_core::engine::{Command, Discovery, Engine, Event, Target};
 use reelgene_core::net;
@@ -173,7 +173,7 @@ impl Gui {
                 Some(watcher),
                 tray,
                 Some(sound),
-                crate::platform::reduced_motion(),
+                reelgene_app::platform::reduced_motion(),
             )
         } else {
             (None, None, None, false)
@@ -350,7 +350,7 @@ impl Gui {
                 }
             }
             Action::DismissAll => self.grabbed.retain(|g| g.busy),
-            Action::Reveal(path) => crate::platform::reveal(&path),
+            Action::Reveal(path) => reelgene_app::platform::reveal(&path),
             Action::Open(dialog) => self.dialog = Some(dialog),
             Action::Close => {
                 self.dialog = None;
@@ -393,11 +393,15 @@ impl Gui {
     /// Write a problem report into the download folder and show it.
     fn report(&mut self) {
         let jobs = self.rt.block_on(self.engine.snapshot()).unwrap_or_default();
-        let text =
-            crate::report::build(&self.places, &self.settings, self.ffmpeg.as_deref(), &jobs);
-        match crate::report::write(&self.download_dir(), &text) {
+        let text = reelgene_app::report::build(
+            &self.places,
+            &self.settings,
+            self.ffmpeg.as_deref(),
+            &jobs,
+        );
+        match reelgene_app::report::write(&self.download_dir(), &text) {
             Ok(path) => {
-                crate::platform::reveal(&path);
+                reelgene_app::platform::reveal(&path);
                 let msg = (self.t.report_saved)(&path.display().to_string());
                 self.toast(msg, false);
             }

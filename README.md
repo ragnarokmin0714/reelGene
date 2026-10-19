@@ -165,6 +165,7 @@ Rust 1.95 or newer:
 ```sh
 cargo build --release          # target/release/reelgene
 cargo test --workspace
+cargo build --release -p reelgene --no-default-features   # command line only, no window
 ```
 
 Linux release builds use [`cargo zigbuild`](https://github.com/rust-cross/cargo-zigbuild)

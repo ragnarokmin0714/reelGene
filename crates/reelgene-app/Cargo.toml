@@ -1,0 +1,35 @@
+[package]
+name = "reelgene-app"
+description = "What reelgene's front ends share: settings, file locations, the instance lock, logs, problem reports. No UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+reelgene-core.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+# Local time for log lines and reports; std has none.
+jiff = "0.2.38"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[lints.rust]
+# A few stateless Win32 calls (console, locale, reduced motion); each gets a
+# local allow and a SAFETY comment.
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

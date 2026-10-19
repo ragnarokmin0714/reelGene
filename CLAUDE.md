@@ -160,6 +160,8 @@ and stop reelgene from starting at all where it is missing.
 
 ## Layout
 
+Four crates, each depending only on the ones above it:
+
 ```
 crates/reelgene-core/   engine, no UI
   src/error.rs          one typed error; is_transient / is_expired_url
@@ -171,16 +173,25 @@ crates/reelgene-core/   engine, no UI
   src/resolver/         the site seam: mod.rs, direct.rs, extra.rs
   src/store.rs          SQLite actor
   src/engine/           scheduler (mod.rs), worker.rs, meter.rs
-  src/mux.rs            concat, ffmpeg, Mark of the Web
+  src/mux.rs            concat, ffmpeg, media checks, Mark of the Web
   tests/                http.rs, engine.rs, support/ (fake CDN)
-crates/reelgene/        the program
-  src/cli.rs app.rs     CLI and what every front end needs
-  src/gui/              window: mod, model, view, dialogs, text, tests
-  src/places.rs settings.rs instance.rs
-  src/clipboard.rs tray.rs sound.rs icon.rs platform.rs term.rs
-  src/logging.rs report.rs
+crates/reelgene-app/    what the front ends share; no UI library
+  src/app.rs            App::open (places, lock, settings, ffmpeg, log) and the engine
+  src/places.rs settings.rs instance.rs logging.rs report.rs format.rs
+  src/platform.rs       which, reveal, console attach, locale, reduced motion
+crates/reelgene-gui/    the window; the only crate that knows egui
+  src/gui/              mod (Gui, run), model, view, dialogs, text, tests
+  src/tray.rs sound.rs clipboard.rs icon.rs
+crates/reelgene/        the executable: main.rs, cli.rs, term.rs
   tests/cli.rs          the real binary against a local server
 ```
+
+The rest of the program reaches the window only through `reelgene_gui::run`,
+so the toolkit can be replaced (or a second one tried) without touching the
+CLI, the settings or the engine. `cargo build -p reelgene --no-default-features`
+builds the command line alone, without any window toolkit; CI keeps it
+compiling, because features the window turns on for the whole graph (once:
+`log`'s `std`) are missing there.
 
 ## Testing
 

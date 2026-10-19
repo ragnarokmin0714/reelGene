@@ -4,11 +4,11 @@
 use super::dialogs::Field;
 use super::text::EN;
 use super::{Gui, Msg, Parts};
-use crate::settings::Settings;
 use async_trait::async_trait;
 use eframe::egui;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use reelgene_app::settings::Settings;
 use reelgene_core::detect;
 use reelgene_core::engine::{Engine, EngineConfig};
 use reelgene_core::resolver::{
@@ -151,8 +151,8 @@ fn env(tag: &str) -> Env {
 }
 
 /// Everything inside the test's folder, as `REELGENE_HOME` would lay it out.
-fn places(env: &Env) -> crate::places::Places {
-    crate::places::Places {
+fn places(env: &Env) -> reelgene_app::places::Places {
+    reelgene_app::places::Places {
         portable: false,
         config_dir: env.dir.clone(),
         data_dir: env.dir.clone(),

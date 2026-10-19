@@ -317,7 +317,7 @@ pub static ALL: [&Text; 2] = [&EN, &ZH_TW];
 pub fn pick(setting: Option<&str>) -> &'static Text {
     let wanted = setting
         .map(str::to_owned)
-        .or_else(crate::platform::system_language);
+        .or_else(reelgene_app::platform::system_language);
     match wanted {
         Some(code) if code.to_ascii_lowercase().starts_with("zh") => &ZH_TW,
         _ => &EN,
@@ -328,7 +328,9 @@ impl Text {
     pub fn status(&self, status: &Status) -> String {
         match status {
             Status::Queued => self.queued.into(),
-            Status::Waiting { retry_in, .. } => (self.retry_in)(&crate::term::duration(*retry_in)),
+            Status::Waiting { retry_in, .. } => {
+                (self.retry_in)(&reelgene_app::format::duration(*retry_in))
+            }
             Status::Resolving => self.resolving.into(),
             Status::Downloading => self.downloading.into(),
             Status::Assembling => self.assembling.into(),

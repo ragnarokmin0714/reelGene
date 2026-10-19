@@ -8,45 +8,22 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["gui"]
+# Without it: the command line only, no window toolkit linked (servers).
+gui = ["dep:reelgene-gui"]
+
 [dependencies]
 reelgene-core.workspace = true
+reelgene-app.workspace = true
+reelgene-gui = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["signal"] }
 clap.workspace = true
 url.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-eframe.workspace = true
-log.workspace = true
-# Text only: the image feature would pull in a whole image codec stack.
-arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
-# Local time for quiet hours and log lines; std has none.
-jiff = "0.2.38"
-# The system's folder/file picker: the desktop portal over D-Bus on Linux (no
-# GTK), the common dialog on Windows.
-rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Tray over D-Bus (StatusNotifierItem): pure Rust, no GTK.
-ksni = "0.3.6"
-
-[target.'cfg(windows)'.dependencies]
-tray-icon = "0.26.1"
-windows-sys = { version = "0.61.2", features = [
-    "Win32_Foundation",
-    "Win32_Globalization",
-    "Win32_Media_Audio",
-    "Win32_System_Console",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
-[dev-dependencies]
-egui_kittest.workspace = true
-async-trait.workspace = true
 
 [lints.rust]
-# Platform glue (console, sound) will need a little FFI; each use gets a local
-# allow and a SAFETY comment instead of opening the whole crate.
-unsafe_code = "deny"
+unsafe_code = "forbid"
 
 [lints.clippy]
 dbg_macro = "deny"

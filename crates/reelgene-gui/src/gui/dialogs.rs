@@ -1,8 +1,8 @@
 //! The modal dialogs: pick episodes, settings, confirm removal.
 
 use super::{Action, Dialog, Gui};
-use crate::settings::Settings;
 use eframe::egui::{self, RichText};
+use reelgene_app::settings::Settings;
 use reelgene_core::engine::{Command, Discovery};
 use reelgene_core::hls::Quality;
 use reelgene_core::paths::{self, NameVars};

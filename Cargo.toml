@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/reelgene-core", "crates/reelgene"]
+members = ["crates/reelgene-core", "crates/reelgene-app", "crates/reelgene-gui", "crates/reelgene"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,8 @@ publish = false
 
 [workspace.dependencies]
 reelgene-core = { path = "crates/reelgene-core" }
+reelgene-app = { path = "crates/reelgene-app" }
+reelgene-gui = { path = "crates/reelgene-gui" }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "process", "io-util"] }
 tokio-util = "0.7.20"
 futures = "0.3.34"
@@ -21,7 +23,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 async-trait = "0.1.92"
-log = "0.4.34"
+# std: set_boxed_logger. The window used to switch it on by accident.
+log = { version = "0.4.34", features = ["std"] }
 aes = "0.9.3"
 cbc = "0.2.1"
 hex = "0.4.3"

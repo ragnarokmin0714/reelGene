@@ -3774,21 +3774,25 @@ dependencies = [
 name = "reelgene"
 version = "0.1.0"
 dependencies = [
- "arboard",
- "async-trait",
  "clap",
- "eframe",
- "egui_kittest",
+ "reelgene-app",
+ "reelgene-core",
+ "reelgene-gui",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "reelgene-app"
+version = "0.1.0"
+dependencies = [
  "jiff",
- "ksni",
  "log",
  "reelgene-core",
- "rfd",
  "serde",
  "serde_json",
  "tokio",
- "tray-icon",
- "url",
  "windows-sys 0.61.2",
 ]
 
@@ -3810,6 +3814,26 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "reelgene-gui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "async-trait",
+ "eframe",
+ "egui_kittest",
+ "jiff",
+ "ksni",
+ "reelgene-app",
+ "reelgene-core",
+ "rfd",
+ "serde_json",
+ "tokio",
+ "tray-icon",
+ "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
