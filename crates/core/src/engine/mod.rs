@@ -27,7 +27,7 @@ use crate::store::{EpisodeRecord, EpisodeState, JobRecord, NewJob, Store};
 use futures::FutureExt;
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -35,6 +35,10 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 pub use crate::store::{EpisodeId, JobId};
+
+/// Bytes this user may still write on the filesystem holding a path. A
+/// parameter so tests can fill the disk without filling it.
+pub type FreeSpace = Arc<dyn Fn(&Path) -> std::io::Result<u64> + Send + Sync>;
 
 pub struct EngineConfig {
     /// The queue database; `None` keeps it in memory.
@@ -52,6 +56,7 @@ pub struct EngineConfig {
     /// When an episode fails for a transient reason (network down, server
     /// overloaded), wait this long and try again, once per entry; then fail.
     pub retry_delays: Vec<Duration>,
+    pub free_space: FreeSpace,
 }
 
 impl Default for EngineConfig {
@@ -65,6 +70,7 @@ impl Default for EngineConfig {
             ffmpeg: None,
             autostart: true,
             retry_delays: [60, 300, 900].map(Duration::from_secs).to_vec(),
+            free_space: Arc::new(|p: &Path| fs4::available_space(p)),
         }
     }
 }
@@ -222,6 +228,7 @@ struct Shared {
     store: Store,
     segments: usize,
     ffmpeg: Option<Ffmpeg>,
+    free_space: FreeSpace,
     events: broadcast::Sender<Event>,
 }
 
@@ -253,6 +260,7 @@ impl Engine {
             store,
             segments: cfg.segments.max(1),
             ffmpeg: cfg.ffmpeg,
+            free_space: cfg.free_space,
             events,
         });
         let loaded = shared.store.load().await?;

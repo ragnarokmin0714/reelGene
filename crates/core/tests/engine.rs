@@ -754,3 +754,46 @@ async fn a_file_far_shorter_than_its_playlist_is_flagged() {
     assert_eq!((expected, actual), (12.0, 1.0));
     h.done(ep).await; // flagged, still saved
 }
+
+/// Pretend the download folder's disk has this many bytes free.
+fn disk_with(free: u64) -> impl FnOnce(&mut EngineConfig) {
+    move |c| c.free_space = std::sync::Arc::new(move |_: &Path| Ok(free))
+}
+
+#[tokio::test]
+async fn a_playlist_too_big_for_the_disk_stops_after_a_few_segments() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, 12, 0);
+    let mut h = harness_with("full-hls", disk_with(1_000_000)).await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    let error = h.failed(ep).await;
+    assert!(error.contains("not enough disk space"), "{error}");
+    assert!(error.contains("1 MB free"), "{error}");
+    // The estimate needs a few real segment sizes, not the whole episode.
+    assert_eq!(seg_hits(&cdn, 2), 1);
+    assert_eq!(seg_hits(&cdn, 11), 0, "stopped long before the end");
+}
+
+#[tokio::test]
+async fn a_file_too_big_for_the_disk_is_refused_before_its_body() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve("/movie.mp4", vec![7u8; 300_000]);
+    let mut h = harness_with("full-file", disk_with(1_000)).await;
+    let url = cdn.url("/movie.mp4");
+    let ep = h.add(&url, &url).await;
+
+    let error = h.failed(ep).await;
+    assert!(error.contains("not enough disk space"), "{error}");
+    let part = std::fs::read_dir(h.out().join(".reelgene"))
+        .unwrap()
+        .flatten()
+        .map(|d| d.path().join("download.part"))
+        .find(|p| p.exists())
+        .unwrap();
+    assert!(
+        std::fs::metadata(part).unwrap().len() < 300_000,
+        "stopped once the size was known, not after the body"
+    );
+}

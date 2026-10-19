@@ -126,6 +126,15 @@ an ffmpeg MP4 under half its input means a lost stream (keep the source), and
 a TS file playing far shorter than its playlist (`mux::ts_duration`, first
 and last video PTS) gets `Notice::ShortDuration` but is kept.
 
+**Disk space** is checked before the disk is full, not when it is
+(`Worker::check_space`, `Error::DiskFull`, not transient). A file is checked
+once the server states its size, before the body; a playlist after three
+segments, estimated from their real sizes track by track (separate audio is a
+tenth of the video's bitrate), because a variant's `BANDWIDTH` is a peak and
+a bare media playlist has no size at all. The need counts the parts still to
+come, the joined copy and, with ffmpeg, the MP4, plus 256 MiB of headroom.
+`EngineConfig::free_space` is a function so tests can fill the disk.
+
 **Logging.** `log` facade; the program writes one file a day to
 `<data>/logs/`, kept 14 days: `reelgene*` targets at info, everything else
 only at warn. The core logs what events do not show (retries, host backoff,

@@ -53,6 +53,20 @@ pub enum Error {
     #[error("{0} sent a web page instead of video")]
     NotMedia(String),
 
+    /// Not enough room for an episode. `needed` is an estimate, headroom
+    /// included; checked before the disk is full rather than when it is.
+    #[error(
+        "not enough disk space in {}: needs about {}, {} free",
+        path.display(),
+        size(*needed),
+        size(*free)
+    )]
+    DiskFull {
+        path: PathBuf,
+        needed: u64,
+        free: u64,
+    },
+
     /// A response bigger than anything legitimate of its kind.
     #[error("too large: {0}")]
     TooLarge(String),
@@ -110,6 +124,17 @@ impl From<rusqlite::Error> for Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// `1.4 GB`, `350 MB`: precise enough for an estimate.
+fn size(bytes: u64) -> String {
+    const MB: f64 = 1_000_000.0;
+    let mb = bytes as f64 / MB;
+    if mb >= 1000.0 {
+        format!("{:.1} GB", mb / 1000.0)
+    } else {
+        format!("{mb:.0} MB")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +155,20 @@ mod tests {
         assert!(Error::Network("reset".into()).is_transient());
         assert!(!status(404).is_transient(), "a 404 will not fix itself");
         assert!(!status(403).is_transient());
+    }
+
+    #[test]
+    fn a_full_disk_is_said_in_sizes_people_read() {
+        let e = Error::DiskFull {
+            path: "/videos".into(),
+            needed: 3_400_000_000,
+            free: 120_000_000,
+        };
+        assert_eq!(
+            e.to_string(),
+            "not enough disk space in /videos: needs about 3.4 GB, 120 MB free"
+        );
+        assert!(!e.is_transient(), "waiting does not free the disk");
     }
 
     #[test]

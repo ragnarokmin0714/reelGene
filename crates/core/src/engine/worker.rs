@@ -30,6 +30,13 @@ const PARTS_DIR: &str = ".reelgene";
 /// How many times one attempt re-resolves after a signed URL expires.
 const MAX_REFRESH: u32 = 3;
 
+/// Room left free beyond an episode's estimated size: the queue database, the
+/// log and every other program on the machine need some too.
+const HEADROOM: u64 = 256 << 20;
+
+/// Segments downloaded before a playlist's size is estimated from them.
+const SAMPLE: usize = 3;
+
 /// Upper bound on how stale a throttled progress update can get.
 const FLUSH: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -218,6 +225,7 @@ impl Worker<'_> {
         // What is already on disk. The filesystem has the last word: a part
         // file that is gone or the wrong size is fetched again.
         let total: usize = tracks.iter().map(|(_, m)| m.segments.len()).sum();
+        let mut room = Room::new(&tracks);
         let (mut bytes, mut done) = (0u64, 0usize);
         // Bytes per part, to check the joined file against.
         let mut sizes: HashMap<(Track, u64), u64> = HashMap::new();
@@ -231,11 +239,27 @@ impl Worker<'_> {
                         bytes += n;
                         done += 1;
                         sizes.insert((*track, seg.seq), n);
+                        room.saw(*track, seg.duration, n);
                     }
                     // Owned: borrowed items in a buffered stream trip up `Send`.
                     _ => todo.push((*track, seg.clone())),
                 }
             }
+        }
+
+        // Joining copies every part once more, and remuxing copies the result.
+        let copies = if self.sh.ffmpeg.is_some() && (main.init.is_none() || audio.is_some()) {
+            2
+        } else {
+            1
+        };
+        let guess = |room: &Room, bytes: u64, done: usize| {
+            room.estimate(done == total)
+                .map(|size| size.saturating_sub(bytes) + copies * size)
+        };
+        if let Some(needed) = guess(&room, bytes, done) {
+            room.checked = true;
+            self.check_space(needed)?;
         }
 
         self.status(Status::Downloading);
@@ -266,6 +290,7 @@ impl Worker<'_> {
         let mut results = futures::stream::iter(todo)
             .map(|(track, seg): (Track, hls::Segment)| {
                 let keys = &keys;
+                let secs = seg.duration;
                 async move {
                     let body = this
                         .fetch(
@@ -285,7 +310,7 @@ impl Worker<'_> {
                         .store
                         .mark_segment(this.ep.id, track, seg.seq, n)
                         .await?;
-                    Ok::<_, Error>((track, seg.seq, n))
+                    Ok::<_, Error>((track, seg.seq, n, secs))
                 }
             })
             .buffer_unordered(this.sh.segments);
@@ -299,10 +324,16 @@ impl Worker<'_> {
             tokio::select! {
                 result = results.next() => match result {
                     None => break,
-                    Some(Ok((track, seq, n))) => {
+                    Some(Ok((track, seq, n, secs))) => {
                         bytes += n;
                         done += 1;
                         sizes.insert((track, seq), n);
+                        room.saw(track, secs, n);
+                        if !room.checked && let Some(needed) = guess(&room, bytes, done) {
+                            room.checked = true;
+                            // Dropping the stream stops the segments in flight.
+                            this.check_space(needed)?;
+                        }
                         pending = !this.progress(&mut meter, bytes, Some((done, total)), done == total);
                     }
                     // Every other segment would hit the same expired signature.
@@ -488,7 +519,18 @@ impl Worker<'_> {
         let mut validator = self.validator.clone();
         let (store, events) = (&self.sh.store, &self.sh.events);
         let (job, episode) = (self.job.id, self.ep.id);
+        // The size is known once the server answers: stop there if it cannot fit.
+        let stop = self.cancel.child_token();
+        let (mut full, mut sized) = (None, false);
+        let this = &*self;
         let mut on_progress = |t: &Transfer| {
+            if !sized && let Some(total) = t.total {
+                sized = true;
+                if let Err(e) = this.check_space(total.saturating_sub(t.bytes)) {
+                    full = Some(e);
+                    stop.cancel();
+                }
+            }
             if t.validator != validator {
                 // Stored at once: a resume after a crash must know it.
                 validator.clone_from(&t.validator);
@@ -514,9 +556,12 @@ impl Worker<'_> {
         let result = self
             .sh
             .http
-            .download_to(download, self.cancel, &mut on_progress)
+            .download_to(download, &stop, &mut on_progress)
             .await;
         self.validator = validator;
+        if let Some(e) = full {
+            return Err(e);
+        }
         let done = result?;
         if file_head_is_text(&part).await {
             // Gone, so the next try starts clean instead of resuming the page.
@@ -569,6 +614,30 @@ impl Worker<'_> {
     /// The joined file must hold exactly the parts that were recorded. A
     /// part changed on disk since (antivirus, a disk error, a hand) means the
     /// episode is downloaded again rather than saved broken.
+    /// Refuse to start (or go on) when `needed` more bytes, plus headroom, do
+    /// not fit. A filesystem that cannot say is let through.
+    fn check_space(&self, needed: u64) -> Result<()> {
+        let needed = needed + HEADROOM;
+        match (self.sh.free_space)(&self.dir) {
+            Ok(free) if free < needed => {
+                log::warn!(
+                    "episode {}: needs about {needed} bytes, {free} free",
+                    self.ep.id.0
+                );
+                Err(Error::DiskFull {
+                    path: self.job.out_dir.clone(),
+                    needed,
+                    free,
+                })
+            }
+            Ok(_) => Ok(()),
+            Err(e) => {
+                log::warn!("cannot tell the free space in {}: {e}", self.dir.display());
+                Ok(())
+            }
+        }
+    }
+
     async fn check_joined(&self, joined: u64, expected: u64) -> Result<()> {
         if joined == expected {
             return Ok(());
@@ -667,6 +736,50 @@ impl Worker<'_> {
     }
 }
 
+/// An episode's size, guessed from the segments seen so far, track by track:
+/// video and separate audio differ tenfold in bitrate.
+struct Room {
+    /// Per track: seconds in the playlist, then seconds and bytes seen.
+    tracks: HashMap<Track, (f64, f64, u64)>,
+    seen: usize,
+    checked: bool,
+}
+
+impl Room {
+    fn new(tracks: &[(Track, &MediaPlaylist)]) -> Self {
+        let tracks = tracks
+            .iter()
+            .map(|(t, m)| (*t, (m.duration(), 0.0, 0)))
+            .collect();
+        Self {
+            tracks,
+            seen: 0,
+            checked: false,
+        }
+    }
+
+    fn saw(&mut self, track: Track, secs: f64, bytes: u64) {
+        if let Some((_, s, b)) = self.tracks.get_mut(&track) {
+            *s += secs;
+            *b += bytes;
+            self.seen += 1;
+        }
+    }
+
+    /// Once `SAMPLE` segments are in (or all are) and every track has some.
+    fn estimate(&self, all: bool) -> Option<u64> {
+        if self.seen < SAMPLE && !all {
+            return None;
+        }
+        self.tracks
+            .values()
+            .map(|&(total, secs, bytes)| {
+                (secs > 0.0).then(|| (bytes as f64 * total.max(secs) / secs) as u64)
+            })
+            .sum()
+    }
+}
+
 fn audio_ext(m: &MediaPlaylist) -> &'static str {
     if m.init.is_some() {
         "m4a"
@@ -728,6 +841,31 @@ async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn media(segments: usize, secs: f64) -> MediaPlaylist {
+        let mut text = String::from("#EXTM3U\n#EXT-X-TARGETDURATION:10\n");
+        for i in 0..segments {
+            text.push_str(&format!("#EXTINF:{secs},\ns{i}.ts\n"));
+        }
+        text.push_str("#EXT-X-ENDLIST\n");
+        match hls::parse(&text, &Url::parse("https://cdn.example/x.m3u8").unwrap()).unwrap() {
+            Playlist::Media(m) => *m,
+            Playlist::Master(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn the_size_is_guessed_per_track_from_real_segments() {
+        let (video, audio) = (media(25, 4.0), media(25, 4.0));
+        let mut room = Room::new(&[(Track::Main, &video), (Track::Audio, &audio)]);
+        room.saw(Track::Main, 4.0, 1_000_000);
+        room.saw(Track::Main, 4.0, 1_000_000);
+        room.saw(Track::Main, 4.0, 1_000_000);
+        assert_eq!(room.estimate(false), None, "no audio seen yet: no guess");
+        room.saw(Track::Audio, 4.0, 64_000);
+        // 100 s of each: 25 MB of video, 1.6 MB of audio -- not 50 MB.
+        assert_eq!(room.estimate(false), Some(25_000_000 + 1_600_000));
+    }
 
     #[test]
     fn only_media_extensions_survive() {

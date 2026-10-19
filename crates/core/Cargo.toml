@@ -23,6 +23,8 @@ aes.workspace = true
 cbc.workspace = true
 hex.workspace = true
 rusqlite.workspace = true
+# Free disk space, without unsafe code of our own.
+fs4 = { version = "1.1.0", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "net"] }
