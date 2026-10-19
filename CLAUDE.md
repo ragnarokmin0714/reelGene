@@ -9,7 +9,7 @@ the decisions that are not obvious from the code.
 ## Status
 
 v0.1 was built on 2026-10-18 in four steps — core foundations, engine and
-store, CLI, window — and is tested headless: about 140 tests, including the
+store, CLI, window — and is tested headless: about 150 tests, including the
 engine against a fake CDN, the real binary against a local server, and the
 window clicked through its accessibility tree (kittest).
 
@@ -100,6 +100,26 @@ source may not lead into private addresses: redirects (reqwest policy),
 variant, segment and key URLs, and a resolver's output are all checked with
 `net::may_follow`. A link the user adds to their own NAS may go anywhere.
 
+**Checking what is saved.** A segment or file whose first bytes are a web
+page, JSON or XML (`mux::looks_like_text`; only clear text, since every media
+container starts with binary) is `Error::NotMedia`. It counts as an expired
+URL, because CDNs commonly answer a refused signature with an error page and
+status 200: re-resolve, at most three times, then fail with that message. The
+check runs before decryption, or an encrypted segment's error page would show
+up as a decryption failure. The joined file must be exactly the recorded
+parts (else the episode is downloaded again: something changed them on disk),
+an ffmpeg MP4 under half its input means a lost stream (keep the source), and
+a TS file playing far shorter than its playlist (`mux::ts_duration`, first
+and last video PTS) gets `Notice::ShortDuration` but is kept.
+
+**Logging.** `log` facade; the program writes one file a day to
+`<data>/logs/`, kept 14 days: `reelgene*` targets at info, everything else
+only at warn. The core logs what events do not show (retries, host backoff,
+re-resolves, restarts, refused pages); `logging::follow` writes the queue's
+events. Lines carry only redacted URLs and never clipboard content. The
+problem report (`report.rs`) adds settings, the queue and the last 400 log
+lines, with the home folder masked as `~`.
+
 **Files.** Every name from a website goes through `paths::sanitize_component`
 (separators, control characters, Windows device names, trailing dots, a
 200-byte cap at a character boundary); the template renders component by
@@ -117,12 +137,17 @@ is saved beside the video.
 **The window** (`gui/`): eframe/egui 0.37 with glow (smaller than wgpu, works
 in VMs). The minor version is pinned because egui breaks its API between
 minors: upgrade in a commit of its own. `model.rs` turns events into rows and
-effects (sounds, toasts) with no egui in it, so it is unit-tested; drawing
+effects (sounds, toasts, time left) with no egui in it, so it is unit-tested; drawing
 collects `Action`s and `Gui::act` carries them out afterwards. CJK comes from
 eframe's system font fallback; egui 0.37 bundles no symbol font, so the check
 and info marks are painted. The initial Start/Stop state comes from how the
 engine was started, not from settings. Strings live in `gui/text.rs`, one
-struct per language, so a missing translation is a compile error.
+struct per language, so a missing translation is a compile error. eframe
+persists only the window's size and place (`<data>/window.ron`, so portable
+installs keep it beside them); `persist_egui_memory` is off because stale UI
+state survives updates and hides layout changes. Folder and file pickers are
+`rfd` (the desktop portal on Linux, no GTK), run on a thread of their own
+because the dialog blocks its thread until it closes.
 
 **Desktop glue.** Clipboard: a thread polls once a second, ignores what was
 there at startup, and passes on only links that some resolver claims, so
@@ -153,6 +178,7 @@ crates/reelgene/        the program
   src/gui/              window: mod, model, view, dialogs, text, tests
   src/places.rs settings.rs instance.rs
   src/clipboard.rs tray.rs sound.rs icon.rs platform.rs term.rs
+  src/logging.rs report.rs
   tests/cli.rs          the real binary against a local server
 ```
 

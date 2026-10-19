@@ -4,7 +4,7 @@ A portable video downloader for Windows and Linux. Copy a link and it shows
 up; pick episodes; the downloads survive closing the program, losing the
 network or leaving it overnight, and pick up where they stopped.
 
-> **Status: v0.1 preview.** Everything below is built and tested — 140-odd
+> **Status: v0.1 preview.** Everything below is built and tested — 150-odd
 > automated tests, including the window driven headless — but it has not yet
 > been used on a real Windows machine or looked at on a real screen. Treat it
 > as a preview until a release says otherwise. What comes next is in
@@ -29,6 +29,10 @@ network or leaving it overnight, and pick up where they stopped.
   at once; how many connections per site (kept low by default, which also
   keeps accounts from looking like abuse). Rate limits from servers are
   respected, and a temporary failure retries by itself later.
+- **Checks what it saves**: a server that answers with an error page
+  instead of video is caught (after trying fresh links) rather than saved as
+  a broken file; a file that plays far shorter than its playlist says is
+  flagged.
 - **File names you choose**: `{series}/{index} {title}` by default, so
   episodes sort and each series gets a folder.
 - **A window and a command line**, the same engine underneath. The window
@@ -79,7 +83,8 @@ copy one anywhere), and it is read and queued; a series opens the episode
 picker first. **Start** and **Stop** run or hold the whole queue; each series
 and episode has its own pause, resume, retry, remove and open-folder buttons.
 **Settings** covers the download folder, file names, quality, how much runs
-at once, ffmpeg, the clipboard, sounds, animations and language.
+at once, ffmpeg, the clipboard, sounds, animations and language, and can
+export a problem report. The window remembers its size and place.
 
 ## The command line
 
@@ -93,6 +98,7 @@ reelgene resume [JOB]                                      # queue failed or pau
 reelgene pause [JOB]
 reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
+reelgene report                                            # a problem report, in this folder
 ```
 
 `Ctrl-C` stops cleanly; `reelgene run` continues later. The exit code is 0
@@ -127,7 +133,13 @@ only ever given local files: reelgene does all the networking itself.
 | Linux | `~/.config/reelgene` | `~/.local/share/reelgene` | your Downloads folder `/reelgene` |
 
 `REELGENE_HOME` puts everything in one folder instead. `settings.json` is
-written on first run with every option spelled out.
+written on first run with every option spelled out. A log file a day goes in
+`logs/` next to the queue and is kept for two weeks.
+
+When something goes wrong, **Settings → Export a problem report** (or
+`reelgene report`) writes one text file with the settings, the queue and the
+recent log. Links in it have their query strings removed and your home
+folder appears as `~`; read it before sending it anyway.
 
 ## Privacy and security
 
