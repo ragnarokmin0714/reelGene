@@ -188,7 +188,11 @@ final rename never crosses filesystems. Single files keep only media
 extensions.
 
 **ffmpeg** is not bundled (size, security updates, GPL obligations) and is
-optional. It only ever gets absolute local paths with a `file:` prefix,
+optional. The user puts it (and yt-dlp) in the tools folder
+(`Places::tools_dir`: beside the program when portable, else `<data>/tools`);
+Settings says where, opens the folder, and "Check again" probes and hands it
+to the engine (`Engine::set_ffmpeg`) without a restart. `convert_mp4` off
+keeps TS even with ffmpeg present. It only ever gets absolute local paths with a `file:` prefix,
 `-protocol_whitelist file` before every input, `-c copy`, `-nostdin`, a
 timeout, and is killed on cancel. Without it, TS stays TS and separate audio
 is saved beside the video.

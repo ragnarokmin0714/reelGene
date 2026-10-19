@@ -245,12 +245,21 @@ struct Shared {
     registry: Registry,
     store: Store,
     segments: usize,
-    ffmpeg: Option<Ffmpeg>,
+    /// Changeable while running (`Engine::set_ffmpeg`): found or turned off
+    /// from the settings without a restart.
+    ffmpeg: std::sync::Mutex<Option<Ffmpeg>>,
     free_space: FreeSpace,
     events: broadcast::Sender<Event>,
 }
 
 impl Shared {
+    fn ffmpeg(&self) -> Option<Ffmpeg> {
+        self.ffmpeg
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     fn emit(&self, event: Event) {
         // An error only means nobody is listening right now.
         let _ = self.events.send(event);
@@ -277,7 +286,7 @@ impl Engine {
             registry: cfg.registry,
             store,
             segments: cfg.segments.max(1),
-            ffmpeg: cfg.ffmpeg,
+            ffmpeg: std::sync::Mutex::new(cfg.ffmpeg),
             free_space: cfg.free_space,
             events,
         });
@@ -311,6 +320,15 @@ impl Engine {
 
     pub fn send(&self, cmd: Command) {
         let _ = self.tx.send(Msg::Command(cmd));
+    }
+
+    /// The ffmpeg for episodes that finish from now on; `None` keeps TS.
+    pub fn set_ffmpeg(&self, ffmpeg: Option<Ffmpeg>) {
+        *self
+            .shared
+            .ffmpeg
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = ffmpeg;
     }
 
     /// Bytes per second over all downloads together; 0 lifts the limit.

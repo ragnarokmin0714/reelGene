@@ -699,6 +699,10 @@ async fn doctor() -> Result<ExitCode, String> {
         reelgene_app::logging::dir(&places.data_dir).display()
     );
     println!("downloads  {}", downloads.display());
+    println!(
+        "tools      {} (put ffmpeg and yt-dlp here)",
+        places.tools_dir().display()
+    );
     match settings.proxy.parse::<reelgene_core::http::Proxy>() {
         Ok(p) => println!("proxy      {p}"),
         Err(e) => println!("proxy      {e}"),

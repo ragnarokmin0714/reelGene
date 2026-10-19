@@ -248,7 +248,7 @@ impl Worker<'_> {
         }
 
         // Joining copies every part once more, and remuxing copies the result.
-        let copies = if self.sh.ffmpeg.is_some() && (main.init.is_none() || audio.is_some()) {
+        let copies = if self.sh.ffmpeg().is_some() && (main.init.is_none() || audio.is_some()) {
             2
         } else {
             1
@@ -458,7 +458,7 @@ impl Worker<'_> {
     ) -> Result<PathBuf> {
         let mut problem = None;
         if main_ext == "ts" || audio.is_some() {
-            match &self.sh.ffmpeg {
+            match &self.sh.ffmpeg() {
                 Some(ff) => {
                     let out = self.dir.join("out.mp4");
                     match ff.remux(&main, audio.as_deref(), &out, self.cancel).await {

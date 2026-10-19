@@ -127,9 +127,15 @@ reelgene downloads and joins everything itself. With
 separate audio into the video. Without it you get `.ts`, and separate audio
 is saved next to the video.
 
-reelgene looks for ffmpeg in the path set in Settings, then next to a
-portable executable, then on `PATH` (never in the current folder). ffmpeg is
-only ever given local files: reelgene does all the networking itself.
+reelgene does not include ffmpeg. To get MP4s, download ffmpeg and put
+`ffmpeg.exe` (Windows) or `ffmpeg` in reelgene's **tools folder** —
+Settings → Downloads shows where it is and has a button to open it — then
+press **Check again**; no restart needed. The tools folder is beside the
+program in portable mode, else `tools` in reelgene's data folder
+(`reelgene doctor` prints it). reelgene also finds ffmpeg at the path set in
+Settings, or on `PATH` (never in the current folder). **Convert to MP4** can
+be switched off to keep downloads as they came. ffmpeg is only ever given
+local files: reelgene does all the networking itself.
 
 ## Pages without a resolver
 

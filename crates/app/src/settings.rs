@@ -31,7 +31,9 @@ pub struct Settings {
     /// Connections to one site at once. Low on purpose: it keeps accounts
     /// from looking like abuse.
     pub per_host: usize,
-    /// `None`: look next to a portable install, then on PATH.
+    /// Turn TS into MP4 after a download; needs ffmpeg.
+    pub convert_mp4: bool,
+    /// `None`: look in the tools folder, then on PATH.
     pub ffmpeg: Option<PathBuf>,
     /// For pages no resolver handles; found like ffmpeg.
     pub yt_dlp: Option<PathBuf>,
@@ -79,6 +81,7 @@ impl Default for Settings {
             segments: 4,
             speed_limit: 0,
             per_host: 6,
+            convert_mp4: true,
             ffmpeg: None,
             yt_dlp: None,
             autostart: true,

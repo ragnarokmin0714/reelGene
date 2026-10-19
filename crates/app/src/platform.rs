@@ -33,6 +33,27 @@ pub fn spawn_detached(mut cmd: Command) {
 }
 
 /// Show a file selected in its folder, or open a folder, in the file manager.
+/// A web page in the default browser.
+pub fn open_url(url: &str) {
+    #[cfg(windows)]
+    {
+        let Some(root) = std::env::var_os("SystemRoot").map(PathBuf::from) else {
+            return;
+        };
+        if root.is_absolute() {
+            let mut cmd = Command::new(root.join("explorer.exe"));
+            cmd.arg(url);
+            spawn_detached(cmd);
+        }
+    }
+    #[cfg(not(windows))]
+    if let Some(open) = which("xdg-open") {
+        let mut cmd = Command::new(open);
+        cmd.arg(url);
+        spawn_detached(cmd);
+    }
+}
+
 pub fn reveal(path: &Path) {
     #[cfg(windows)]
     {

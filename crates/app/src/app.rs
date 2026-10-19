@@ -122,7 +122,7 @@ impl App {
             http,
             episodes: self.settings.episodes,
             segments: self.settings.segments,
-            ffmpeg: self.ffmpeg.clone(),
+            ffmpeg: self.ffmpeg.clone().filter(|_| self.settings.convert_mp4),
             autostart,
             held: crate::schedule::held_now(self.settings.schedule),
             registry: registry(self.yt_dlp.clone()),
@@ -157,8 +157,8 @@ pub fn registry(yt_dlp: Option<PathBuf>) -> Registry {
 
 /// The configured yt-dlp, else one beside a portable install, else PATH.
 pub fn find_yt_dlp(settings: &Settings, places: &Places) -> (Option<PathBuf>, Option<String>) {
-    let portable_dir = places.exe_dir.as_deref().filter(|_| places.portable);
-    let found = mux::locate_program("yt-dlp", settings.yt_dlp.as_deref(), portable_dir);
+    let tools = places.tools_dir();
+    let found = mux::locate_program("yt-dlp", settings.yt_dlp.as_deref(), Some(&tools));
     let warning = settings
         .yt_dlp
         .as_ref()
@@ -169,8 +169,8 @@ pub fn find_yt_dlp(settings: &Settings, places: &Places) -> (Option<PathBuf>, Op
 
 /// The configured ffmpeg, else one beside a portable install, else PATH.
 pub async fn find_ffmpeg(settings: &Settings, places: &Places) -> (Option<Ffmpeg>, Option<String>) {
-    let portable_dir = places.exe_dir.as_deref().filter(|_| places.portable);
-    let Some(path) = mux::locate(settings.ffmpeg.as_deref(), portable_dir) else {
+    let tools = places.tools_dir();
+    let Some(path) = mux::locate(settings.ffmpeg.as_deref(), Some(&tools)) else {
         let warning = settings
             .ffmpeg
             .as_ref()

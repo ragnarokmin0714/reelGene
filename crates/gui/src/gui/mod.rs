@@ -55,6 +55,8 @@ pub(crate) enum Msg {
     Links(Vec<Link>),
     /// A path chosen in the system's file dialog.
     Picked(dialogs::Field, PathBuf),
+    /// ffmpeg looked for again: its version, or not found.
+    Ffmpeg(Option<String>),
 }
 
 pub(crate) struct Grabbed {
@@ -96,6 +98,10 @@ pub(crate) enum Action {
     /// Open the system's folder or file dialog for a field.
     Browse(dialogs::Field),
     Report,
+    /// The folder ffmpeg and yt-dlp go in, made if missing, in the file manager.
+    OpenTools,
+    OpenUrl(&'static str),
+    RecheckFfmpeg,
 }
 
 pub struct Gui {
@@ -175,8 +181,23 @@ impl Gui {
         self.desktop.reading()
     }
 
-    pub(crate) fn ffmpeg(&self) -> Option<&str> {
-        self.desktop.ffmpeg.as_deref()
+    /// The ffmpeg found, used or not: version and path.
+    pub(crate) fn desktop_ffmpeg(&self) -> Option<(String, PathBuf)> {
+        self.desktop
+            .ffmpeg()
+            .map(|f| (f.version().to_owned(), f.path().to_path_buf()))
+    }
+
+    pub(crate) fn tools_dir(&self) -> PathBuf {
+        self.desktop.places.tools_dir()
+    }
+
+    /// "ffmpeg 7.1" when MP4s are made, else `None`.
+    pub(crate) fn ffmpeg(&self) -> Option<String> {
+        self.desktop
+            .ffmpeg()
+            .filter(|_| self.settings.convert_mp4)
+            .map(|f| format!("ffmpeg {}", f.version()))
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
@@ -260,6 +281,16 @@ impl Gui {
                     }
                 }
             }
+            Msg::Ffmpeg(found) => match found {
+                Some(v) => self.toast((self.t.ffmpeg_ready)(&v), false),
+                None => {
+                    let dir = self.desktop.places.tools_dir();
+                    self.toast(
+                        (self.t.ffmpeg_still_missing)(&dir.display().to_string()),
+                        true,
+                    );
+                }
+            },
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
                 (Some(Dialog::Settings(form)), field) => form.set(field, &path),
@@ -329,6 +360,15 @@ impl Gui {
             }
             Action::Browse(field) => self.browse(field),
             Action::Report => self.report(),
+            Action::OpenTools => {
+                let dir = self.desktop.places.tools_dir();
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    self.toast(format!("{}: {e}", dir.display()), true);
+                }
+                reelgene_app::platform::reveal(&dir);
+            }
+            Action::OpenUrl(url) => reelgene_app::platform::open_url(url),
+            Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(),
         }
     }
 
@@ -355,7 +395,7 @@ impl Gui {
         let d = &self.desktop;
         let jobs = d.rt.block_on(d.engine.snapshot()).unwrap_or_default();
         let text =
-            reelgene_app::report::build(&d.places, &self.settings, d.ffmpeg.as_deref(), &jobs);
+            reelgene_app::report::build(&d.places, &self.settings, self.ffmpeg().as_deref(), &jobs);
         match reelgene_app::report::write(&self.download_dir(), &text) {
             Ok(path) => {
                 reelgene_app::platform::reveal(&path);
@@ -387,6 +427,9 @@ impl Gui {
         if s.pace != old.pace {
             self.desktop.engine.send(Command::SetPace(s.pace));
         }
+        if s.ffmpeg != old.ffmpeg || s.convert_mp4 != old.convert_mp4 {
+            self.desktop.recheck_ffmpeg();
+        }
         if s.speed_limit != old.speed_limit {
             self.desktop
                 .engine
@@ -399,7 +442,6 @@ impl Gui {
         }
         self.restart_note |= s.segments != old.segments
             || s.per_host != old.per_host
-            || s.ffmpeg != old.ffmpeg
             || s.user_agent != old.user_agent
             || s.proxy != old.proxy
             || (self.tray.is_some() && s.language != old.language);
@@ -492,7 +534,7 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
         app.settings.clone(),
         app.places.clone(),
         true,
-        app.ffmpeg_label(),
+        app.ffmpeg.clone(),
         app.warnings.clone(),
         app.settings.autostart,
         true,

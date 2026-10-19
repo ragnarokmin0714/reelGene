@@ -225,12 +225,16 @@ impl SettingsForm {
 
 pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) {
     let t = g.t;
+    let tools = Tools {
+        ffmpeg: g.desktop_ffmpeg(),
+        dir: g.tools_dir(),
+    };
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
     let modal = egui::Modal::new(egui::Id::unique("dialog")).frame(frame);
     let response = modal.show(ctx, |ui| match dialog {
         Dialog::Pick(pick) => pick_ui(t, pick, ui, actions),
-        Dialog::Settings(form) => settings_ui(t, form, ui, actions),
+        Dialog::Settings(form) => settings_ui(t, form, &tools, ui, actions),
         Dialog::Remove {
             target,
             label,
@@ -352,9 +356,18 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
     });
 }
 
+/// What the settings window shows about ffmpeg: what was found, and where to
+/// put it.
+pub(crate) struct Tools {
+    /// Version and path.
+    pub ffmpeg: Option<(String, PathBuf)>,
+    pub dir: PathBuf,
+}
+
 fn settings_ui(
     t: &super::text::Text,
     form: &mut SettingsForm,
+    tools: &Tools,
     ui: &mut egui::Ui,
     actions: &mut Vec<Action>,
 ) {
@@ -427,7 +440,26 @@ fn settings_ui(
                     let label = ui.label(t.quality).id;
                     quality_combo(t, &mut form.s.quality, "settings-quality", label, ui);
                     ui.end_row();
+                    ui.label(t.convert_mp4);
+                    ui.checkbox(&mut form.s.convert_mp4, t.on);
+                    ui.end_row();
+                    ui.label("ffmpeg");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.ffmpeg)
+                                .hint_text(t.ffmpeg)
+                                .desired_width(240.0),
+                        )
+                        .on_hover_text(t.ffmpeg);
+                        // Its own name: the folder's "Browse…" is a different button.
+                        if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
+                            actions.push(Action::Browse(Field::Ffmpeg));
+                        }
+                    });
+                    ui.end_row();
                 });
+                ui.add_space(8.0);
+                ffmpeg_note(t, form, tools, &p, ui, actions);
             }
             if form.tab == Tab::Connections {
                 grid("settings-connections").show(ui, |ui| {
@@ -473,20 +505,6 @@ fn settings_ui(
                             }),
                     )
                     .labelled_by(label);
-                    ui.end_row();
-                    ui.label("ffmpeg");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut form.ffmpeg)
-                                .hint_text(t.ffmpeg)
-                                .desired_width(240.0),
-                        )
-                        .on_hover_text(t.ffmpeg);
-                        // Its own name: the folder's "Browse…" is a different button.
-                        if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
-                            actions.push(Action::Browse(Field::Ffmpeg));
-                        }
-                    });
                     ui.end_row();
                     let label = ui.label(t.proxy).id;
                     ui.vertical(|ui| {
@@ -607,6 +625,71 @@ fn settings_ui(
                 actions.push(Action::Report);
             }
         });
+    });
+}
+
+/// Under the MP4 switch: the ffmpeg in use, or how to get one.
+fn ffmpeg_note(
+    t: &super::text::Text,
+    form: &SettingsForm,
+    tools: &Tools,
+    p: &super::theme::Palette,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    let note = |ui: &mut egui::Ui, text: String, color| {
+        ui.add(egui::Label::new(RichText::new(text).color(color).size(13.0)).wrap());
+    };
+    if !form.s.convert_mp4 {
+        note(ui, t.ts_kept.to_owned(), p.weak);
+        return;
+    }
+    if let Some((version, path)) = &tools.ffmpeg {
+        note(
+            ui,
+            (t.ffmpeg_uses)(version, &path.display().to_string()),
+            p.weak,
+        );
+        return;
+    }
+    let exe = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    note(ui, (t.ffmpeg_needed)(exe), p.warning);
+    ui.add(
+        egui::Label::new(
+            RichText::new(tools.dir.display().to_string())
+                .monospace()
+                .size(12.0),
+        )
+        .selectable(true),
+    );
+    ui.horizontal(|ui| {
+        if widgets::button(
+            ui,
+            Kind::Secondary,
+            Some(widgets::Icon::Folder),
+            t.open_folder,
+        )
+        .clicked()
+        {
+            actions.push(Action::OpenTools);
+        }
+        if widgets::button(ui, Kind::Secondary, Some(widgets::Icon::Link), t.get_ffmpeg).clicked() {
+            actions.push(Action::OpenUrl("https://ffmpeg.org/download.html"));
+        }
+        if widgets::button(
+            ui,
+            Kind::Secondary,
+            Some(widgets::Icon::Retry),
+            t.check_again,
+        )
+        .clicked()
+        {
+            actions.push(Action::RecheckFfmpeg);
+        }
     });
 }
 

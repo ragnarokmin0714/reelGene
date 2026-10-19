@@ -504,6 +504,42 @@ fn the_toolbar_switches_the_theme_and_remembers_it() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn ffmpeg_put_in_the_tools_folder_is_found_without_a_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = env("ffmpeg-tools");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    // No ffmpeg: what to do, and where.
+    let _ = h.get_by_label_contains("MP4 needs ffmpeg");
+    let tools = env.dir.join("tools");
+    let _ = h.get_by_label(&tools.display().to_string());
+
+    // The user drops one in and asks again.
+    std::fs::create_dir_all(&tools).unwrap();
+    let ffmpeg = tools.join("ffmpeg");
+    std::fs::write(
+        &ffmpeg,
+        "#!/bin/sh\necho 'ffmpeg version 7.1 Copyright (c) the FFmpeg developers'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&ffmpeg, std::fs::Permissions::from_mode(0o755)).unwrap();
+    h.get_by_label(EN.check_again).click();
+    until(&mut h, "the news that ffmpeg is there", |h| {
+        h.query_by_label_contains("ffmpeg 7.1 found").is_some()
+    });
+    let _ = h.get_by_label_contains("Uses ffmpeg 7.1");
+    h.get_by_label(EN.cancel).click();
+    settle(&mut h);
+    assert!(
+        h.query_by_label(EN.no_ffmpeg).is_none(),
+        "the status bar knows too"
+    );
+    let _ = h.get_by_label("ffmpeg 7.1");
+}
+
 #[test]
 fn removing_a_job_asks_first() {
     let env = env("remove");

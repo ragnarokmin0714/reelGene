@@ -169,19 +169,19 @@ pub fn mark_of_the_web(path: &Path, source: &Url) {
     let _ = (path, source);
 }
 
-/// Where to find ffmpeg: the configured path, else next to a portable
-/// install, else `PATH` — absolute entries only, so the current directory is
-/// never searched. A configured path that does not exist gives `None` rather
-/// than silently using some other ffmpeg.
-pub fn locate(configured: Option<&Path>, portable_dir: Option<&Path>) -> Option<PathBuf> {
-    locate_program("ffmpeg", configured, portable_dir)
+/// Where to find ffmpeg: the configured path, else reelgene's tools folder,
+/// else `PATH` — absolute entries only, so the current directory is never
+/// searched. A configured path that does not exist gives `None` rather than
+/// silently using some other ffmpeg.
+pub fn locate(configured: Option<&Path>, tools_dir: Option<&Path>) -> Option<PathBuf> {
+    locate_program("ffmpeg", configured, tools_dir)
 }
 
 /// The same search for any program reelgene may run (ffmpeg, yt-dlp).
 pub fn locate_program(
     name: &str,
     configured: Option<&Path>,
-    portable_dir: Option<&Path>,
+    tools_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
         format!("{name}.exe")
@@ -191,7 +191,7 @@ pub fn locate_program(
     if let Some(p) = configured {
         return (p.is_absolute() && p.is_file()).then(|| p.to_path_buf());
     }
-    if let Some(p) = portable_dir.map(|d| d.join(&exe)).filter(|p| p.is_file()) {
+    if let Some(p) = tools_dir.map(|d| d.join(&exe)).filter(|p| p.is_file()) {
         return Some(p);
     }
     let path = std::env::var_os("PATH")?;

@@ -42,8 +42,8 @@ pub(crate) struct Desktop {
     pub rt: tokio::runtime::Handle,
     pub engine: Engine,
     pub places: Places,
-    /// "ffmpeg 7.1", or `None` when there is none.
-    pub ffmpeg: Option<String>,
+    /// The ffmpeg found, used or not (`Settings::convert_mp4`).
+    ffmpeg: Mutex<Option<reelgene_core::mux::Ffmpeg>>,
     /// Write settings to `places.settings_file()` when they change.
     pub save_settings: bool,
     pub reduced_motion: bool,
@@ -83,7 +83,7 @@ impl Desktop {
         settings: Settings,
         places: Places,
         save_settings: bool,
-        ffmpeg: Option<String>,
+        ffmpeg: Option<reelgene_core::mux::Ffmpeg>,
         warnings: Vec<String>,
         running: bool,
         desktop: bool,
@@ -96,7 +96,7 @@ impl Desktop {
             rt,
             engine,
             places,
-            ffmpeg,
+            ffmpeg: Mutex::new(ffmpeg),
             save_settings,
             reduced_motion: desktop && reelgene_app::platform::reduced_motion(),
             settings: Mutex::new(settings),
@@ -152,6 +152,27 @@ impl Desktop {
         if let Some(s) = lock(&self.schedule).as_ref() {
             s.changed();
         }
+    }
+
+    pub fn ffmpeg(&self) -> Option<reelgene_core::mux::Ffmpeg> {
+        lock(&self.ffmpeg).clone()
+    }
+
+    /// Look for ffmpeg again — put in the tools folder, or set in settings —
+    /// and use it from the next episode on; the window hears the outcome.
+    pub fn recheck_ffmpeg(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        self.rt.spawn(async move {
+            let settings = me.settings();
+            let (found, _) = reelgene_app::app::find_ffmpeg(&settings, &me.places).await;
+            *lock(&me.ffmpeg) = found.clone();
+            me.engine
+                .set_ffmpeg(found.clone().filter(|_| settings.convert_mp4));
+            let _ = me
+                .tx
+                .send(Msg::Ffmpeg(found.map(|f| f.version().to_owned())));
+            me.wake();
+        });
     }
 
     /// The window is open, shown and focused: the user can see the queue.

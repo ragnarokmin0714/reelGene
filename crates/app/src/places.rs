@@ -58,6 +58,15 @@ impl Places {
     pub fn queue_db(&self) -> PathBuf {
         self.data_dir.join("queue.db")
     }
+
+    /// Where to put ffmpeg and yt-dlp for reelgene to find them: beside the
+    /// program when portable, else a `tools` folder with its data.
+    pub fn tools_dir(&self) -> PathBuf {
+        match &self.exe_dir {
+            Some(dir) if self.portable => dir.clone(),
+            _ => self.data_dir.join("tools"),
+        }
+    }
 }
 
 fn resolve(

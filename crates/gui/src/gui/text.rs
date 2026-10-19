@@ -90,6 +90,14 @@ pub struct Text {
     pub close_to_tray: &'static str,
     pub notify: &'static str,
     pub proxy: &'static str,
+    pub convert_mp4: &'static str,
+    pub ffmpeg_ready: fn(&str) -> String,
+    pub ffmpeg_still_missing: fn(&str) -> String,
+    pub ffmpeg_uses: fn(&str, &str) -> String,
+    pub ffmpeg_needed: fn(&str) -> String,
+    pub ts_kept: &'static str,
+    pub get_ffmpeg: &'static str,
+    pub check_again: &'static str,
     pub speed_limit: &'static str,
     pub no_limit: &'static str,
     pub proxy_hint: &'static str,
@@ -218,6 +226,18 @@ pub static EN: Text = Text {
     per_host: "Connections per site",
     ffmpeg: "ffmpeg (blank: find it)",
     proxy: "Proxy",
+    convert_mp4: "Convert to MP4",
+    ffmpeg_ready: |v| format!("ffmpeg {v} found: downloads become MP4"),
+    ffmpeg_still_missing: |dir| format!("No ffmpeg in {dir} yet"),
+    ffmpeg_uses: |v, path| format!("Uses ffmpeg {v}: {path}"),
+    ffmpeg_needed: |exe| {
+        format!(
+            "MP4 needs ffmpeg, which reelgene does not include. Download it, put {exe} in this folder (or install it so it is on PATH), then press Check again. Until then downloads stay .ts:"
+        )
+    },
+    ts_kept: "Downloads stay as they came (.ts).",
+    get_ffmpeg: "Get ffmpeg",
+    check_again: "Check again",
     speed_limit: "Speed limit",
     no_limit: "No limit",
     proxy_hint: "system · none · socks5h://host:port",
@@ -347,6 +367,18 @@ pub static ZH_TW: Text = Text {
     per_host: "每個網站連線數",
     ffmpeg: "ffmpeg（留空自動尋找）",
     proxy: "代理伺服器",
+    convert_mp4: "轉成 MP4",
+    ffmpeg_ready: |v| format!("已找到 ffmpeg {v}：下載後會轉成 MP4"),
+    ffmpeg_still_missing: |dir| format!("{dir} 裡還沒有 ffmpeg"),
+    ffmpeg_uses: |v, path| format!("使用 ffmpeg {v}：{path}"),
+    ffmpeg_needed: |exe| {
+        format!(
+            "轉成 MP4 需要 ffmpeg，reelgene 沒有內附。請下載 ffmpeg，把 {exe} 放進這個資料夾（或安裝到系統 PATH），再按「重新偵測」。在那之前，下載會維持 .ts："
+        )
+    },
+    ts_kept: "下載後維持原本格式（.ts）。",
+    get_ffmpeg: "下載 ffmpeg",
+    check_again: "重新偵測",
     speed_limit: "限速",
     no_limit: "不限速",
     proxy_hint: "留空用系統 · none · socks5h://主機:埠",
