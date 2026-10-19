@@ -107,6 +107,11 @@ fn playlist_routes() -> HashMap<&'static str, Vec<u8>> {
             b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\na.ts\n#EXT-X-ENDLIST\n".to_vec(),
         ),
         ("/show/ep01/a.ts", b"video".to_vec()),
+        (
+            "/show/ep02/index.m3u8",
+            b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\na.ts\n#EXT-X-ENDLIST\n".to_vec(),
+        ),
+        ("/show/ep02/a.ts", b"more video".to_vec()),
     ])
 }
 
@@ -285,6 +290,27 @@ fn a_pasted_playlist_is_read_queued_and_downloaded() {
     });
     let file = env.dir.join("downloads").join("ep01").join("01 ep01.ts");
     assert_eq!(std::fs::read(file).unwrap(), b"video");
+}
+
+#[test]
+fn several_links_pasted_at_once_are_all_queued() {
+    let env = env("paste-many");
+    let mut h = window(&env, english());
+    let input = h.get_by_role(egui::accesskit::Role::TextInput);
+    input.focus();
+    settle(&mut h);
+    // As copied from a list: one link a line. The one-line box turns the
+    // line breaks into spaces, and every link is read.
+    h.event(egui::Event::Paste(format!(
+        "{0}/show/ep01/index.m3u8\n{0}/show/ep02/index.m3u8\n",
+        env.base
+    )));
+    settle(&mut h);
+    h.get_by_label(EN.add).click();
+    until(&mut h, "both in the queue", |h| {
+        h.query_all_by_label("ep01").next().is_some()
+            && h.query_all_by_label("ep02").next().is_some()
+    });
 }
 
 #[test]
