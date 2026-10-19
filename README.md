@@ -84,7 +84,9 @@ picker first. **Start** and **Stop** run or hold the whole queue; each series
 and episode has its own pause, resume, retry, remove and open-folder buttons.
 **Settings** covers the download folder, file names, quality, how much runs
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
-export a problem report. The window remembers its size and place.
+export a problem report. The window remembers its size and place. Starting
+reelgene again while it runs brings the window back instead of opening a
+second one.
 
 ## The command line
 
@@ -104,8 +106,10 @@ reelgene licenses                                          # reelgene's and its 
 
 `Ctrl-C` stops cleanly; `reelgene run` continues later. The exit code is 0
 when everything finished, 1 when something failed. Only one reelgene runs per
-data folder, so close the window before running other commands (`doctor`
-always works).
+data folder. While one runs (the window, or `reelgene get` / `run`),
+`reelgene get URL` and `reelgene add URL` pass their links to it and return;
+options such as `-o` cannot be passed that way, and other commands wait for
+it to close (`doctor` always works).
 
 Headers given with `-H` are saved with the job, because a resume needs them
 too; do not pass anything you would not keep on disk.
@@ -156,6 +160,10 @@ folder appears as `~`; read it before sending it anyway.
   download folder or collide with Windows device names; a file download keeps
   only media extensions, so no `.exe` can land in your downloads. On Windows,
   downloaded files are marked as coming from the internet, as browsers do.
+- **Handing links over** between two reelgenes uses a private channel only
+  your account can open (a Unix socket in a folder of yours; a named pipe
+  closed to the network on Windows), never a network port that a web page
+  could reach.
 - **TLS** certificate checks cannot be turned off. No code is loaded at run
   time: everything is compiled in.
 

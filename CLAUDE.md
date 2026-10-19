@@ -16,8 +16,8 @@ window clicked through its accessibility tree (kittest).
 **Not yet verified, and the first things to check:**
 - **Windows has never been compiled or run.** The development machine has no
   MSVC tools, so everything under `cfg(windows)` (tray-icon, PlaySound,
-  console attach, locale, reduced motion, Mark of the Web, explorer
-  `/select`) is checked by CI only.
+  console attach, locale, reduced motion, Mark of the Web, the hand-off
+  pipe, explorer `/select`) is checked by CI only.
 - **The window has never been seen.** The development machine has no
   display; layout, CJK rendering through the system font fallback, the tray
   and sounds need a look on a real desktop.
@@ -84,6 +84,20 @@ end of a batch: the moment for the "done" sound.
 version in `PRAGMA user_version`; a database from a newer build is refused,
 not touched. One process per data folder, enforced by an OS file lock
 (`instance.rs`), because the scheduler keeps the queue in memory.
+
+**Handing over** (`handoff.rs`). A second reelgene that finds the lock taken
+does not just refuse: started bare it asks the running one to show its
+window; `get`/`add URL` pass the links (without options, which would be lost
+on the way, so those refuse). The window and `reelgene get`/`run` listen.
+One JSON line each way over a Unix socket in a 0700 directory
+(`$XDG_RUNTIME_DIR`, else the data folder; peer uid checked) or a named pipe
+that rejects remote clients; never a localhost port, which any web page can
+reach. The endpoint name is an FNV-1a hash of the data folder, stable across
+versions. Requests are untrusted: capped at 64 KiB, timed out, http(s) only.
+A handler answers at once and reads the links in the background, so
+`drive` keeps going while handed links are still being read, and decides it
+is finished from a queue snapshot, not only from `Event::Idle`, which may
+have gone by before the handed job's message arrived.
 
 **HTTP policy** (`http.rs`): reqwest's own retry only covers protocol NACKs,
 so reelgene retries transient failures itself (network, 408/425/429/5xx) with
@@ -212,7 +226,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   tests/                http.rs, engine.rs, support/ (fake CDN)
 crates/app/             package `reelgene-app`: what the front ends share, no UI
   src/app.rs            App::open (places, lock, settings, ffmpeg, log) and the engine
-  src/places.rs settings.rs instance.rs logging.rs report.rs format.rs
+  src/places.rs settings.rs instance.rs handoff.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
 crates/gui/             package `reelgene-gui`: the window; the only one that knows egui
   src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,

@@ -2,8 +2,9 @@
 
 use crate::term::Line;
 use clap::{Args, Parser, Subcommand};
-use reelgene_app::app::{self, App};
+use reelgene_app::app::{self, App, OpenError};
 use reelgene_app::format;
+use reelgene_app::handoff::{self, Reply, Request, Valid};
 use reelgene_app::places::Places;
 use reelgene_app::settings::Settings;
 use reelgene_core::engine::{
@@ -13,10 +14,13 @@ use reelgene_core::net;
 use reelgene_core::resolver::Registry;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::mpsc;
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -120,15 +124,22 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         println!("{}", reelgene_gui::notices());
         return Ok(ExitCode::SUCCESS);
     }
-    let app = App::open().await?;
+    let app = match App::open().await {
+        Ok(app) => app,
+        Err(OpenError::Running(data_dir)) => return hand_over(&data_dir, &cmd).await,
+        Err(e) => return Err(e.into()),
+    };
     for w in &app.warnings {
         eprintln!("warning: {w}");
     }
     let engine = app.engine(false).await?;
+    let handed = matches!(cmd, Cmd::Get(_) | Cmd::Run { .. })
+        .then(|| take_handed(&app, &engine))
+        .flatten();
     let code = match cmd {
         Cmd::Get(args) => {
             add(&app, &engine, &args).await?;
-            drive(&engine).await?
+            drive(&engine, handed).await?
         }
         Cmd::Add(args) => {
             add(&app, &engine, &args).await?;
@@ -139,7 +150,7 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             if let Some(n) = parallel {
                 engine.send(Command::SetConcurrency(n));
             }
-            drive(&engine).await?
+            drive(&engine, handed).await?
         }
         Cmd::List => {
             list(&snapshot(&engine).await?);
@@ -174,6 +185,108 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     };
     engine.shutdown().await;
     Ok(code)
+}
+
+/// Another reelgene holds the lock. Links can go to it; everything else
+/// waits until it is closed.
+async fn hand_over(data_dir: &Path, cmd: &Cmd) -> Result<ExitCode, String> {
+    let running = OpenError::Running(data_dir.to_owned()).to_string();
+    let (Cmd::Get(args) | Cmd::Add(args)) = cmd else {
+        return Err(format!(
+            "{running}\n(links still work: `reelgene add URL` passes them to it)"
+        ));
+    };
+    if args.out.is_some()
+        || args.title.is_some()
+        || args.episodes.is_some()
+        || args.quality.is_some()
+        || args.template.is_some()
+        || args.resolver.is_some()
+        || !args.headers.is_empty()
+    {
+        return Err(format!(
+            "{running}\n(it can take the links, but not the options: drop them, or close it first)"
+        ));
+    }
+    let endpoint = handoff::endpoint(data_dir).ok_or_else(|| running.clone())?;
+    let urls: Vec<String> = args.urls.iter().map(|u| u.trim().to_owned()).collect();
+    let count = urls.len();
+    match handoff::send(&endpoint, &Request::Add { urls }).await {
+        Ok(Reply { ok: true, .. }) => {
+            println!(
+                "handed {count} link{} to the reelgene that is already running",
+                if count == 1 { "" } else { "s" }
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Ok(Reply { error, .. }) => Err(format!(
+            "the running reelgene refused: {}",
+            error.unwrap_or_default()
+        )),
+        Err(e) => Err(format!("{running}\n({e})")),
+    }
+}
+
+/// Links handed over by a second reelgene while this one runs the queue:
+/// one message per link once it is queued (or failed to be), and how many
+/// are still being read, so the queue is not declared finished under them.
+struct Handed {
+    results: mpsc::UnboundedReceiver<Result<String, String>>,
+    reading: Arc<AtomicUsize>,
+}
+
+fn take_handed(app: &App, engine: &Engine) -> Option<Handed> {
+    let endpoint = handoff::endpoint(&app.places.data_dir)?;
+    let (tx, results) = mpsc::unbounded_channel();
+    let reading = Arc::new(AtomicUsize::new(0));
+    let (engine, counter) = (engine.clone(), Arc::clone(&reading));
+    let (out, quality, template) = (
+        app.download_dir(),
+        app.settings.quality(),
+        app.settings.template.clone(),
+    );
+    let handler: handoff::Handler = Arc::new(move |request| match request {
+        Valid::Show => Reply::refused("it runs in a terminal and has no window to show"),
+        Valid::Add(urls) => {
+            for url in urls {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let (engine, tx, out) = (engine.clone(), tx.clone(), out.clone());
+                let template = template.clone();
+                tokio::spawn(async move {
+                    let shown = net::redact(&url);
+                    let result = async {
+                        let found = engine.discover(&url, None).await?;
+                        let mut job = found.into_job(url, out);
+                        job.quality = quality;
+                        job.template = template;
+                        let title = job.title.clone();
+                        engine
+                            .add(job)
+                            .await
+                            .map(|id| format!("queued [{}] {title}", id.0))
+                    }
+                    .await;
+                    let _ = tx.send(result.map_err(|e| format!("{shown}: {e}")));
+                });
+            }
+            Reply::ok()
+        }
+    });
+    match handoff::serve(&tokio::runtime::Handle::current(), &endpoint, handler) {
+        Ok(()) => Some(Handed { results, reading }),
+        Err(e) => {
+            log::warn!("cannot take links from other reelgene commands: {e}");
+            None
+        }
+    }
+}
+
+/// The next handed-over result; never, when nothing can be handed over.
+async fn next_handed(handed: &mut Option<Handed>) -> Option<Result<String, String>> {
+    match handed {
+        Some(h) => h.results.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 fn target(job: Option<i64>) -> Target {
@@ -261,10 +374,9 @@ async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
 }
 
 /// Run the queue to the end, drawing progress. Ctrl-C stops cleanly.
-async fn drive(engine: &Engine) -> Result<ExitCode, String> {
+async fn drive(engine: &Engine, mut handed: Option<Handed>) -> Result<ExitCode, String> {
     let mut events = engine.subscribe();
-    let mut names = HashMap::new();
-    let mut states = HashMap::new();
+    let (mut names, mut states) = (HashMap::new(), HashMap::new());
     for job in snapshot(engine).await? {
         remember(&mut names, &mut states, &job);
     }
@@ -281,66 +393,152 @@ async fn drive(engine: &Engine) -> Result<ExitCode, String> {
     }
 
     engine.send(Command::Start);
-    let mut line = Line::new();
-    let mut speeds: HashMap<EpisodeId, f64> = HashMap::new();
+    let mut shown = Shown {
+        names,
+        states,
+        speeds: HashMap::new(),
+        line: Line::new(),
+        done: 0,
+        failed: 0,
+    };
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+    let reading = |h: &Option<Handed>| {
+        h.as_ref()
+            .is_some_and(|h| h.reading.load(Ordering::SeqCst) > 0)
+    };
     loop {
         tokio::select! {
             event = events.recv() => match event {
-                Ok(Event::Added(job)) => remember(&mut names, &mut states, &job),
-                Ok(Event::Status { episode, status, .. }) => {
-                    let name = names.get(&episode).map_or("", String::as_str);
-                    match &status {
-                        Status::Done { output } => line.say(&format!("done     {name}  →  {}", output.display())),
-                        Status::Failed { error } => line.say(&format!("failed   {name}: {error}")),
-                        Status::Waiting { retry_in, error } => line.say(&format!(
-                            "waiting  {name}: {error} (trying again in {})",
-                            format::duration(*retry_in)
-                        )),
-                        _ => {}
+                Ok(event) => {
+                    // While a handed link is still being read, its job is
+                    // about to start another batch.
+                    if shown.on(event) && !reading(&handed) {
+                        return Ok(shown.finish());
                     }
-                    if !matches!(status, Status::Resolving | Status::Downloading | Status::Assembling) {
-                        speeds.remove(&episode);
-                    }
-                    states.insert(episode, status);
                 }
-                Ok(Event::Progress(p)) => {
-                    speeds.insert(p.episode, p.speed);
-                }
-                Ok(Event::Notice { episode, notice, .. }) => {
-                    let name = names.get(&episode).map_or("", String::as_str);
-                    line.say(&format!("note     {name}: {}", describe(&notice)));
-                }
-                Ok(Event::Idle { done, failed }) => {
-                    line.clear();
-                    println!("finished: {done} done, {failed} failed");
-                    if failed > 0 {
-                        println!("`reelgene resume` tries the failed ones again");
-                        return Ok(ExitCode::FAILURE);
-                    }
-                    return Ok(ExitCode::SUCCESS);
-                }
-                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return Err("the engine stopped unexpectedly".into()),
             },
-            _ = tick.tick() => {
-                let count = |f: fn(&Status) -> bool| states.values().filter(|s| f(s)).count();
-                let running = count(|s| matches!(s, Status::Resolving | Status::Downloading | Status::Assembling));
-                let queued = count(|s| matches!(s, Status::Queued | Status::Waiting { .. }));
-                let done = count(|s| matches!(s, Status::Done { .. }));
-                let speed: f64 = speeds.values().sum();
-                line.draw(&format!(
-                    "{running} downloading · {queued} queued · {done} done · {}/s",
-                    format::bytes(speed)
-                ));
+            Some(result) = next_handed(&mut handed) => {
+                if let Some(h) = &handed {
+                    h.reading.fetch_sub(1, Ordering::SeqCst);
+                }
+                match result {
+                    Ok(queued) => shown.line.say(&format!("handed   {queued}")),
+                    Err(e) => shown.line.say(&format!("handed   but not queued: {e}")),
+                }
+                if reading(&handed) {
+                    continue;
+                }
+                // The job may be finished before this message is read, its
+                // `Idle` already gone by. The queue knows; and everything it
+                // sent before answering is waiting in `events`.
+                let jobs = snapshot(engine).await?;
+                while let Ok(event) = events.try_recv() {
+                    shown.on(event);
+                }
+                for job in jobs {
+                    remember(&mut shown.names, &mut shown.states, &job);
+                }
+                if !shown.states.values().any(is_pending) {
+                    return Ok(shown.finish());
+                }
             }
+            _ = tick.tick() => shown.draw(),
             _ = &mut ctrl_c => {
-                line.clear();
+                shown.line.clear();
                 eprintln!("stopping… progress is kept; `reelgene run` continues");
                 return Ok(ExitCode::from(130));
             }
         }
+    }
+}
+
+/// What `drive` draws, and the counts over every batch: handed-over links
+/// can start another after the first ends.
+struct Shown {
+    names: HashMap<EpisodeId, String>,
+    states: HashMap<EpisodeId, Status>,
+    speeds: HashMap<EpisodeId, f64>,
+    line: Line,
+    done: usize,
+    failed: usize,
+}
+
+impl Shown {
+    /// True when the event ends a batch.
+    fn on(&mut self, event: Event) -> bool {
+        match event {
+            Event::Added(job) => remember(&mut self.names, &mut self.states, &job),
+            Event::Status {
+                episode, status, ..
+            } => {
+                let name = self.names.get(&episode).map_or("", String::as_str);
+                match &status {
+                    Status::Done { output } => self
+                        .line
+                        .say(&format!("done     {name}  →  {}", output.display())),
+                    Status::Failed { error } => self.line.say(&format!("failed   {name}: {error}")),
+                    Status::Waiting { retry_in, error } => self.line.say(&format!(
+                        "waiting  {name}: {error} (trying again in {})",
+                        format::duration(*retry_in)
+                    )),
+                    _ => {}
+                }
+                if !matches!(
+                    status,
+                    Status::Resolving | Status::Downloading | Status::Assembling
+                ) {
+                    self.speeds.remove(&episode);
+                }
+                self.states.insert(episode, status);
+            }
+            Event::Progress(p) => {
+                self.speeds.insert(p.episode, p.speed);
+            }
+            Event::Notice {
+                episode, notice, ..
+            } => {
+                let name = self.names.get(&episode).map_or("", String::as_str);
+                self.line
+                    .say(&format!("note     {name}: {}", describe(&notice)));
+            }
+            Event::Idle { done, failed } => {
+                self.done += done;
+                self.failed += failed;
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn draw(&mut self) {
+        let count = |f: fn(&Status) -> bool| self.states.values().filter(|s| f(s)).count();
+        let running = count(|s| {
+            matches!(
+                s,
+                Status::Resolving | Status::Downloading | Status::Assembling
+            )
+        });
+        let queued = count(|s| matches!(s, Status::Queued | Status::Waiting { .. }));
+        let done = count(|s| matches!(s, Status::Done { .. }));
+        let speed: f64 = self.speeds.values().sum();
+        self.line.draw(&format!(
+            "{running} downloading · {queued} queued · {done} done · {}/s",
+            format::bytes(speed)
+        ));
+    }
+
+    fn finish(&mut self) -> ExitCode {
+        self.line.clear();
+        println!("finished: {} done, {} failed", self.done, self.failed);
+        if self.failed > 0 {
+            println!("`reelgene resume` tries the failed ones again");
+            return ExitCode::FAILURE;
+        }
+        ExitCode::SUCCESS
     }
 }
 

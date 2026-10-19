@@ -13,6 +13,7 @@ reelgene-core.workspace = true
 reelgene-app.workspace = true
 tokio.workspace = true
 url.workspace = true
+log.workspace = true
 eframe.workspace = true
 # Text only: the image feature would pull in a whole image codec stack.
 arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }

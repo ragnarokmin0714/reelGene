@@ -7,6 +7,10 @@ restarts), HLS and direct downloads (AES-128, fMP4, byte ranges, separate
 audio), series with an episode picker, naming templates, the window (tray,
 animations, sounds, English and Traditional Chinese), the CLI, portable mode.
 
+Since then, from the v0.2 list: **single-instance hand-off** (starting
+reelgene again brings the window back; `reelgene get/add URL` passes its
+links to the reelgene already running).
+
 Before calling it released:
 - build and run on a real Windows machine (CI compiles it; nobody has run it);
 - look at the window on a real screen, Chinese titles included;
@@ -30,9 +34,6 @@ Before calling it released:
   fall back to ffmpeg, then to `.ts`.
 - **System notifications** when a batch finishes.
 - **A free-space check** before starting an episode.
-- **Single-instance hand-off**: starting reelgene again, or a CLI command
-  while the window is open, passes its links to the running window instead
-  of refusing.
 - **`reelgene doctor` resolver checks**: one real request per resolver, to
   tell which ones a site change has broken.
 

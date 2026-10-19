@@ -516,6 +516,23 @@ fn with_no_window_the_tray_starts_the_queue_and_brings_the_window_back() {
     assert!(!d.wait_for_tray(), "Quit ends the program");
 }
 
+#[test]
+fn a_second_reelgene_brings_the_window_back_and_hands_over_links() {
+    use reelgene_app::handoff::Valid;
+    let env = env("handoff");
+    let d = desktop(&env, english(), false);
+    let handoff = d.handoff();
+    assert!(handoff(Valid::Show).ok);
+    assert!(d.wait_for_tray(), "with no window open, Show opens one");
+
+    let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();
+    assert!(handoff(Valid::Add(vec![url])).ok);
+    let mut h = open(Arc::clone(&d));
+    until(&mut h, "the handed link, queued", |h| {
+        h.query_all_by_label("ep01").next().is_some()
+    });
+}
+
 /// Pictures of the window for design work, written to `target/screens/`:
 /// `cargo test -p reelgene-gui --features screenshots -- --ignored screens`
 #[cfg(feature = "screenshots")]

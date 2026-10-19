@@ -10,7 +10,8 @@ publish.workspace = true
 
 [dependencies]
 reelgene-core.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
+url.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true

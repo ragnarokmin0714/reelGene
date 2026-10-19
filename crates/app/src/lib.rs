@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod format;
+pub mod handoff;
 pub mod instance;
 pub mod logging;
 pub mod places;

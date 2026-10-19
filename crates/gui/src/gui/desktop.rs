@@ -13,6 +13,7 @@ use crate::clipboard::Watcher;
 use crate::sound::{Cue, Player};
 use crate::tray::TrayCmd;
 use eframe::egui;
+use reelgene_app::handoff::{self, Reply, Valid};
 use reelgene_app::places::Places;
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
@@ -177,6 +178,25 @@ impl Desktop {
             if let Some(me) = weak.upgrade() {
                 me.wake();
             }
+        })
+    }
+
+    /// For a second reelgene: links it was given are read as if pasted, and
+    /// starting it again brings this window forward (or back from the tray).
+    pub fn handoff(self: &Arc<Self>) -> handoff::Handler {
+        let (show, weak) = (self.tray_sender(), Arc::downgrade(self));
+        Arc::new(move |request| match request {
+            Valid::Show => {
+                show(TrayCmd::Show);
+                Reply::ok()
+            }
+            Valid::Add(urls) => match weak.upgrade() {
+                Some(me) => {
+                    urls.into_iter().for_each(|url| me.read(url));
+                    Reply::ok()
+                }
+                None => Reply::refused("it is closing"),
+            },
         })
     }
 

@@ -12,23 +12,43 @@ pub struct Instance {
     _lock: File,
 }
 
+/// Why there is no lock: another reelgene has it (and may take the work over,
+/// `handoff.rs`), or something is wrong with the folder.
+#[derive(Debug)]
+pub enum LockError {
+    Running,
+    Other(String),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => f.write_str(
+                "reelgene is already running (window or another command); close it first",
+            ),
+            Self::Other(e) => f.write_str(e),
+        }
+    }
+}
+
 impl Instance {
-    pub fn acquire(data_dir: &Path) -> Result<Self, String> {
+    pub fn acquire(data_dir: &Path) -> Result<Self, LockError> {
+        let other = LockError::Other;
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
+            .map_err(|e| other(format!("cannot create {}: {e}", data_dir.display())))?;
         let path = data_dir.join("reelgene.lock");
         let file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
             .open(&path)
-            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+            .map_err(|e| other(format!("cannot open {}: {e}", path.display())))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { _lock: file }),
-            Err(TryLockError::WouldBlock) => Err(
-                "reelgene is already running (window or another command); close it first".into(),
-            ),
-            Err(TryLockError::Error(e)) => Err(format!("cannot lock {}: {e}", path.display())),
+            Err(TryLockError::WouldBlock) => Err(LockError::Running),
+            Err(TryLockError::Error(e)) => {
+                Err(other(format!("cannot lock {}: {e}", path.display())))
+            }
         }
     }
 }
@@ -42,7 +62,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("reelgene-lock-{}", std::process::id()));
         let first = Instance::acquire(&dir).unwrap();
         let second = Instance::acquire(&dir);
-        assert!(second.is_err_and(|e| e.contains("already running")));
+        assert!(matches!(second, Err(LockError::Running)));
         drop(first);
         assert!(Instance::acquire(&dir).is_ok());
         std::fs::remove_dir_all(&dir).ok();

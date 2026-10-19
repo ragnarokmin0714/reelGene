@@ -19,14 +19,15 @@ use crate::tray::{Tray, TrayCmd};
 use desktop::{Desktop, Stash};
 use eframe::egui;
 use model::{Effect, Model};
-use reelgene_app::app::App;
+use reelgene_app::app::{App, OpenError};
+use reelgene_app::handoff::{self, Reply, Request};
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
 use reelgene_core::engine::{Command, Discovery, Event, Target};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -466,7 +467,8 @@ fn show(ctx: &egui::Context) {
 pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
     let app = match rt.block_on(App::open()) {
         Ok(app) => app,
-        Err(e) => return error_window(&e),
+        Err(OpenError::Running(data_dir)) => return bring_forward(&rt, &data_dir),
+        Err(e) => return error_window(&e.to_string()),
     };
     let engine = match rt.block_on(app.engine(app.settings.autostart)) {
         Ok(engine) => engine,
@@ -483,6 +485,14 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
         app.settings.autostart,
         true,
     );
+    match handoff::endpoint(&app.places.data_dir) {
+        Some(endpoint) => {
+            if let Err(e) = handoff::serve(rt.handle(), &endpoint, desktop.handoff()) {
+                log::warn!("a second reelgene cannot hand its links to this one: {e}");
+            }
+        }
+        None => log::warn!("a second reelgene cannot hand its links to this one: path too long"),
+    }
     // Created here, on the thread that runs the window: Windows delivers the
     // tray's clicks through that thread's message loop.
     let t = text::pick(app.settings.language.as_deref());
@@ -521,6 +531,21 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Started again while running: bring the running window forward instead.
+fn bring_forward(rt: &tokio::runtime::Runtime, data_dir: &Path) -> ExitCode {
+    let running = OpenError::Running(data_dir.to_owned()).to_string();
+    let Some(endpoint) = handoff::endpoint(data_dir) else {
+        return error_window(&running);
+    };
+    match rt.block_on(handoff::send(&endpoint, &Request::Show)) {
+        Ok(Reply { ok: true, .. }) => ExitCode::SUCCESS,
+        Ok(Reply { error, .. }) => {
+            error_window(&format!("{running}\n({})", error.unwrap_or_default()))
+        }
+        Err(e) => error_window(&format!("{running}\n({e})")),
     }
 }
 

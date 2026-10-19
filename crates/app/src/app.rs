@@ -1,7 +1,7 @@
 //! What every front end needs: places, settings, the instance lock, ffmpeg,
 //! and an engine built from them.
 
-use crate::instance::Instance;
+use crate::instance::{Instance, LockError};
 use crate::places::Places;
 use crate::settings::Settings;
 use reelgene_core::engine::{Engine, EngineConfig};
@@ -22,10 +22,37 @@ pub struct App {
     _instance: Instance,
 }
 
+/// Why `App::open` failed. `Running` carries the data folder, so the caller
+/// can hand its work to the reelgene that is (`handoff.rs`).
+#[derive(Debug)]
+pub enum OpenError {
+    Running(PathBuf),
+    Other(String),
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running(_) => LockError::Running.fmt(f),
+            Self::Other(e) => f.write_str(e),
+        }
+    }
+}
+
+impl From<OpenError> for String {
+    fn from(e: OpenError) -> Self {
+        e.to_string()
+    }
+}
+
 impl App {
-    pub async fn open() -> Result<Self, String> {
-        let places = Places::detect()?;
-        let instance = Instance::acquire(&places.data_dir)?;
+    pub async fn open() -> Result<Self, OpenError> {
+        let places = Places::detect().map_err(OpenError::Other)?;
+        let instance = match Instance::acquire(&places.data_dir) {
+            Ok(i) => i,
+            Err(LockError::Running) => return Err(OpenError::Running(places.data_dir)),
+            Err(LockError::Other(e)) => return Err(OpenError::Other(e)),
+        };
         crate::logging::init(&places.data_dir);
         log::info!(
             "reelgene {} starting ({}), data in {}",
