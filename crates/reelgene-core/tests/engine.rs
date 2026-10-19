@@ -74,6 +74,19 @@ fn seg_hits(cdn: &FakeCdn, i: u64) -> usize {
     cdn.hits(&format!("/seg{i:03}.ts")).len()
 }
 
+/// Wait until the server has seen a request for `path`. A one-shot fault is
+/// only used up once its request arrives: interrupt before that, and the
+/// fault hits the resumed download instead.
+async fn reached(cdn: &FakeCdn, path: &str) {
+    for _ in 0..1000 {
+        if !cdn.hits(path).is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("no request for {path} reached the server");
+}
+
 struct Harness {
     dir: PathBuf,
     engine: Engine,
@@ -164,23 +177,43 @@ impl Harness {
         jobs.iter().find(|j| j.id == id).unwrap().episodes[0].id
     }
 
-    async fn until(&mut self, mut pred: impl FnMut(&Event) -> bool) -> Event {
-        tokio::time::timeout(Duration::from_secs(20), async {
+    /// Wait for an event; on timeout, say what was awaited and what came
+    /// instead, on one line (CI shows only a panic's first line).
+    async fn until(&mut self, what: &str, mut pred: impl FnMut(&Event) -> bool) -> Event {
+        let mut seen: Vec<String> = Vec::new();
+        let found = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 match self.events.recv().await {
                     Ok(e) if pred(&e) => return e,
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(e) => {
+                        seen.push(brief(&e));
+                        if seen.len() > 12 {
+                            seen.remove(0);
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => seen.push("(lagged)".into()),
                     Err(broadcast::error::RecvError::Closed) => panic!("the engine went away"),
                 }
             }
         })
-        .await
-        .expect("timed out waiting for an event")
+        .await;
+        match found {
+            Ok(e) => e,
+            Err(_) => panic!(
+                "timed out waiting for {what}; last events: {}",
+                seen.join(" | ")
+            ),
+        }
     }
 
-    async fn status(&mut self, ep: EpisodeId, want: impl Fn(&Status) -> bool) -> Status {
+    async fn status(
+        &mut self,
+        what: &str,
+        ep: EpisodeId,
+        want: impl Fn(&Status) -> bool,
+    ) -> Status {
         match self
-            .until(|e| matches!(e, Event::Status { episode, status, .. } if *episode == ep && want(status)))
+            .until(what, |e| matches!(e, Event::Status { episode, status, .. } if *episode == ep && want(status)))
             .await
         {
             Event::Status { status, .. } => status,
@@ -190,7 +223,7 @@ impl Harness {
 
     async fn done(&mut self, ep: EpisodeId) -> PathBuf {
         let status = self
-            .status(ep, |s| {
+            .status("the episode to finish", ep, |s| {
                 matches!(s, Status::Done { .. } | Status::Failed { .. })
             })
             .await;
@@ -202,7 +235,7 @@ impl Harness {
 
     async fn failed(&mut self, ep: EpisodeId) -> String {
         match self
-            .status(ep, |s| {
+            .status("the episode to end", ep, |s| {
                 matches!(s, Status::Done { .. } | Status::Failed { .. })
             })
             .await
@@ -214,11 +247,29 @@ impl Harness {
 
     /// Wait until `n` segments are done.
     async fn segments_done(&mut self, ep: EpisodeId, n: usize) {
-        self.until(|e| {
+        self.until(&format!("{n} segments done"), |e| {
             matches!(e, Event::Progress(p) if p.episode == ep && p.segments.is_some_and(|(d, _)| d >= n))
         })
         .await;
     }
+}
+
+/// One event in a few words, for timeout messages.
+fn brief(e: &Event) -> String {
+    let text = match e {
+        Event::Status {
+            episode, status, ..
+        } => format!("ep{} {status:?}", episode.0),
+        Event::Progress(p) => match p.segments {
+            Some((d, t)) => format!("ep{} {d}/{t} segments", p.episode.0),
+            None => format!("ep{} {} bytes", p.episode.0, p.bytes),
+        },
+        Event::Notice {
+            episode, notice, ..
+        } => format!("ep{} {notice:?}", episode.0),
+        other => format!("{other:?}"),
+    };
+    text.chars().take(90).collect()
 }
 
 #[tokio::test]
@@ -242,7 +293,9 @@ async fn downloads_and_decrypts_a_whole_episode() {
         "the key is fetched once per episode"
     );
 
-    let idle = h.until(|e| matches!(e, Event::Idle { .. })).await;
+    let idle = h
+        .until("the batch to end", |e| matches!(e, Event::Idle { .. }))
+        .await;
     assert_eq!(
         idle,
         Event::Idle { done: 1, failed: 0 },
@@ -258,7 +311,10 @@ async fn ts_is_kept_with_a_notice_when_there_is_no_ffmpeg() {
     let url = cdn.url("/index.m3u8");
     let ep = h.add(&url, &url).await;
     let notice = h
-        .until(|e| matches!(e, Event::Notice { episode, .. } if *episode == ep))
+        .until(
+            "a notice",
+            |e| matches!(e, Event::Notice { episode, .. } if *episode == ep),
+        )
         .await;
     assert!(
         matches!(
@@ -324,7 +380,7 @@ async fn a_changed_playlist_discards_stale_progress() {
     let before: Vec<usize> = (0..3).map(|i| seg_hits(&cdn, i)).collect();
     h.engine.send(Command::Resume(Target::Episode(ep)));
     let restarted = h
-        .until(|e| {
+        .until("the restart notice", |e| {
             matches!(
                 e,
                 Event::Notice {
@@ -354,7 +410,9 @@ async fn an_expired_url_is_re_resolved_and_the_download_continues() {
     let url = cdn.url("/index.m3u8");
     let ep = h.add(&url, &url).await;
 
-    let notice = h.until(|e| matches!(e, Event::Notice { .. })).await;
+    let notice = h
+        .until("a notice", |e| matches!(e, Event::Notice { .. }))
+        .await;
     assert!(matches!(
         notice,
         Event::Notice {
@@ -382,8 +440,9 @@ async fn pause_keeps_progress_and_resume_continues() {
     let ep = h.add(&url, &url).await;
 
     h.segments_done(ep, 3).await;
+    reached(&cdn, "/seg003.ts").await;
     h.engine.send(Command::Pause(Target::Episode(ep)));
-    h.status(ep, |s| *s == Status::Paused).await;
+    h.status("the pause", ep, |s| *s == Status::Paused).await;
     let snapshot = h.engine.snapshot().await.unwrap();
     assert_eq!(snapshot[0].episodes[0].status, Status::Paused);
 
@@ -404,6 +463,7 @@ async fn closing_the_program_mid_download_resumes_on_the_next_start() {
     let url = cdn.url("/index.m3u8");
     let ep = h.add(&url, &url).await;
     h.segments_done(ep, 4).await;
+    reached(&cdn, "/seg004.ts").await;
 
     tokio::time::timeout(Duration::from_secs(10), h.engine.shutdown())
         .await
@@ -475,8 +535,11 @@ async fn removing_a_paused_episode_deletes_its_partial_files() {
         target: Target::Episode(ep),
         delete_output: false,
     });
-    h.until(|e| matches!(e, Event::Removed { episode, .. } if *episode == ep))
-        .await;
+    h.until(
+        "the removal",
+        |e| matches!(e, Event::Removed { episode, .. } if *episode == ep),
+    )
+    .await;
     assert!(!h.out().join(".reelgene").exists());
     assert!(
         h.engine.snapshot().await.unwrap().is_empty(),
@@ -500,7 +563,9 @@ async fn a_transient_failure_waits_and_retries_by_itself() {
     let url = cdn.url("/index.m3u8");
     let ep = h.add(&url, &url).await;
 
-    let waiting = h.status(ep, |s| matches!(s, Status::Waiting { .. })).await;
+    let waiting = h
+        .status("the wait", ep, |s| matches!(s, Status::Waiting { .. }))
+        .await;
     assert!(
         matches!(waiting, Status::Waiting { ref error, .. } if error.contains("503")),
         "{waiting:?}"
