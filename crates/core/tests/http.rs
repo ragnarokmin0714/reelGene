@@ -333,3 +333,57 @@ async fn requests_go_through_the_proxy_set() {
     assert_eq!(got, body(1000));
     assert_eq!(proxy.hits("http://media.invalid/clip.ts").len(), 1);
 }
+
+#[tokio::test]
+async fn the_speed_limit_holds_and_can_be_lifted_mid_download() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve("/big.mp4", body(300_000));
+    let dir = std::env::temp_dir().join(format!("reelgene-limit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let http = Http::new(HttpConfig {
+        speed_limit: 100_000,
+        ..HttpConfig::default()
+    })
+    .unwrap();
+    let url = cdn.url("/big.mp4");
+    let download = |path| FileDownload {
+        url: &url,
+        headers: &[],
+        path,
+        validator: None,
+    };
+
+    // 300 kB at 100 kB/s: about three seconds, and certainly not one.
+    let (limited, lifted) = (dir.join("a.mp4"), dir.join("b.mp4"));
+    let start = Instant::now();
+    http.download_to(download(&limited), &CancellationToken::new(), &mut |_| {})
+        .await
+        .unwrap();
+    assert!(
+        start.elapsed() >= Duration::from_millis(2500),
+        "{:?}",
+        start.elapsed()
+    );
+
+    // Lifted a moment in: the rest goes at full speed.
+    let start = Instant::now();
+    let lift = {
+        let http = http.clone();
+        async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            http.set_speed_limit(0);
+        }
+    };
+    let (cancel, mut quiet) = (CancellationToken::new(), |_: &Transfer| {});
+    let (done, ()) = tokio::join!(
+        http.download_to(download(&lifted), &cancel, &mut quiet),
+        lift
+    );
+    assert_eq!(done.unwrap().bytes, 300_000);
+    assert!(
+        start.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        start.elapsed()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

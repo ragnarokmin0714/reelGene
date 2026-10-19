@@ -403,6 +403,31 @@ fn an_unusable_proxy_cannot_be_saved() {
 }
 
 #[test]
+fn a_speed_limit_is_typed_in_mb_and_kept_in_kb() {
+    let env = env("limit");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::NodeT;
+    let value = |h: &Harness<'static, State>| {
+        h.get_by_role_and_label(Role::SpinButton, EN.speed_limit)
+            .accesskit_node()
+            .value()
+            .unwrap_or_default()
+    };
+    assert_eq!(value(&h), EN.no_limit, "the words, not a zero");
+    // As a screen reader sets it: dragging and typing end in the same value.
+    h.get_by_role_and_label(Role::SpinButton, EN.speed_limit)
+        .set_value_accesskit(2.5);
+    settle(&mut h);
+    assert_eq!(value(&h), "2.5 MB/s");
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    assert_eq!(h.state_mut().gui().settings.speed_limit, 2500);
+}
+
+#[test]
 fn removing_a_job_asks_first() {
     let env = env("remove");
     let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();

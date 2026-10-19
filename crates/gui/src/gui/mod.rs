@@ -382,6 +382,11 @@ impl Gui {
         }
         self.desktop.configure(&self.settings);
         let s = &self.settings;
+        if s.speed_limit != old.speed_limit {
+            self.desktop
+                .engine
+                .set_speed_limit(s.speed_limit.saturating_mul(1000));
+        }
         if s.episodes != old.episodes {
             self.desktop
                 .engine

@@ -26,6 +26,8 @@ pub struct Settings {
     pub episodes: usize,
     /// Segments in flight per episode.
     pub segments: usize,
+    /// KB/s (1000 bytes) over all downloads together; 0 for no limit.
+    pub speed_limit: u64,
     /// Connections to one site at once. Low on purpose: it keeps accounts
     /// from looking like abuse.
     pub per_host: usize,
@@ -66,6 +68,7 @@ impl Default for Settings {
             quality: "best".to_owned(),
             episodes: 2,
             segments: 4,
+            speed_limit: 0,
             per_host: 6,
             ffmpeg: None,
             autostart: true,

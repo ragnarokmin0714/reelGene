@@ -143,6 +143,8 @@ pub(crate) struct SettingsForm {
     ffmpeg: String,
     /// Blank stands for `system`.
     proxy: String,
+    /// MB/s, as speeds are shown; stored in KB/s.
+    limit_mb: f64,
     quiet: bool,
 }
 
@@ -157,6 +159,7 @@ impl SettingsForm {
             default_folder: default_folder.display().to_string(),
             folder: text(&settings.download_dir),
             ffmpeg: text(&settings.ffmpeg),
+            limit_mb: settings.speed_limit as f64 / 1000.0,
             proxy: Some(settings.proxy.clone())
                 .filter(|p| p != "system")
                 .unwrap_or_default(),
@@ -189,6 +192,7 @@ impl SettingsForm {
         Settings {
             download_dir: path(&self.folder),
             ffmpeg: path(&self.ffmpeg),
+            speed_limit: (self.limit_mb * 1000.0).round() as u64,
             proxy: match self.proxy.trim() {
                 "" => "system".to_owned(),
                 p => p.to_owned(),
@@ -399,6 +403,27 @@ fn settings_ui(
                 ui.label(t.per_host);
                 ui.add(egui::Slider::new(&mut form.s.per_host, 1..=16))
                     .on_hover_text(t.per_host);
+                ui.end_row();
+                let label = ui.label(t.speed_limit).id;
+                let no_limit = t.no_limit;
+                ui.add(
+                    egui::DragValue::new(&mut form.limit_mb)
+                        .range(0.0..=1000.0)
+                        .speed(0.1)
+                        .max_decimals(1)
+                        .custom_formatter(move |v, _| {
+                            if v <= 0.0 {
+                                no_limit.to_owned()
+                            } else {
+                                format!("{v:.1} MB/s")
+                            }
+                        })
+                        .custom_parser(|s| {
+                            let s = s.trim().trim_end_matches("MB/s").trim();
+                            s.parse().ok().or_else(|| s.is_empty().then_some(0.0))
+                        }),
+                )
+                .labelled_by(label);
                 ui.end_row();
                 ui.label("ffmpeg");
                 ui.horizontal(|ui| {

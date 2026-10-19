@@ -96,7 +96,7 @@ off).
 reelgene get https://example.com/show/index.m3u8          # download now
 reelgene get URL --episodes 1-5,8 --quality 720 -o ~/Videos
 reelgene add URL -H "Referer: https://example.com/"       # queue for later
-reelgene run                                               # work through the queue
+reelgene run [--limit 2M]                                  # work through the queue
 reelgene list                                              # what is queued, done, failed
 reelgene resume [JOB]                                      # queue failed or paused again
 reelgene pause [JOB]

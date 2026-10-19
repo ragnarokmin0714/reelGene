@@ -97,6 +97,7 @@ impl App {
     pub async fn engine(&self, autostart: bool) -> Result<Engine, String> {
         let mut http = HttpConfig {
             per_host: self.settings.per_host,
+            speed_limit: self.settings.speed_limit.saturating_mul(1000),
             ..HttpConfig::default()
         };
         if let Some(ua) = &self.settings.user_agent {

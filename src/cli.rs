@@ -37,7 +37,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
     /// Download now: queue the links and work until the queue is done.
-    Get(AddArgs),
+    Get(GetArgs),
     /// Queue links without downloading them yet.
     Add(AddArgs),
     /// Work through the queue until it is done. Ctrl-C stops; progress is kept.
@@ -45,6 +45,10 @@ pub enum Cmd {
         /// Episodes at once (default: from settings).
         #[arg(short, long, value_name = "N")]
         parallel: Option<usize>,
+        /// Speed limit over all downloads, e.g. 500K or 2M bytes a second;
+        /// 0 for none (default: from settings).
+        #[arg(short, long, value_name = "RATE")]
+        limit: Option<String>,
     },
     /// Show the queue.
     #[command(alias = "ls")]
@@ -68,6 +72,16 @@ pub enum Cmd {
     Report,
     /// Show reelgene's licence and those of the fonts built into it.
     Licenses,
+}
+
+#[derive(Args, Debug)]
+pub struct GetArgs {
+    #[command(flatten)]
+    pub add: AddArgs,
+    /// Speed limit over all downloads, e.g. 500K or 2M bytes a second; 0 for
+    /// none (default: from settings).
+    #[arg(short, long, value_name = "RATE")]
+    pub limit: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -137,8 +151,9 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         .then(|| take_handed(&app, &engine))
         .flatten();
     let code = match cmd {
-        Cmd::Get(args) => {
-            add(&app, &engine, &args).await?;
+        Cmd::Get(get) => {
+            limit(&engine, get.limit.as_deref())?;
+            add(&app, &engine, &get.add).await?;
             drive(&engine, handed).await?
         }
         Cmd::Add(args) => {
@@ -146,10 +161,14 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             println!("start with:  reelgene run");
             ExitCode::SUCCESS
         }
-        Cmd::Run { parallel } => {
+        Cmd::Run {
+            parallel,
+            limit: rate,
+        } => {
             if let Some(n) = parallel {
                 engine.send(Command::SetConcurrency(n));
             }
+            limit(&engine, rate.as_deref())?;
             drive(&engine, handed).await?
         }
         Cmd::List => {
@@ -191,12 +210,17 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
 /// waits until it is closed.
 async fn hand_over(data_dir: &Path, cmd: &Cmd) -> Result<ExitCode, String> {
     let running = OpenError::Running(data_dir.to_owned()).to_string();
-    let (Cmd::Get(args) | Cmd::Add(args)) = cmd else {
-        return Err(format!(
-            "{running}\n(links still work: `reelgene add URL` passes them to it)"
-        ));
+    let (args, limited) = match cmd {
+        Cmd::Get(get) => (&get.add, get.limit.is_some()),
+        Cmd::Add(args) => (args, false),
+        _ => {
+            return Err(format!(
+                "{running}\n(links still work: `reelgene add URL` passes them to it)"
+            ));
+        }
     };
-    if args.out.is_some()
+    if limited
+        || args.out.is_some()
         || args.title.is_some()
         || args.episodes.is_some()
         || args.quality.is_some()
@@ -287,6 +311,31 @@ async fn next_handed(handed: &mut Option<Handed>) -> Option<Result<String, Strin
         Some(h) => h.results.recv().await,
         None => std::future::pending().await,
     }
+}
+
+/// `--limit` for this run only; settings stay as they are.
+fn limit(engine: &Engine, rate: Option<&str>) -> Result<(), String> {
+    if let Some(rate) = rate {
+        engine.set_speed_limit(parse_rate(rate)?);
+    }
+    Ok(())
+}
+
+/// `500K`, `2M`, `1.5M`, `250000`: bytes a second, in thousands (K) and
+/// millions (M) as download speeds are quoted; `0` for no limit.
+fn parse_rate(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    let bad = || format!("not a speed: {s} (try 500K or 2M)");
+    let (number, unit) = match s.char_indices().last() {
+        Some((i, 'k' | 'K')) => (&s[..i], 1e3),
+        Some((i, 'm' | 'M')) => (&s[..i], 1e6),
+        _ => (s, 1.0),
+    };
+    let n: f64 = number.trim().parse().map_err(|_| bad())?;
+    if !n.is_finite() || n < 0.0 {
+        return Err(bad());
+    }
+    Ok((n * unit) as u64)
 }
 
 fn target(job: Option<i64>) -> Target {
@@ -724,7 +773,7 @@ mod tests {
             "720",
         ])
         .unwrap();
-        let Some(Cmd::Get(args)) = cli.cmd else {
+        let Some(Cmd::Get(GetArgs { add: args, .. })) = cli.cmd else {
             panic!("expected get")
         };
         assert_eq!(args.urls.len(), 2);
@@ -743,6 +792,18 @@ mod tests {
         assert!(parse_selection("5-2").is_err());
         assert!(parse_selection("x").is_err());
         assert!(parse_selection(" , ").is_err());
+    }
+
+    #[test]
+    fn speeds_are_read_as_people_write_them() {
+        assert_eq!(parse_rate("500K"), Ok(500_000));
+        assert_eq!(parse_rate("1.5M"), Ok(1_500_000));
+        assert_eq!(parse_rate("2m"), Ok(2_000_000));
+        assert_eq!(parse_rate("250000"), Ok(250_000));
+        assert_eq!(parse_rate("0"), Ok(0));
+        for bad in ["fast", "-1M", "M", "1G"] {
+            assert!(parse_rate(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

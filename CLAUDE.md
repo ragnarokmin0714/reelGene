@@ -110,7 +110,11 @@ bytes arrived since the last one. The proxy (`http::Proxy`) is the system's
 by default, `none`, or an http(s)/socks5(h) URL that replaces the system's;
 one that does not parse stops the engine from starting rather than silently
 going direct, and its password is never shown (`Display`, the report, error
-messages that do not echo the input).
+messages that do not echo the input). The speed limit is one `Limiter` per
+client, shared by every transfer: a clock that each chunk moves forward by
+its size at the allowed rate, idle time earning at most half a second of
+burst; changing it takes effect with the next chunk of every running
+transfer.
 
 **The local network.** `net::is_private` decides from the URL alone (no DNS).
 Auto-detected private links are listed, never fetched by themselves. A public

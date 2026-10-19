@@ -292,6 +292,12 @@ impl Engine {
         let _ = self.tx.send(Msg::Command(cmd));
     }
 
+    /// Bytes per second over all downloads together; 0 lifts the limit.
+    /// Applies at once, to downloads already running too.
+    pub fn set_speed_limit(&self, bytes_per_sec: u64) {
+        self.shared.http.set_speed_limit(bytes_per_sec);
+    }
+
     /// The resolvers in this build, by id.
     pub fn resolvers(&self) -> Vec<&'static str> {
         self.shared.registry.ids().collect()

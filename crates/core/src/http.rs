@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::io::SeekFrom;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
@@ -60,6 +61,9 @@ pub struct HttpConfig {
     /// Simultaneous connections to one host.
     pub per_host: usize,
     pub proxy: Proxy,
+    /// Bytes per second over all transfers together; 0 for no limit.
+    /// Changeable later with `Http::set_speed_limit`.
+    pub speed_limit: u64,
 }
 
 /// Which way requests go out.
@@ -125,6 +129,7 @@ impl Default for HttpConfig {
             max_retry_after: Duration::from_secs(120),
             per_host: 6,
             proxy: Proxy::System,
+            speed_limit: 0,
         }
     }
 }
@@ -135,6 +140,7 @@ pub struct Http {
     client: Client,
     cfg: Arc<HttpConfig>,
     hosts: Arc<Hosts>,
+    limiter: Arc<Limiter>,
 }
 
 /// A file to stream to disk, resuming whatever is already at `path`.
@@ -185,9 +191,16 @@ impl Http {
             .map_err(from_reqwest)?;
         Ok(Self {
             client,
+            limiter: Arc::new(Limiter::new(cfg.speed_limit)),
             cfg: Arc::new(cfg),
             hosts: Arc::default(),
         })
+    }
+
+    /// Bytes per second over all transfers; 0 lifts the limit. Takes effect
+    /// with the next chunk of every transfer already running.
+    pub fn set_speed_limit(&self, bytes_per_sec: u64) {
+        self.limiter.rate.store(bytes_per_sec, Ordering::Relaxed);
     }
 
     /// A playlist, a page, an API response: UTF-8 text, compression allowed.
@@ -408,7 +421,7 @@ impl Http {
                 )));
             }
         }
-        read_body(&mut resp, max).await
+        read_body(&mut resp, max, &self.limiter).await
     }
 
     async fn transfer(
@@ -495,6 +508,11 @@ impl Http {
                     }
                     state.bytes += chunk.len() as u64;
                     progress(state);
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => break Err(Error::Cancelled),
+                        _ = self.limiter.take(chunk.len()) => {}
+                    }
                 }
                 Ok(None) => break Ok(()),
                 Err(e) => break Err(from_reqwest(e)),
@@ -530,7 +548,7 @@ fn validator_of(resp: &Response) -> Option<String> {
         .map(str::to_owned)
 }
 
-async fn read_body(resp: &mut Response, max: usize) -> Result<Vec<u8>> {
+async fn read_body(resp: &mut Response, max: usize, limiter: &Limiter) -> Result<Vec<u8>> {
     let url = net::redact(resp.url());
     let too_large = || Error::TooLarge(format!("{url} is larger than {max} bytes"));
     if resp.content_length().is_some_and(|n| n > max as u64) {
@@ -542,8 +560,49 @@ async fn read_body(resp: &mut Response, max: usize) -> Result<Vec<u8>> {
             return Err(too_large());
         }
         body.extend_from_slice(&chunk);
+        // Callers run this under their cancellation token, so the wait is too.
+        limiter.take(chunk.len()).await;
     }
     Ok(body)
+}
+
+/// Longest a limited transfer may run ahead after being idle.
+const BURST: Duration = Duration::from_millis(500);
+
+/// One speed limit for every transfer of a client: a clock that each chunk
+/// moves forward by its size at the allowed rate. Whoever finds the clock
+/// ahead of now waits for it, so transfers share the rate between them.
+#[derive(Debug)]
+struct Limiter {
+    rate: AtomicU64,
+    next: Mutex<Instant>,
+}
+
+impl Limiter {
+    fn new(rate: u64) -> Self {
+        Self {
+            rate: AtomicU64::new(rate),
+            next: Mutex::new(Instant::now()),
+        }
+    }
+
+    async fn take(&self, bytes: usize) {
+        let rate = self.rate.load(Ordering::Relaxed);
+        if rate == 0 {
+            return;
+        }
+        let wait = {
+            let mut next = self.next.lock().unwrap_or_else(PoisonError::into_inner);
+            let now = Instant::now();
+            // Idle time earns at most one burst of credit.
+            let start = (*next).max(now.checked_sub(BURST).unwrap_or(now));
+            *next = start + Duration::from_secs_f64(bytes as f64 / rate as f64);
+            next.saturating_duration_since(now)
+        };
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+    }
 }
 
 fn check_status(resp: &Response) -> Result<()> {
@@ -775,6 +834,28 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn the_limit_is_shared_and_idle_time_buys_only_a_short_burst() {
+        let limiter = Limiter::new(1000);
+        let start = Instant::now();
+        // 3000 bytes at 1000/s from a standing start: 3 s, shared in turns.
+        for _ in 0..3 {
+            limiter.take(1000).await;
+        }
+        assert_eq!(start.elapsed(), Duration::from_secs(3));
+
+        // An hour idle is not an hour of credit.
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        let start = Instant::now();
+        limiter.take(2000).await;
+        assert_eq!(start.elapsed(), Duration::from_millis(1500));
+
+        limiter.rate.store(0, Ordering::Relaxed);
+        let start = Instant::now();
+        limiter.take(1_000_000).await;
+        assert_eq!(start.elapsed(), Duration::ZERO, "0 lifts the limit");
+    }
 
     #[test]
     fn a_proxy_is_system_none_or_an_address_and_never_shows_its_password() {
