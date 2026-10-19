@@ -131,6 +131,17 @@ reelgene looks for ffmpeg in the path set in Settings, then next to a
 portable executable, then on `PATH` (never in the current folder). ffmpeg is
 only ever given local files: reelgene does all the networking itself.
 
+## yt-dlp (optional)
+
+A video page that reelgene has no resolver for can still be added if
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) is installed: reelgene asks it
+what the page holds and where the video is, then downloads with its own
+engine, so resume, the speed limit and the local-network guard apply as
+usual. Only links you add yourself go to yt-dlp, never what the clipboard
+picks up. It is found like ffmpeg (`yt_dlp` in `settings.json`, beside a
+portable executable, or on `PATH`), run with `--ignore-config`, and asked
+for one file with both picture and sound. DRM-protected videos are refused.
+
 ## Where files live
 
 | | Settings | Queue | Downloads |

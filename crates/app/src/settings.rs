@@ -33,6 +33,8 @@ pub struct Settings {
     pub per_host: usize,
     /// `None`: look next to a portable install, then on PATH.
     pub ffmpeg: Option<PathBuf>,
+    /// For pages no resolver handles; found like ffmpeg.
+    pub yt_dlp: Option<PathBuf>,
     /// Continue the queue as soon as reelgene starts.
     pub autostart: bool,
     /// Watch the clipboard for links.
@@ -73,6 +75,7 @@ impl Default for Settings {
             speed_limit: 0,
             per_host: 6,
             ffmpeg: None,
+            yt_dlp: None,
             autostart: true,
             clipboard: true,
             animations: None,

@@ -328,9 +328,15 @@ impl Engine {
             Some(id) => registry
                 .get(id)
                 .ok_or_else(|| Error::Invalid(format!("no resolver called {id:?}")))?,
-            None => registry.find(url).ok_or_else(|| {
-                Error::Unsupported(format!("no resolver handles {}", net::redact(url)))
-            })?,
+            None => registry
+                .find(url)
+                .or_else(|| registry.fallback())
+                .ok_or_else(|| {
+                    Error::Unsupported(format!(
+                        "no resolver handles {} (with yt-dlp installed, reelgene tries pages like this)",
+                        net::redact(url)
+                    ))
+                })?,
         };
         let cancel = CancellationToken::new();
         let cx = Ctx {

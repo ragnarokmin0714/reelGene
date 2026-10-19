@@ -11,7 +11,6 @@ use reelgene_core::engine::{
     Command, Engine, EpisodeId, Event, JobId, JobView, Notice, Status, Target,
 };
 use reelgene_core::net;
-use reelgene_core::resolver::Registry;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
@@ -714,9 +713,14 @@ async fn doctor() -> Result<ExitCode, String> {
             println!("ffmpeg     not found: playlists stay .ts and separate sound is not merged")
         }
     }
-    let resolvers: Vec<_> = Registry::new().ids().collect();
+    let (yt_dlp, yt_warning) = app::find_yt_dlp(&settings, &places);
+    match &yt_dlp {
+        Some(p) => println!("yt-dlp     {} (for pages no resolver handles)", p.display()),
+        None => println!("yt-dlp     not found: pages need a resolver of their own"),
+    }
+    let resolvers: Vec<_> = reelgene_core::resolver::Registry::new().ids().collect();
     println!("resolvers  {}", resolvers.join(", "));
-    for w in warning.into_iter().chain(ff_warning) {
+    for w in warning.into_iter().chain(ff_warning).chain(yt_warning) {
         println!("warning    {w}");
     }
     Ok(ExitCode::SUCCESS)

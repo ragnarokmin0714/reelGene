@@ -61,6 +61,17 @@ runs before every attempt, every resume and every re-resolve after a
 401/403/410 (at most three per attempt). `discover()` runs once, when a link
 is added.
 
+**yt-dlp is a fallback, not a resolver of sites** (`resolver/ytdlp.rs`). It
+claims nothing (`matches` is false), so clipboard links never reach an
+external program; `Engine::discover` turns to `Registry::fallback` only for
+a link the user added that nobody claims. It answers facts only (`-J`):
+discovery lists entries, `resolve` asks for a fresh link every attempt like
+any resolver, and the engine downloads, so the guards all apply (a public
+page's video on a private address is refused, tested). Always registered,
+fallback only when found, so queued jobs say "not found" instead of naming
+an unknown resolver. Run with `--ignore-config` (a config could add
+downloads or `--exec`), the link after `--`, a timeout, capped output.
+
 **Resume granularity.** Series per episode (scheduler), playlist per segment,
 single file per byte (`Range` + `If-Range` with the stored ETag or
 Last-Modified, so a changed remote file is downloaded whole, not spliced).
@@ -247,7 +258,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/http.rs           the one client: retries, backoff, ranges, resume
   src/paths.rs          safe names and the naming template
   src/detect.rs         links in clipboard text
-  src/resolver/         the site seam: mod.rs, direct.rs, extra.rs
+  src/resolver/         the site seam: mod.rs, direct.rs, ytdlp.rs, extra.rs
   src/store.rs          SQLite actor
   src/engine/           scheduler (mod.rs), worker.rs, meter.rs
   src/mux.rs            concat, ffmpeg, media checks, Mark of the Web

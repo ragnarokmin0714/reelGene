@@ -274,3 +274,45 @@ fn a_running_queue_takes_links_handed_to_it() {
         .count();
     assert_eq!(saved, 2, "{}", text(&out));
 }
+
+#[cfg(unix)]
+#[test]
+fn a_page_without_a_resolver_is_read_by_the_users_yt_dlp() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = serve(HashMap::from([(
+        "/v/clip.mp4",
+        b"moving-pictures".to_vec(),
+    )]));
+    let home = Home::new("ytdlp");
+    let tool = home.path().join("yt-dlp");
+    std::fs::write(
+        &tool,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--flat-playlist*) echo '{{\"title\":\"Clip\"}}' ;;\n  *) echo '{{\"protocol\":\"http\",\"url\":\"{base}/v/clip.mp4\"}}' ;;\nesac\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        home.path().join("settings.json"),
+        format!("{{\"yt_dlp\": \"{}\"}}", tool.display()),
+    )
+    .unwrap();
+
+    let out = home.run(&["get", &format!("{base}/watch?v=1")]);
+    assert!(out.status.success(), "{}", text(&out));
+    let file = home
+        .path()
+        .join("downloads")
+        .join("Clip")
+        .join("01 Clip.mp4");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"moving-pictures",
+        "{}",
+        text(&out)
+    );
+
+    let out = home.run(&["doctor"]);
+    assert!(text(&out).contains("yt-dlp     /"), "{}", text(&out));
+}

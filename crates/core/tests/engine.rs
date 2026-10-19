@@ -833,3 +833,126 @@ async fn a_queue_the_user_stopped_stays_stopped_when_the_hours_come() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(cdn.hits("/index.m3u8").is_empty(), "release is not Start");
 }
+
+/// A stand-in yt-dlp: lists a two-part series or one clip, points every
+/// video at `media`, refuses links with "drm" in them, and logs its
+/// arguments to `args.log`.
+#[cfg(unix)]
+fn fake_ytdlp(dir: &Path, media: &Url) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("yt-dlp");
+    let log = dir.join("args.log");
+    let script = format!(
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> '{log}'
+for a; do url=$a; done
+case "$url" in *drm*) echo 'ERROR: [x] This video is DRM protected' >&2; exit 1;; esac
+case "$*" in
+  *--flat-playlist*)
+    case "$url" in
+      *series*) echo '{{"_type":"playlist","title":"Show","entries":[{{"url":"https://site.example/ep1","title":"One"}},{{"url":"not-a-link"}},{{"url":"https://site.example/ep2"}}]}}' ;;
+      *) echo '{{"title":"Clip"}}' ;;
+    esac ;;
+  *) echo '{{"protocol":"http","url":"{media}","http_headers":{{"Referer":"https://site.example/"}}}}' ;;
+esac
+"#,
+        log = log.display()
+    );
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+async fn add_found(h: &Harness, page: &Url) -> EpisodeId {
+    let found = h.engine.discover(page, None).await.unwrap();
+    let id = h
+        .engine
+        .add(found.into_job(page.clone(), h.out()))
+        .await
+        .unwrap();
+    let jobs = h.engine.snapshot().await.unwrap();
+    jobs.into_iter().find(|j| j.id == id).unwrap().episodes[0].id
+}
+
+#[cfg(unix)]
+fn with_ytdlp(path: PathBuf) -> impl FnOnce(&mut EngineConfig) {
+    use reelgene_core::resolver::ytdlp::{ID, YtDlp};
+    move |c| {
+        c.registry.add(Box::new(YtDlp::new(Some(path))));
+        c.registry.set_fallback(ID);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_page_nobody_claims_goes_to_yt_dlp_and_downloads_with_the_engine() {
+    let cdn = FakeCdn::start().await;
+    let data: Vec<u8> = (0..50_000u32).map(|i| (i % 7) as u8).collect();
+    cdn.serve("/clip.mp4", data.clone());
+    let dir = scratch("ytdlp-tool");
+    let tool = fake_ytdlp(&dir, &cdn.url("/clip.mp4"));
+    let mut h = harness_with("ytdlp", with_ytdlp(tool)).await;
+
+    let series = Url::parse("https://site.example/series/9").unwrap();
+    let found = h.engine.discover(&series, None).await.unwrap();
+    assert_eq!(found.resolver, "yt-dlp");
+    assert_eq!(found.found.title, "Show");
+    let titles: Vec<_> = found
+        .found
+        .episodes
+        .iter()
+        .map(|e| e.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        ["One", "Show #2"],
+        "an entry without a link is left out"
+    );
+    assert!(
+        h.engine.claims(&series).is_none(),
+        "the clipboard never hands a page to yt-dlp"
+    );
+
+    // A page on the same (local) server as its video: allowed to follow.
+    let page = cdn.url("/watch/1");
+    let ep = add_found(&h, &page).await;
+    let output = h.done(ep).await;
+    assert_eq!(std::fs::read(output).unwrap(), data);
+    let hit = &cdn.hits("/clip.mp4")[0];
+    assert_eq!(
+        hit.headers.get("referer").map(String::as_str),
+        Some("https://site.example/"),
+        "yt-dlp's headers are sent"
+    );
+
+    // What yt-dlp hands back passes the same local-network guard.
+    let public = Url::parse("https://site.example/watch/2").unwrap();
+    let ep = add_found(&h, &public).await;
+    let error = h.failed(ep).await;
+    assert!(error.contains("into the local network"), "{error}");
+
+    let args = std::fs::read_to_string(dir.join("args.log")).unwrap();
+    for line in args.lines() {
+        assert!(line.starts_with("--ignore-config"), "{line}");
+        let link = line.rsplit_once(" -- ").map(|(_, l)| l);
+        assert!(
+            link.is_some_and(|l| !l.contains(' ')),
+            "the link comes after --: {line}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn yt_dlp_saying_drm_is_refused_like_any_drm() {
+    let dir = scratch("ytdlp-drm");
+    let tool = fake_ytdlp(&dir, &Url::parse("http://unused.example/").unwrap());
+    let h = harness_with("ytdlp-drm", with_ytdlp(tool)).await;
+    let page = Url::parse("https://site.example/drm/1").unwrap();
+    let e = h.engine.discover(&page, None).await.unwrap_err();
+    assert!(e.to_string().contains("DRM"), "{e}");
+    assert!(matches!(e, reelgene_core::Error::Drm(_)));
+    std::fs::remove_dir_all(&dir).ok();
+}

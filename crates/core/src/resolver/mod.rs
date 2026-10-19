@@ -18,6 +18,7 @@
 
 pub mod direct;
 mod extra;
+pub mod ytdlp;
 
 use crate::error::{Error, Result};
 use crate::http::Http;
@@ -100,6 +101,8 @@ pub trait Resolver: Send + Sync {
 /// Every resolver compiled into this build.
 pub struct Registry {
     resolvers: Vec<Box<dyn Resolver>>,
+    /// Asked when no resolver claims a link the user added (yt-dlp).
+    fallback: Option<&'static str>,
 }
 
 impl Registry {
@@ -107,6 +110,7 @@ impl Registry {
     pub fn new() -> Self {
         let mut registry = Self {
             resolvers: Vec::new(),
+            fallback: None,
         };
         extra::register(&mut registry);
         registry.add(Box::new(direct::Direct));
@@ -138,6 +142,17 @@ impl Registry {
             .iter()
             .find(|r| r.matches(url))
             .map(|r| r.as_ref())
+    }
+
+    /// Use the resolver `id` (already added) for links nobody claims, when
+    /// the user adds them. Never for links found on the clipboard.
+    pub fn set_fallback(&mut self, id: &'static str) {
+        assert!(self.get(id).is_some(), "no resolver {id:?} to fall back on");
+        self.fallback = Some(id);
+    }
+
+    pub fn fallback(&self) -> Option<&dyn Resolver> {
+        self.fallback.and_then(|id| self.get(id))
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &'static str> + '_ {

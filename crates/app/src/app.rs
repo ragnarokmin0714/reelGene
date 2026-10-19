@@ -7,6 +7,8 @@ use crate::settings::Settings;
 use reelgene_core::engine::{Engine, EngineConfig};
 use reelgene_core::http::HttpConfig;
 use reelgene_core::mux::{self, Ffmpeg};
+use reelgene_core::resolver::Registry;
+use reelgene_core::resolver::ytdlp::{self, YtDlp};
 use std::path::PathBuf;
 
 /// ffmpeg older than this still works for `-c copy`, but has had demuxer bugs
@@ -17,6 +19,8 @@ pub struct App {
     pub places: Places,
     pub settings: Settings,
     pub ffmpeg: Option<Ffmpeg>,
+    /// Read pages no resolver handles; absent, such links are refused.
+    pub yt_dlp: Option<PathBuf>,
     /// Things the user should hear about, for the front end to show.
     pub warnings: Vec<String>,
     _instance: Instance,
@@ -75,6 +79,8 @@ impl App {
         }
         let (ffmpeg, ff_warning) = find_ffmpeg(&settings, &places).await;
         warnings.extend(ff_warning);
+        let (yt_dlp, yt_warning) = find_yt_dlp(&settings, &places);
+        warnings.extend(yt_warning);
         for w in &warnings {
             log::warn!("{w}");
         }
@@ -83,6 +89,7 @@ impl App {
             places,
             settings,
             ffmpeg,
+            yt_dlp,
             _instance: instance,
         })
     }
@@ -118,6 +125,7 @@ impl App {
             ffmpeg: self.ffmpeg.clone(),
             autostart,
             held: crate::schedule::held_now(self.settings.schedule),
+            registry: registry(self.yt_dlp.clone()),
             ..EngineConfig::default()
         })
         .await
@@ -132,6 +140,30 @@ impl App {
             .as_ref()
             .map(|f| format!("ffmpeg {}", f.version()))
     }
+}
+
+/// This build's resolvers, with yt-dlp for pages none of them handles. It is
+/// registered even when missing, so jobs queued with it say what is missing.
+pub fn registry(yt_dlp: Option<PathBuf>) -> Registry {
+    let found = yt_dlp.is_some();
+    let mut registry = Registry::new();
+    registry.add(Box::new(YtDlp::new(yt_dlp)));
+    if found {
+        registry.set_fallback(ytdlp::ID);
+    }
+    registry
+}
+
+/// The configured yt-dlp, else one beside a portable install, else PATH.
+pub fn find_yt_dlp(settings: &Settings, places: &Places) -> (Option<PathBuf>, Option<String>) {
+    let portable_dir = places.exe_dir.as_deref().filter(|_| places.portable);
+    let found = mux::locate_program("yt-dlp", settings.yt_dlp.as_deref(), portable_dir);
+    let warning = settings
+        .yt_dlp
+        .as_ref()
+        .filter(|_| found.is_none())
+        .map(|p| format!("the yt-dlp set in settings ({}) was not found", p.display()));
+    (found, warning)
 }
 
 /// The configured ffmpeg, else one beside a portable install, else PATH.

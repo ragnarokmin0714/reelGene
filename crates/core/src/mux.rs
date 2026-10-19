@@ -174,21 +174,30 @@ pub fn mark_of_the_web(path: &Path, source: &Url) {
 /// never searched. A configured path that does not exist gives `None` rather
 /// than silently using some other ffmpeg.
 pub fn locate(configured: Option<&Path>, portable_dir: Option<&Path>) -> Option<PathBuf> {
+    locate_program("ffmpeg", configured, portable_dir)
+}
+
+/// The same search for any program reelgene may run (ffmpeg, yt-dlp).
+pub fn locate_program(
+    name: &str,
+    configured: Option<&Path>,
+    portable_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
-        "ffmpeg.exe"
+        format!("{name}.exe")
     } else {
-        "ffmpeg"
+        name.to_owned()
     };
     if let Some(p) = configured {
         return (p.is_absolute() && p.is_file()).then(|| p.to_path_buf());
     }
-    if let Some(p) = portable_dir.map(|d| d.join(exe)).filter(|p| p.is_file()) {
+    if let Some(p) = portable_dir.map(|d| d.join(&exe)).filter(|p| p.is_file()) {
         return Some(p);
     }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .filter(|d| d.is_absolute())
-        .map(|d| d.join(exe))
+        .map(|d| d.join(&exe))
         .find(|p| p.is_file())
 }
 
@@ -293,8 +302,9 @@ impl Ffmpeg {
     }
 }
 
-/// `kill_on_drop` covers cancel and timeout: dropping the future kills ffmpeg.
-fn command(program: &Path) -> tokio::process::Command {
+/// `kill_on_drop` covers cancel and timeout: dropping the future kills the
+/// program (ffmpeg, yt-dlp).
+pub(crate) fn command(program: &Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     cmd.stdin(Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]
