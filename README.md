@@ -99,6 +99,7 @@ reelgene pause [JOB]
 reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
 reelgene report                                            # a problem report, in this folder
+reelgene licenses                                          # reelgene's and its fonts' licences
 ```
 
 `Ctrl-C` stops cleanly; `reelgene run` continues later. The exit code is 0
@@ -180,3 +181,8 @@ own.
 
 MIT or Apache-2.0, at your option: [`LICENSE-MIT`](LICENSE-MIT),
 [`LICENSE-APACHE`](LICENSE-APACHE).
+
+The window uses the [Inter](https://rsms.me/inter/) typeface (SIL Open Font
+License 1.1) and egui's built-in fonts; their licences are in
+`crates/reelgene-gui/assets/licenses/`, come with each release as
+`THIRD-PARTY-NOTICES.txt`, and are shown by `reelgene licenses`.

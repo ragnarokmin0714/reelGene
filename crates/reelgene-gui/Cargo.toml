@@ -22,6 +22,14 @@ jiff = "0.2.38"
 # GTK), the common dialog on Windows.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 
+# Screenshots of the window for design work: `cargo test -p reelgene-gui
+# --features screenshots -- --ignored screens`. Renders through wgpu, which is
+# why it is optional: the program itself uses glow and never links wgpu.
+egui_kittest = { workspace = true, optional = true, features = ["wgpu", "snapshot"] }
+
+[features]
+screenshots = ["dep:egui_kittest"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Tray over D-Bus (StatusNotifierItem): pure Rust, no GTK.
 ksni = "0.3.6"

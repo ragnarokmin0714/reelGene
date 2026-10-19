@@ -62,6 +62,8 @@ pub enum Cmd {
     /// Write a problem report (settings, queue, recent log; no links' secrets,
     /// no home folder name) to the current folder.
     Report,
+    /// Show reelgene's licence and those of the fonts built into it.
+    Licenses,
 }
 
 #[derive(Args, Debug)]
@@ -107,6 +109,16 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     if let Cmd::Doctor = cmd {
         // No lock: it must work while the window is open.
         return doctor().await;
+    }
+    if let Cmd::Licenses = cmd {
+        println!("reelgene {}: MIT OR Apache-2.0", env!("CARGO_PKG_VERSION"));
+        println!(
+            "Source and full licence texts: {}\n",
+            env!("CARGO_PKG_REPOSITORY")
+        );
+        #[cfg(feature = "gui")]
+        println!("{}", reelgene_gui::notices());
+        return Ok(ExitCode::SUCCESS);
     }
     let app = App::open().await?;
     for w in &app.warnings {
@@ -158,7 +170,7 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             println!("report written: {}", path.display());
             ExitCode::SUCCESS
         }
-        Cmd::Doctor => unreachable!("handled above"),
+        Cmd::Doctor | Cmd::Licenses => unreachable!("handled above"),
     };
     engine.shutdown().await;
     Ok(code)

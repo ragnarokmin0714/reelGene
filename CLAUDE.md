@@ -134,6 +134,25 @@ optional. It only ever gets absolute local paths with a `file:` prefix,
 timeout, and is killed on cancel. Without it, TS stays TS and separate audio
 is saved beside the video.
 
+**How it looks.** When stability, performance and compatibility are close,
+appearance decides (Roger, 2026-10-19). All colours, spacing and type live in
+`gui/theme.rs` — one palette for dark and one for light, both following the
+system — and the small pieces in `gui/widgets.rs`: painter-drawn icons
+(egui 0.37 bundles no icon font), icon buttons, filled buttons, badges, the
+slim progress bar and the card frame. Every clickable widget names itself
+through `WidgetInfo`, which tooltips, screen readers and kittest all rely on.
+The typeface is Inter (Regular and SemiBold, `assets/fonts/`): egui ships one
+light weight, and without bold there is no hierarchy. Font licences are in
+`assets/licenses/`, printed by `reelgene licenses` and attached to releases.
+
+**Seeing the window on a machine without a display.**
+`cargo test -p reelgene-gui --features screenshots -- --ignored screens`
+renders the main states (empty, queue in both themes and both languages,
+detected links, picker, settings, a narrow window) to `target/screens/*.png`
+through wgpu on Mesa's software renderer. Look at them after any visual
+change. The feature is the only way wgpu enters a build; the program uses
+glow, and cargo-deny keeps wgpu out of the default graph.
+
 **The window** (`gui/`): eframe/egui 0.37 with glow (smaller than wgpu, works
 in VMs). The minor version is pinned because egui breaks its API between
 minors: upgrade in a commit of its own. `model.rs` turns events into rows and
@@ -191,7 +210,9 @@ crates/reelgene-app/    what the front ends share; no UI library
   src/places.rs settings.rs instance.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
 crates/reelgene-gui/    the window; the only crate that knows egui
-  src/gui/              mod (Gui, run), desktop, model, view, dialogs, text, tests
+  src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,
+                        theme, widgets, tests
+  assets/               Inter fonts; font licences
   src/tray.rs sound.rs clipboard.rs icon.rs
 crates/reelgene/        the executable: main.rs, cli.rs, term.rs
   tests/cli.rs          the real binary against a local server

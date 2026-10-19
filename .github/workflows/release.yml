@@ -68,10 +68,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      # The fonts' licences ask to travel with every copy; `reelgene licenses`
+      # prints the same texts.
+      - name: Gather the font licences
+        run: |
+          {
+            echo "Fonts built into reelgene, and their licences."
+            for f in crates/reelgene-gui/assets/licenses/*.txt; do
+              printf '\n==== %s ====\n\n' "$(basename "$f" .txt)"
+              cat "$f"
+            done
+          } > dist/THIRD-PARTY-NOTICES.txt
       # A draft left by a failed try is filled in rather than created again.
       - name: Draft a release with the executables
         env:
@@ -80,7 +92,7 @@ jobs:
         run: |
           sha256sum reelgene* > SHA256SUMS
           cat SHA256SUMS
-          files=(reelgene* SHA256SUMS)
+          files=(reelgene* SHA256SUMS THIRD-PARTY-NOTICES.txt)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else

@@ -260,7 +260,7 @@ fn an_empty_queue_says_how_to_start() {
     let env = env("empty");
     let mut h = window(&env, english());
     settle(&mut h);
-    let _ = h.get_by_label_contains("Nothing queued");
+    let _ = h.get_by_label(EN.empty_title);
     let _ = h.get_by_label(EN.start);
     let _ = h.get_by_label(EN.no_ffmpeg);
 }
@@ -347,6 +347,9 @@ fn settings_are_saved_to_the_file_and_take_effect() {
     let mut h = window(&env, english());
     h.get_by_label(EN.settings).click();
     settle(&mut h);
+    // Further down than a 640-pixel window shows: scroll first, as a person would.
+    h.get_by_label(EN.auto_add).scroll_to_me();
+    settle(&mut h);
     h.get_by_label(EN.auto_add).click();
     settle(&mut h);
     h.get_by_label(EN.save).click();
@@ -375,7 +378,7 @@ fn removing_a_job_asks_first() {
     // The dialog's button is the last "Remove" on screen.
     h.get_all_by_label(EN.remove).last().unwrap().click();
     until(&mut h, "the empty queue", |h| {
-        h.query_by_label_contains("Nothing queued").is_some()
+        h.query_by_label(EN.empty_title).is_some()
     });
 }
 
@@ -511,4 +514,180 @@ fn with_no_window_the_tray_starts_the_queue_and_brings_the_window_back() {
     assert!(d.running(), "Start reached the engine");
     tray(TrayCmd::Quit);
     assert!(!d.wait_for_tray(), "Quit ends the program");
+}
+
+/// Pictures of the window for design work, written to `target/screens/`:
+/// `cargo test -p reelgene-gui --features screenshots -- --ignored screens`
+#[cfg(feature = "screenshots")]
+mod screens {
+    use super::*;
+    use crate::gui::Grabbed;
+    use reelgene_core::engine::{EpisodeId, EpisodeView, JobId, JobView, Progress, Status};
+
+    fn out() -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screens");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Stand-in for the system's CJK font, which the real window finds itself.
+    fn with_cjk(ctx: &egui::Context) {
+        let Ok(bytes) = std::fs::read("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf")
+        else {
+            return;
+        };
+        let mut fonts = crate::gui::theme::fonts();
+        fonts
+            .font_data
+            .insert("cjk".into(), Arc::new(egui::FontData::from_owned(bytes)));
+        for family in fonts.families.values_mut() {
+            family.push("cjk".into());
+        }
+        ctx.set_fonts(fonts);
+    }
+
+    fn ep(id: i64, title: &str, status: Status) -> EpisodeView {
+        EpisodeView {
+            id: EpisodeId(id),
+            index: id,
+            title: title.into(),
+            status,
+        }
+    }
+
+    fn demo(gui: &mut Gui) {
+        let jobs = vec![
+            JobView {
+                id: JobId(1),
+                title: "霸道總裁的契約新娘".into(),
+                source: "https://example.com/drama/123".into(),
+                out_dir: "/home/me/Downloads/reelgene".into(),
+                episodes: vec![
+                    ep(
+                        1,
+                        "第1集 命運的相遇",
+                        Status::Done {
+                            output: "/x".into(),
+                        },
+                    ),
+                    ep(
+                        2,
+                        "第2集 契約",
+                        Status::Done {
+                            output: "/x".into(),
+                        },
+                    ),
+                    ep(3, "第3集 誤會", Status::Downloading),
+                    ep(4, "第4集 真相", Status::Downloading),
+                    ep(5, "第5集 離別", Status::Queued),
+                    ep(
+                        6,
+                        "第6集 重逢",
+                        Status::Failed {
+                            error: "HTTP 404 from https://cdn.example/seg6.ts".into(),
+                        },
+                    ),
+                ],
+            },
+            JobView {
+                id: JobId(2),
+                title: "Weekend trip vlog".into(),
+                source: "https://example.org/v/trip.m3u8".into(),
+                out_dir: "/home/me/Downloads/reelgene".into(),
+                episodes: vec![ep(7, "Weekend trip vlog", Status::Paused)],
+            },
+        ];
+        gui.model.load(jobs, -100.0);
+        let progress = |ep: i64, done: usize, speed: f64| Progress {
+            job: JobId(1),
+            episode: EpisodeId(ep),
+            bytes: done as u64 * 1_200_000,
+            total: None,
+            segments: Some((done, 40)),
+            speed,
+        };
+        let rows = &mut gui.model.jobs[0].episodes;
+        rows[2].progress = Some(progress(3, 18, 2_400_000.0));
+        rows[3].progress = Some(progress(4, 4, 1_100_000.0));
+        gui.model.running = true;
+    }
+
+    fn shoot(name: &str, theme: egui::Theme, language: &str, setup: impl FnOnce(&mut Gui)) {
+        shoot_sized(name, [900.0, 640.0], theme, language, setup);
+    }
+
+    fn shoot_sized(
+        name: &str,
+        size: [f32; 2],
+        theme: egui::Theme,
+        language: &str,
+        setup: impl FnOnce(&mut Gui),
+    ) {
+        let env = env(name);
+        let settings = Settings {
+            language: Some(language.into()),
+            ..Settings::default()
+        };
+        let builder = Harness::builder()
+            .with_size(size)
+            .with_theme(theme)
+            .allow_missing_glyphs();
+        let mut h = open_with(builder, desktop(&env, settings, false));
+        with_cjk(&h.ctx);
+        setup(h.state_mut().gui());
+        h.run_steps(8);
+        h.render()
+            .expect("render")
+            .save(out().join(format!("{name}.png")))
+            .unwrap();
+    }
+
+    #[test]
+    #[ignore = "renders through wgpu; run by hand"]
+    fn screens() {
+        use egui::Theme::{Dark, Light};
+        shoot("empty", Dark, "en", |_| {});
+        shoot("queue-dark", Dark, "en", demo);
+        shoot("queue-light", Light, "en", demo);
+        shoot("queue-zh", Dark, "zh-TW", demo);
+        shoot("grabbed", Dark, "zh-TW", |g| {
+            demo(g);
+            for link in detect::find_links(
+                "https://cdn.example.com/show/ep01/index.m3u8 http://192.168.1.20/movie.mp4",
+            ) {
+                g.grabbed.push(Grabbed { link, busy: false });
+            }
+            g.toast("已加入：霸道總裁的契約新娘".into(), false);
+        });
+        shoot_sized("settings", [900.0, 820.0], Dark, "zh-TW", |g| {
+            let form = super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+            g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+        });
+        shoot_sized("narrow", [560.0, 460.0], Dark, "zh-TW", demo);
+        shoot_sized("pick", [900.0, 700.0], Dark, "zh-TW", |g| {
+            use reelgene_core::resolver::{Discovered, EpisodeRef};
+            let found = Discovered {
+                title: "霸道總裁的契約新娘".into(),
+                spec: json!({}),
+                episodes: (1..=40)
+                    .map(|i| EpisodeRef {
+                        index: i,
+                        title: format!("第{i}集"),
+                        hint: json!({}),
+                    })
+                    .collect(),
+            };
+            let d = reelgene_core::engine::Discovery {
+                resolver: "direct".into(),
+                found,
+            };
+            let url = Url::parse("https://example.com/drama/123").unwrap();
+            let pick = super::super::dialogs::Pick::new(url, d, &g.settings, g.download_dir());
+            g.dialog = Some(super::super::Dialog::Pick(Box::new(pick)));
+        });
+        shoot("settings-light", Light, "en", |g| {
+            let form = super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+            g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+        });
+    }
 }

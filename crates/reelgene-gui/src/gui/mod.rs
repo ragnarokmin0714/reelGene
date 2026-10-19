@@ -11,7 +11,9 @@ pub mod model;
 #[cfg(test)]
 mod tests;
 pub mod text;
+mod theme;
 mod view;
+mod widgets;
 
 use crate::tray::{Tray, TrayCmd};
 use desktop::{Desktop, Stash};
@@ -118,6 +120,7 @@ pub struct Gui {
 
 impl Gui {
     pub(crate) fn new(ctx: &egui::Context, desktop: Arc<Desktop>, tray: Option<Rc<Tray>>) -> Self {
+        theme::install(ctx);
         let settings = desktop.settings();
         let t = text::pick(settings.language.as_deref());
         let events = desktop.engine.subscribe();
@@ -358,6 +361,11 @@ impl Gui {
             }
             Err(e) => self.toast(e.to_string(), true),
         }
+    }
+
+    /// Where downloads go when settings name no folder.
+    pub(crate) fn default_folder(&self) -> PathBuf {
+        self.desktop.places.downloads.clone()
     }
 
     pub(crate) fn download_dir(&self) -> PathBuf {
