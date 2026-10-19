@@ -880,7 +880,7 @@ fn with_ytdlp(path: PathBuf) -> impl FnOnce(&mut EngineConfig) {
     use reelgene_core::resolver::ytdlp::{ID, YtDlp};
     move |c| {
         c.registry.add(Box::new(YtDlp::new(Some(path))));
-        c.registry.set_fallback(ID);
+        c.registry.add_fallback(ID);
     }
 }
 
@@ -984,4 +984,62 @@ async fn pacing_runs_one_item_per_site_with_a_pause_between() {
     let gap = done_at.elapsed();
     assert!(gap >= Duration::from_millis(900), "paused {gap:?}");
     h.done(second).await;
+}
+
+#[tokio::test]
+async fn a_page_naming_its_video_is_downloaded_without_any_site_resolver() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    cdn.serve(
+        "/watch/7",
+        r#"<html><head><title>Episode Seven</title></head><body>
+           <video preload="metadata"><source src="/index.m3u8" type="application/x-mpegURL"></video>
+           </body></html>"#,
+    );
+    let mut h = harness("page").await;
+    let page = cdn.url("/watch/7");
+    assert!(
+        h.engine.claims(&page).is_none(),
+        "pages are never claimed off the clipboard"
+    );
+    let found = h.engine.discover(&page, None).await.unwrap();
+    assert_eq!(found.resolver, "page");
+    assert_eq!(found.found.title, "Episode Seven");
+    let id = h
+        .engine
+        .add(found.into_job(page.clone(), h.out()))
+        .await
+        .unwrap();
+    let ep = h
+        .engine
+        .snapshot()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|j| j.id == id)
+        .unwrap()
+        .episodes[0]
+        .id;
+    let output = h.done(ep).await;
+    assert_eq!(std::fs::read(output).unwrap(), expected(SEGMENTS, 0));
+    assert_eq!(
+        cdn.hits("/watch/7").len(),
+        2,
+        "read once to list, once more for a fresh link"
+    );
+}
+
+#[tokio::test]
+async fn a_page_without_a_player_says_so_and_points_at_yt_dlp() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve("/article", "<html><p>no video here</p></html>");
+    let h = harness("page-none").await;
+    let e = h
+        .engine
+        .discover(&cdn.url("/article"), None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("found no video on this page"), "{e}");
+    assert!(e.contains("with yt-dlp installed"), "{e}");
 }

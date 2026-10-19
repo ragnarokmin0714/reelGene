@@ -131,10 +131,19 @@ reelgene looks for ffmpeg in the path set in Settings, then next to a
 portable executable, then on `PATH` (never in the current folder). ffmpeg is
 only ever given local files: reelgene does all the networking itself.
 
+## Pages without a resolver
+
+Add a video page that no resolver knows, and reelgene first reads the page
+itself, as a browser would: many sites write the video's address into the
+page (`<video>`, `<source>`, or the `og:video` tag for link previews). The
+page is read again before every attempt, so signed links stay fresh. Only
+links you add are read this way, never what the clipboard picks up.
+
 ## yt-dlp (optional)
 
-A video page that reelgene has no resolver for can still be added if
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) is installed: reelgene asks it
+A page that names no video in its HTML (the player loads it by script) can
+still be added if [yt-dlp](https://github.com/yt-dlp/yt-dlp) is installed:
+reelgene asks it
 what the page holds and where the video is, then downloads with its own
 engine, so resume, the speed limit and the local-network guard apply as
 usual. Only links you add yourself go to yt-dlp, never what the clipboard

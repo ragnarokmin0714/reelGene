@@ -22,7 +22,7 @@ use crate::http::{Http, HttpConfig};
 use crate::mux::Ffmpeg;
 use crate::net;
 use crate::paths;
-use crate::resolver::{Ctx, Discovered, Registry};
+use crate::resolver::{Ctx, Discovered, Registry, Resolver};
 use crate::store::{EpisodeRecord, EpisodeState, JobRecord, NewJob, Store};
 use futures::FutureExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -334,32 +334,48 @@ impl Engine {
     /// `resolver`, that one is used even if it does not claim the link.
     pub async fn discover(&self, url: &Url, resolver: Option<&str>) -> Result<Discovery> {
         let registry = &self.shared.registry;
-        let r = match resolver {
-            Some(id) => registry
-                .get(id)
-                .ok_or_else(|| Error::Invalid(format!("no resolver called {id:?}")))?,
-            None => registry
-                .find(url)
-                .or_else(|| registry.fallback())
-                .ok_or_else(|| {
-                    Error::Unsupported(format!(
-                        "no resolver handles {} (with yt-dlp installed, reelgene tries pages like this)",
-                        net::redact(url)
-                    ))
-                })?,
+        // The resolver named, else the one claiming the link, else the
+        // fallbacks in turn (the page's own video, then yt-dlp).
+        let candidates: Vec<&dyn Resolver> = match resolver {
+            Some(id) => vec![
+                registry
+                    .get(id)
+                    .ok_or_else(|| Error::Invalid(format!("no resolver called {id:?}")))?,
+            ],
+            None => match registry.find(url) {
+                Some(r) => vec![r],
+                None => registry.fallbacks().collect(),
+            },
         };
         let cancel = CancellationToken::new();
         let cx = Ctx {
             http: &self.shared.http,
             cancel: &cancel,
         };
-        let found = r.discover(url, cx).await?;
-        if found.episodes.is_empty() {
-            return Err(Error::resolver(r.id(), "found no episodes"));
+        let mut last = None;
+        for r in candidates {
+            match r.discover(url, cx).await {
+                Ok(found) if !found.episodes.is_empty() => {
+                    return Ok(Discovery {
+                        resolver: r.id().to_owned(),
+                        found,
+                    });
+                }
+                Ok(_) => last = Some(Error::resolver(r.id(), "found no episodes")),
+                // Final: what DRM protects is not fetched by another route.
+                Err(e @ (Error::Drm(_) | Error::Cancelled)) => return Err(e),
+                Err(e) => last = Some(e),
+            }
         }
-        Ok(Discovery {
-            resolver: r.id().to_owned(),
-            found,
+        let without_ytdlp = registry
+            .fallbacks()
+            .all(|r| r.id() != crate::resolver::ytdlp::ID);
+        Err(match last {
+            Some(e) if without_ytdlp => Error::Unsupported(format!(
+                "{e} (with yt-dlp installed, reelgene tries pages like this too)"
+            )),
+            Some(e) => e,
+            None => Error::Unsupported(format!("no resolver handles {}", net::redact(url))),
         })
     }
 

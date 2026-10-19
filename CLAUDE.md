@@ -64,6 +64,12 @@ runs before every attempt, every resume and every re-resolve after a
 401/403/410 (at most three per attempt). `discover()` runs once, when a link
 is added.
 
+**Fallbacks, in turn, for links the user adds that nobody claims**
+(`Registry::fallbacks`): first `resolver/page.rs`, the video the page names
+itself (`<video>`/`<source>` src, `og:video`; a small tag scanner, not an
+HTML parser, that never fails), then yt-dlp. A DRM refusal ends the chain:
+nothing protected is fetched by another route.
+
 **yt-dlp is a fallback, not a resolver of sites** (`resolver/ytdlp.rs`). It
 claims nothing (`matches` is false), so clipboard links never reach an
 external program; `Engine::discover` turns to `Registry::fallback` only for
@@ -265,7 +271,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/http.rs           the one client: retries, backoff, ranges, resume
   src/paths.rs          safe names and the naming template
   src/detect.rs         links in clipboard text
-  src/resolver/         the site seam: mod.rs, direct.rs, ytdlp.rs, extra.rs
+  src/resolver/         the site seam: mod.rs, direct.rs, page.rs, ytdlp.rs, extra.rs
   src/store.rs          SQLite actor
   src/engine/           scheduler (mod.rs), worker.rs, meter.rs
   src/mux.rs            concat, ffmpeg, media checks, Mark of the Web

@@ -10,8 +10,8 @@ CLI, portable mode; single-instance hand-off (starting reelgene again
 brings the window back; `reelgene get/add URL` passes its links to the one
 running); a free-space check; a proxy (the system's, none, or HTTP/SOCKS); a
 speed limit changeable while downloads run; download hours; pacing (one
-item a site at a time, with a random pause between); a yt-dlp fallback for
-pages without a resolver, using the user's own yt-dlp.
+item a site at a time, with a random pause between); for pages without a
+resolver, the video the page names in its HTML, then the user's own yt-dlp.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:

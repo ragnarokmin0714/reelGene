@@ -150,7 +150,7 @@ pub fn registry(yt_dlp: Option<PathBuf>) -> Registry {
     let mut registry = Registry::new();
     registry.add(Box::new(YtDlp::new(yt_dlp)));
     if found {
-        registry.set_fallback(ytdlp::ID);
+        registry.add_fallback(ytdlp::ID);
     }
     registry
 }
