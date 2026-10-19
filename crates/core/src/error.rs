@@ -41,7 +41,7 @@ pub enum Error {
     #[error("storage: {0}")]
     Store(String),
 
-    #[error("{}: {source}", path.display())]
+    #[error("{}", io_message(path, source))]
     Io {
         path: PathBuf,
         #[source]
@@ -124,6 +124,19 @@ impl From<rusqlite::Error> for Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// A full disk said plainly, and what to do: the check before an episode
+/// cannot see other programs filling the disk while it downloads.
+fn io_message(path: &std::path::Path, source: &std::io::Error) -> String {
+    if source.kind() == std::io::ErrorKind::StorageFull {
+        format!(
+            "the disk is full ({}): free some space, then retry; what was downloaded is kept",
+            path.display()
+        )
+    } else {
+        format!("{}: {source}", path.display())
+    }
+}
+
 /// `1.4 GB`, `350 MB`: precise enough for an estimate.
 fn size(bytes: u64) -> String {
     const MB: f64 = 1_000_000.0;
@@ -169,6 +182,22 @@ mod tests {
             "not enough disk space in /videos: needs about 3.4 GB, 120 MB free"
         );
         assert!(!e.is_transient(), "waiting does not free the disk");
+    }
+
+    #[test]
+    fn a_disk_filling_up_mid_download_is_said_plainly() {
+        let full = Error::io(
+            "/videos/x.ts",
+            std::io::Error::from(std::io::ErrorKind::StorageFull),
+        );
+        let text = full.to_string();
+        assert!(text.starts_with("the disk is full"), "{text}");
+        assert!(text.contains("retry"), "{text}");
+        let other = Error::io(
+            "/videos/x.ts",
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert!(other.to_string().starts_with("/videos/x.ts: "));
     }
 
     #[test]
