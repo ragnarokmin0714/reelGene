@@ -146,6 +146,7 @@ pub(crate) struct SettingsForm {
     /// MB/s, as speeds are shown; stored in KB/s.
     limit_mb: f64,
     quiet: bool,
+    scheduled: bool,
 }
 
 impl SettingsForm {
@@ -164,8 +165,10 @@ impl SettingsForm {
                 .filter(|p| p != "system")
                 .unwrap_or_default(),
             quiet: settings.quiet_hours.is_some(),
+            scheduled: settings.schedule.is_some(),
             s: Settings {
                 quiet_hours: settings.quiet_hours.or(Some([23, 8])),
+                schedule: settings.schedule.or(Some([1, 7])),
                 ..settings.clone()
             },
         }
@@ -198,6 +201,7 @@ impl SettingsForm {
                 p => p.to_owned(),
             },
             quiet_hours: self.s.quiet_hours.filter(|_| self.quiet),
+            schedule: self.s.schedule.filter(|_| self.scheduled),
             ..self.s.clone()
         }
     }
@@ -404,6 +408,13 @@ fn settings_ui(
                 ui.add(egui::Slider::new(&mut form.s.per_host, 1..=16))
                     .on_hover_text(t.per_host);
                 ui.end_row();
+                hours_row(
+                    ui,
+                    t,
+                    t.download_hours,
+                    &mut form.scheduled,
+                    &mut form.s.schedule,
+                );
                 let label = ui.label(t.speed_limit).id;
                 let no_limit = t.no_limit;
                 ui.add(
@@ -501,24 +512,13 @@ fn settings_ui(
                     .on_hover_text(t.volume);
                 });
                 ui.end_row();
-                ui.label(t.quiet_hours);
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut form.quiet, t.on);
-                    if let Some([from, to]) = &mut form.s.quiet_hours {
-                        ui.add_enabled(
-                            form.quiet,
-                            egui::DragValue::new(from).range(0..=23).suffix(":00"),
-                        )
-                        .on_hover_text(t.quiet_hours);
-                        ui.label("–");
-                        ui.add_enabled(
-                            form.quiet,
-                            egui::DragValue::new(to).range(0..=23).suffix(":00"),
-                        )
-                        .on_hover_text(t.quiet_hours);
-                    }
-                });
-                ui.end_row();
+                hours_row(
+                    ui,
+                    t,
+                    t.quiet_hours,
+                    &mut form.quiet,
+                    &mut form.s.quiet_hours,
+                );
             });
 
             section(ui, t.section_behaviour);
@@ -551,6 +551,28 @@ fn settings_ui(
             }
         });
     });
+}
+
+/// A grid row: a switch and a span of clock hours, `from`–`to`.
+fn hours_row(
+    ui: &mut egui::Ui,
+    t: &super::text::Text,
+    label: &str,
+    on: &mut bool,
+    hours: &mut Option<[u8; 2]>,
+) {
+    ui.label(label);
+    ui.horizontal(|ui| {
+        ui.checkbox(on, t.on);
+        if let Some([from, to]) = hours {
+            ui.add_enabled(*on, egui::DragValue::new(from).range(0..=23).suffix(":00"))
+                .on_hover_text(label);
+            ui.label("–");
+            ui.add_enabled(*on, egui::DragValue::new(to).range(0..=23).suffix(":00"))
+                .on_hover_text(label);
+        }
+    });
+    ui.end_row();
 }
 
 fn quality_combo(

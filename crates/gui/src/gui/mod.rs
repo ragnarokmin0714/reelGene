@@ -127,6 +127,7 @@ impl Gui {
         let events = desktop.engine.subscribe();
         let mut model = Model {
             running: desktop.running(),
+            held: desktop.held(),
             ..Model::default()
         };
         if let Ok(jobs) = desktop.rt.block_on(desktop.engine.snapshot()) {

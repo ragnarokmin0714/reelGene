@@ -16,6 +16,7 @@ use crate::tray::TrayCmd;
 use eframe::egui;
 use reelgene_app::handoff::{self, Reply, Valid};
 use reelgene_app::places::Places;
+use reelgene_app::schedule::Schedule;
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::Link;
 use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, Status};
@@ -59,8 +60,12 @@ pub(crate) struct Desktop {
     sound: Mutex<Option<Player>>,
     /// Off in tests, like the sounds.
     notifies: bool,
+    /// Holds the queue outside the download hours; set once started.
+    schedule: Mutex<Option<Schedule>>,
     reading: AtomicUsize,
     running: AtomicBool,
+    /// Outside the download hours, as the engine last said.
+    held: AtomicBool,
     /// The window closed into the tray rather than for good.
     pub closed_to_tray: AtomicBool,
 }
@@ -101,6 +106,7 @@ impl Desktop {
             tray_rx: Mutex::new(tray_rx),
             window: Mutex::new(None),
             notifies: desktop,
+            schedule: Mutex::new(None),
             stash: Mutex::new(Stash {
                 warnings,
                 ..Stash::default()
@@ -109,9 +115,15 @@ impl Desktop {
             sound: Mutex::new(sound),
             reading: AtomicUsize::new(0),
             running: AtomicBool::new(running),
+            held: AtomicBool::new(false),
             closed_to_tray: AtomicBool::new(false),
         });
         listen(&me);
+        let weak = Arc::downgrade(&me);
+        let schedule = Schedule::follow(&me.rt, &me.engine, move || {
+            weak.upgrade().and_then(|d| d.settings().schedule)
+        });
+        *lock(&me.schedule) = Some(schedule);
         if desktop {
             let weak = Arc::downgrade(&me);
             let watcher = Watcher::start(watch, move |links| {
@@ -137,6 +149,9 @@ impl Desktop {
         if let Some(p) = lock(&self.sound).as_mut() {
             p.configure(settings);
         }
+        if let Some(s) = lock(&self.schedule).as_ref() {
+            s.changed();
+        }
     }
 
     /// The window is open, shown and focused: the user can see the queue.
@@ -144,6 +159,10 @@ impl Desktop {
         lock(&self.window)
             .as_ref()
             .is_some_and(|ctx| ctx.input(|i| i.viewport().focused == Some(true)))
+    }
+
+    pub fn held(&self) -> bool {
+        self.held.load(Ordering::Relaxed)
     }
 
     pub fn running(&self) -> bool {
@@ -337,8 +356,10 @@ fn listen(me: &Arc<Desktop>) {
                 Err(RecvError::Closed) => break,
             };
             let Some(me) = weak.upgrade() else { break };
-            if let Event::Running(on) = event {
-                me.running.store(on, Ordering::Relaxed);
+            match event {
+                Event::Running(on) => me.running.store(on, Ordering::Relaxed),
+                Event::Held(on) => me.held.store(on, Ordering::Relaxed),
+                _ => {}
             }
             if let Some(cue) = cues.on(&event)
                 && let Some(player) = lock(&me.sound).as_mut()

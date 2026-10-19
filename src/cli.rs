@@ -147,9 +147,16 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         eprintln!("warning: {w}");
     }
     let engine = app.engine(false).await?;
-    let handed = matches!(cmd, Cmd::Get(_) | Cmd::Run { .. })
-        .then(|| take_handed(&app, &engine))
-        .flatten();
+    let working = matches!(cmd, Cmd::Get(_) | Cmd::Run { .. });
+    let handed = working.then(|| take_handed(&app, &engine)).flatten();
+    if working {
+        let hours = app.settings.schedule;
+        reelgene_app::schedule::Schedule::follow(
+            &tokio::runtime::Handle::current(),
+            &engine,
+            move || hours,
+        );
+    }
     let code = match cmd {
         Cmd::Get(get) => {
             limit(&engine, get.limit.as_deref())?;
@@ -553,6 +560,10 @@ impl Shown {
                 self.line
                     .say(&format!("note     {name}: {}", describe(&notice)));
             }
+            Event::Held(true) => self
+                .line
+                .say("waiting  outside the download hours (settings: schedule)"),
+            Event::Held(false) => self.line.say("resumed  the download hours have begun"),
             Event::Idle { done, failed } => {
                 self.done += done;
                 self.failed += failed;

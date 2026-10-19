@@ -96,6 +96,8 @@ pub enum Effect {
 pub struct Model {
     pub jobs: Vec<JobRow>,
     pub running: bool,
+    /// Outside the download hours.
+    pub held: bool,
 }
 
 impl Model {
@@ -143,6 +145,7 @@ impl Model {
                 self.jobs.retain(|j| !j.episodes.is_empty());
             }
             Event::Running(r) => self.running = r,
+            Event::Held(h) => self.held = h,
             Event::Idle { done, failed } => return Some(Effect::BatchDone { done, failed }),
         }
         None

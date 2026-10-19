@@ -117,6 +117,7 @@ impl App {
             segments: self.settings.segments,
             ffmpeg: self.ffmpeg.clone(),
             autostart,
+            held: crate::schedule::held_now(self.settings.schedule),
             ..EngineConfig::default()
         })
         .await

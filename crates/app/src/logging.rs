@@ -197,6 +197,15 @@ fn record(event: &Event) {
         Event::Running(on) => {
             log::info!(target: QUEUE, "queue {}", if *on { "started" } else { "stopped" })
         }
+        Event::Held(on) => log::info!(
+            target: QUEUE,
+            "{}",
+            if *on {
+                "outside the download hours: holding"
+            } else {
+                "download hours: released"
+            }
+        ),
         Event::Idle { done, failed } => {
             log::info!(target: QUEUE, "batch over: {done} done, {failed} failed")
         }

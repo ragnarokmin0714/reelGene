@@ -12,4 +12,5 @@ pub mod logging;
 pub mod places;
 pub mod platform;
 pub mod report;
+pub mod schedule;
 pub mod settings;

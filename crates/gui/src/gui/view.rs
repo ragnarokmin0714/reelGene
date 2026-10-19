@@ -481,6 +481,11 @@ fn status_bar(g: &Gui, ui: &mut egui::Ui, p: &Palette) {
                 if g.restart_note {
                     widgets::badge(ui, t.restart_needed, p.warning);
                 }
+                if g.model.held
+                    && let Some([from, to]) = g.settings.schedule
+                {
+                    widgets::badge(ui, &(t.held)(from, to), p.accent);
+                }
             });
         });
     });

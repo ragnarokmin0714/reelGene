@@ -53,6 +53,8 @@ pub struct EngineConfig {
     pub ffmpeg: Option<Ffmpeg>,
     /// Work through the queue as soon as the engine starts.
     pub autostart: bool,
+    /// Start held (see `Command::Hold`): outside the download hours.
+    pub held: bool,
     /// When an episode fails for a transient reason (network down, server
     /// overloaded), wait this long and try again, once per entry; then fail.
     pub retry_delays: Vec<Duration>,
@@ -69,6 +71,7 @@ impl Default for EngineConfig {
             segments: 4,
             ffmpeg: None,
             autostart: true,
+            held: false,
             retry_delays: [60, 300, 900].map(Duration::from_secs).to_vec(),
             free_space: Arc::new(|p: &Path| fs4::available_space(p)),
         }
@@ -123,6 +126,11 @@ pub enum Command {
     },
     /// Episodes downloading at once.
     SetConcurrency(usize),
+    /// Outside the download hours: what runs stops (progress kept, still
+    /// queued) and nothing starts until released. Separate from Start and
+    /// Stop, which are the user's: a queue started outside the hours waits
+    /// for them, and one the user stopped stays stopped when they come.
+    Hold(bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +203,8 @@ pub enum Event {
         episode: EpisodeId,
     },
     Running(bool),
+    /// Held by the download hours, or released.
+    Held(bool),
     /// Nothing queued, running or waiting any more: the batch is over. Counts
     /// are since the queue last became busy. This is the moment for a sound.
     Idle {
@@ -270,6 +280,7 @@ impl Engine {
             jobs: BTreeMap::new(),
             slots: BTreeMap::new(),
             running: cfg.autostart,
+            held: cfg.held,
             max: cfg.episodes.max(1),
             retry_delays: cfg.retry_delays,
             batch: Batch::default(),
@@ -424,6 +435,7 @@ struct Scheduler {
     /// Ordered by id, which is insertion order: the queue is FIFO.
     slots: BTreeMap<EpisodeId, Slot>,
     running: bool,
+    held: bool,
     max: usize,
     retry_delays: Vec<Duration>,
     batch: Batch,
@@ -520,6 +532,16 @@ impl Scheduler {
                     self.sh.emit(Event::Running(false));
                 }
             }
+            Command::Hold(on) if on != self.held => {
+                self.held = on;
+                if on {
+                    for slot in self.slots.values_mut() {
+                        stop(slot, Then::Requeue);
+                    }
+                }
+                self.sh.emit(Event::Held(on));
+            }
+            Command::Hold(_) => {}
             Command::Pause(target) => {
                 for id in self.matching(target) {
                     let slot = self.slots.get_mut(&id).expect("matching returns live ids");
@@ -650,7 +672,7 @@ impl Scheduler {
 
     /// Start queued episodes while there is room.
     fn fill(&mut self) {
-        if !self.running || !self.stopping.is_empty() {
+        if !self.running || self.held || !self.stopping.is_empty() {
             return;
         }
         let room = self.max.saturating_sub(self.active());

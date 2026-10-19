@@ -428,6 +428,26 @@ fn a_speed_limit_is_typed_in_mb_and_kept_in_kb() {
 }
 
 #[test]
+fn outside_the_download_hours_the_window_says_it_is_waiting() {
+    use reelgene_app::schedule::held_now;
+    let env = env("hours");
+    // An hour that is not now, whatever the clock says.
+    let hours = (0..24u8)
+        .map(|h| [h, (h + 1) % 24])
+        .find(|&h| held_now(Some(h)))
+        .unwrap();
+    let settings = Settings {
+        schedule: Some(hours),
+        ..english()
+    };
+    let mut h = window(&env, settings);
+    let badge = (EN.held)(hours[0], hours[1]);
+    until(&mut h, "the waiting badge", |h| {
+        h.query_by_label(&badge).is_some()
+    });
+}
+
+#[test]
 fn removing_a_job_asks_first() {
     let env = env("remove");
     let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();

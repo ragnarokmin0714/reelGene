@@ -13,7 +13,8 @@ links to the reelgene already running); **a free-space check** (a download
 that cannot fit stops early with how much it needs); **system
 notifications** when a batch ends and the window is in the background; **a
 proxy** (the system's, none, or HTTP/SOCKS); **a speed limit** over all
-downloads, changeable while they run.
+downloads, changeable while they run; **download hours** (the queue waits
+outside them).
 
 Before calling it released:
 - build and run on a real Windows machine (CI compiles it; nobody has run it);
@@ -27,7 +28,6 @@ Before calling it released:
   through a local HTTP port, which any web page could call.
 - **yt-dlp fallback** for sites without a resolver, using the user's own
   yt-dlp.
-- **A download schedule** (hours to download in).
 - **Cookie import**, treated as passwords: DPAPI on Windows, the system
   keyring on Linux; not stored at all in portable mode by default.
 - **One-click ffmpeg download**: a pinned version, SHA-256 checked, into the

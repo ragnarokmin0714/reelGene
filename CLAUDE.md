@@ -74,8 +74,12 @@ worker wrote; this was a real bug).
 **Commands in, events out.** One scheduler task owns all episode state and is
 its only writer; workers report back with a message. Pausing cancels a
 worker's token and keeps everything finished; nothing about "running" is
-persisted, so after a crash running episodes are simply queued. Events go out
-on a broadcast channel (1024 deep; a lagging receiver re-snapshots). Progress
+persisted, so after a crash running episodes are simply queued. Download
+hours are a second switch, `Command::Hold`, apart from the user's
+Start/Stop: a queue started outside the hours waits for them, one the user
+stopped stays stopped when they come. The engine has no clock; the app's
+`schedule.rs` checks local time every half minute (and at once when the
+hours change). Events go out on a broadcast channel (1024 deep; a lagging receiver re-snapshots). Progress
 is throttled to about ten updates a second per episode, with a trailing flush
 so a stalled segment does not hide the real count. `Event::Idle` marks the
 end of a batch: the moment for the "done" sound.

@@ -797,3 +797,39 @@ async fn a_file_too_big_for_the_disk_is_refused_before_its_body() {
         "stopped once the size was known, not after the body"
     );
 }
+
+#[tokio::test]
+async fn outside_the_download_hours_nothing_starts_until_released() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    let mut h = harness_with("held", |c| c.held = true).await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        cdn.hits("/index.m3u8").is_empty(),
+        "held: not even resolved"
+    );
+
+    h.engine.send(Command::Hold(false));
+    let output = h.done(ep).await;
+    assert_eq!(std::fs::read(output).unwrap(), expected(SEGMENTS, 0));
+}
+
+#[tokio::test]
+async fn a_queue_the_user_stopped_stays_stopped_when_the_hours_come() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    let h = harness_with("held-stopped", |c| {
+        c.held = true;
+        c.autostart = false;
+    })
+    .await;
+    let url = cdn.url("/index.m3u8");
+    h.add(&url, &url).await;
+
+    h.engine.send(Command::Hold(false));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(cdn.hits("/index.m3u8").is_empty(), "release is not Start");
+}
