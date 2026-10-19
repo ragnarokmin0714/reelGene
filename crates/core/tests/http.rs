@@ -314,3 +314,22 @@ async fn cancelling_stops_promptly_and_keeps_what_arrived() {
     assert!(start.elapsed() < Duration::from_secs(5));
     assert!(path.exists(), "the partial file stays for resuming");
 }
+
+#[tokio::test]
+async fn requests_go_through_the_proxy_set() {
+    // The fake server plays the proxy: it sees the full target URL.
+    let proxy = FakeCdn::start().await;
+    proxy.serve("http://media.invalid/clip.ts", body(1000));
+    let http = Http::new(HttpConfig {
+        proxy: reelgene_core::http::Proxy::Via(proxy.url("/")),
+        ..HttpConfig::default()
+    })
+    .unwrap();
+    let url = url::Url::parse("http://media.invalid/clip.ts").unwrap();
+    let got = http
+        .get_bytes(&url, &[], None, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(got, body(1000));
+    assert_eq!(proxy.hits("http://media.invalid/clip.ts").len(), 1);
+}

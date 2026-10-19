@@ -106,7 +106,11 @@ date; longer than two minutes goes back to the scheduler), and backs off a
 whole host on 429/503. A per-host semaphore caps connections (default 6).
 Timeouts are per read, not per request. Bodies held in memory are capped;
 files stream to disk. A failure counts against the retry budget only if no
-bytes arrived since the last one.
+bytes arrived since the last one. The proxy (`http::Proxy`) is the system's
+by default, `none`, or an http(s)/socks5(h) URL that replaces the system's;
+one that does not parse stops the engine from starting rather than silently
+going direct, and its password is never shown (`Display`, the report, error
+messages that do not echo the input).
 
 **The local network.** `net::is_private` decides from the URL alone (no DNS).
 Auto-detected private links are listed, never fetched by themselves. A public

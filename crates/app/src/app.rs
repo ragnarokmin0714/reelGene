@@ -102,6 +102,13 @@ impl App {
         if let Some(ua) = &self.settings.user_agent {
             http.user_agent.clone_from(ua);
         }
+        // A proxy that does not parse stops here: going direct instead would
+        // be a surprise to someone who set one.
+        http.proxy = self
+            .settings
+            .proxy
+            .parse()
+            .map_err(|e: reelgene_core::Error| format!("settings: {e}"))?;
         let engine = Engine::start(EngineConfig {
             db_path: Some(self.places.queue_db()),
             http,

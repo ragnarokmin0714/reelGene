@@ -370,6 +370,39 @@ fn settings_are_saved_to_the_file_and_take_effect() {
 }
 
 #[test]
+fn an_unusable_proxy_cannot_be_saved() {
+    let env = env("proxy");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    let field = || egui::accesskit::Role::TextInput;
+    h.get_by_role_and_label(field(), EN.proxy).scroll_to_me();
+    settle(&mut h);
+    let input = h.get_by_role_and_label(field(), EN.proxy);
+    input.focus();
+    // No host yet: not a proxy.
+    input.type_text("socks5h://");
+    settle(&mut h);
+    let _ = h.get_by_label(EN.proxy_bad);
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled(),
+        "a proxy that does not parse would stop every download"
+    );
+
+    let input = h.get_by_role_and_label(field(), EN.proxy);
+    input.focus();
+    input.type_text("127.0.0.1:1080");
+    settle(&mut h);
+    assert!(h.query_by_label(EN.proxy_bad).is_none());
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    assert_eq!(
+        h.state_mut().gui().settings.proxy,
+        "socks5h://127.0.0.1:1080"
+    );
+}
+
+#[test]
 fn removing_a_job_asks_first() {
     let env = env("remove");
     let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();

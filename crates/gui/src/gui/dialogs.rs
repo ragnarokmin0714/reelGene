@@ -141,6 +141,8 @@ pub(crate) struct SettingsForm {
     /// Shown in the empty folder field: where downloads go by default.
     default_folder: String,
     ffmpeg: String,
+    /// Blank stands for `system`.
+    proxy: String,
     quiet: bool,
 }
 
@@ -155,6 +157,9 @@ impl SettingsForm {
             default_folder: default_folder.display().to_string(),
             folder: text(&settings.download_dir),
             ffmpeg: text(&settings.ffmpeg),
+            proxy: Some(settings.proxy.clone())
+                .filter(|p| p != "system")
+                .unwrap_or_default(),
             quiet: settings.quiet_hours.is_some(),
             s: Settings {
                 quiet_hours: settings.quiet_hours.or(Some([23, 8])),
@@ -172,6 +177,10 @@ impl SettingsForm {
         }
     }
 
+    fn proxy_ok(&self) -> bool {
+        self.proxy.parse::<reelgene_core::http::Proxy>().is_ok()
+    }
+
     fn finish(&self) -> Settings {
         let path = |s: &str| {
             let p = PathBuf::from(s.trim());
@@ -180,6 +189,10 @@ impl SettingsForm {
         Settings {
             download_dir: path(&self.folder),
             ffmpeg: path(&self.ffmpeg),
+            proxy: match self.proxy.trim() {
+                "" => "system".to_owned(),
+                p => p.to_owned(),
+            },
             quiet_hours: self.s.quiet_hours.filter(|_| self.quiet),
             ..self.s.clone()
         }
@@ -401,6 +414,20 @@ fn settings_ui(
                     }
                 });
                 ui.end_row();
+                let label = ui.label(t.proxy).id;
+                ui.vertical(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut form.proxy)
+                            .hint_text(t.proxy_hint)
+                            .desired_width(320.0),
+                    )
+                    .labelled_by(label)
+                    .on_hover_text(t.proxy_help);
+                    if !form.proxy_ok() {
+                        ui.colored_label(ui.visuals().error_fg_color, t.proxy_bad);
+                    }
+                });
+                ui.end_row();
             });
 
             section(ui, t.section_look);
@@ -478,7 +505,13 @@ fn settings_ui(
         });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        if widgets::button(ui, Kind::Primary, None, t.save).clicked() {
+        // Saving an unusable proxy would stop every download at the next start.
+        let ok = form.proxy_ok();
+        if ui
+            .add_enabled_ui(ok, |ui| widgets::button(ui, Kind::Primary, None, t.save))
+            .inner
+            .clicked()
+        {
             actions.push(Action::SaveSettings(Box::new(form.finish())));
         }
         if widgets::button(ui, Kind::Secondary, None, t.cancel).clicked() {

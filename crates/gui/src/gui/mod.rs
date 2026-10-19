@@ -391,6 +391,7 @@ impl Gui {
             || s.per_host != old.per_host
             || s.ffmpeg != old.ffmpeg
             || s.user_agent != old.user_agent
+            || s.proxy != old.proxy
             || (self.tray.is_some() && s.language != old.language);
         self.t = text::pick(s.language.as_deref());
         self.apply_motion();

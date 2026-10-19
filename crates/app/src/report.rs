@@ -47,7 +47,7 @@ pub fn build(
     let _ = writeln!(
         out,
         "{}",
-        serde_json::to_string_pretty(settings).unwrap_or_default()
+        serde_json::to_string_pretty(&shareable(settings)).unwrap_or_default()
     );
 
     let _ = writeln!(out, "\n== queue ({} jobs)", jobs.len());
@@ -105,6 +105,18 @@ fn mask_home(text: &str, home: Option<&Path>) -> String {
     masked
 }
 
+/// Settings fit to share: a proxy's password stays home.
+fn shareable(settings: &Settings) -> Settings {
+    let proxy = match settings.proxy.parse::<reelgene_core::http::Proxy>() {
+        Ok(p) => p.to_string(),
+        Err(_) => "(not a proxy address)".to_owned(),
+    };
+    Settings {
+        proxy,
+        ..settings.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +163,25 @@ mod tests {
         assert!(text.contains("[3] 劇  from https://site.example/drama/1?…"));
         assert!(text.contains("#02 Failed: HTTP 404"));
         assert!(text.contains("queue started"), "log lines are included");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_proxy_password_never_leaves_in_a_report() {
+        let root = std::env::temp_dir().join(format!("reelgene-report-px-{}", std::process::id()));
+        let settings = Settings {
+            proxy: "socks5h://roger:hunter2@10.0.0.2:1080".into(),
+            ..Settings::default()
+        };
+        let text = build(&places(&root), &settings, None, &[]);
+        assert!(
+            !text.contains("hunter2") && !text.contains("roger:"),
+            "{text}"
+        );
+        assert!(
+            text.contains("socks5h://10.0.0.2:1080"),
+            "where it goes is useful"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

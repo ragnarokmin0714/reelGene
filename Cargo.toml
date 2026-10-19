@@ -51,7 +51,7 @@ reelgene-gui = { path = "crates/gui" }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "sync", "time", "process", "io-util"] }
 tokio-util = "0.7.20"
 futures = "0.3.34"
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "gzip", "http2", "system-proxy"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "gzip", "http2", "system-proxy", "socks"] }
 url = { version = "2.5.8", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

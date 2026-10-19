@@ -59,6 +59,58 @@ pub struct HttpConfig {
     pub max_retry_after: Duration,
     /// Simultaneous connections to one host.
     pub per_host: usize,
+    pub proxy: Proxy,
+}
+
+/// Which way requests go out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Proxy {
+    /// The system's: `HTTP(S)_PROXY` and friends, or the Windows settings.
+    #[default]
+    System,
+    /// Straight out, whatever the system says.
+    Direct,
+    /// `http://`, `https://`, `socks5://` or `socks5h://` (names resolved by
+    /// the proxy), optionally with `user:password@`.
+    Via(Url),
+}
+
+impl std::str::FromStr for Proxy {
+    type Err = Error;
+
+    /// `""` or `system`, `none` or `direct`, or a proxy URL.
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim() {
+            "" | "system" => Ok(Self::System),
+            "none" | "direct" => Ok(Self::Direct),
+            other => {
+                let url = Url::parse(other)
+                    .ok()
+                    .filter(|u| matches!(u.scheme(), "http" | "https" | "socks5" | "socks5h"))
+                    .filter(|u| u.host().is_some())
+                    // Not echoed: it may hold a password.
+                    .ok_or_else(|| {
+                        Error::Invalid(
+                            "the proxy is not an http://, https://, socks5:// or socks5h:// \
+                             address with a host"
+                                .into(),
+                        )
+                    })?;
+                Ok(Self::Via(url))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Proxy {
+    /// Never shows a password.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::System => f.write_str("system"),
+            Self::Direct => f.write_str("none"),
+            Self::Via(url) => f.write_str(&net::redact(url)),
+        }
+    }
 }
 
 impl Default for HttpConfig {
@@ -72,6 +124,7 @@ impl Default for HttpConfig {
             backoff_max: Duration::from_secs(30),
             max_retry_after: Duration::from_secs(120),
             per_host: 6,
+            proxy: Proxy::System,
         }
     }
 }
@@ -113,7 +166,16 @@ impl Http {
     pub fn new(cfg: HttpConfig) -> Result<Self> {
         let ua = HeaderValue::from_str(&cfg.user_agent)
             .map_err(|_| Error::Invalid("the user agent contains invalid characters".into()))?;
-        let client = Client::builder()
+        let mut builder = Client::builder();
+        builder = match &cfg.proxy {
+            Proxy::System => builder,
+            Proxy::Direct => builder.no_proxy(),
+            // Replaces the system's proxy rather than adding to it.
+            Proxy::Via(url) => {
+                builder.proxy(reqwest::Proxy::all(url.as_str()).map_err(from_reqwest)?)
+            }
+        };
+        let client = builder
             .user_agent(ua)
             .connect_timeout(cfg.connect_timeout)
             .read_timeout(cfg.read_timeout)
@@ -713,6 +775,23 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_proxy_is_system_none_or_an_address_and_never_shows_its_password() {
+        assert_eq!("".parse::<Proxy>().unwrap(), Proxy::System);
+        assert_eq!("none".parse::<Proxy>().unwrap(), Proxy::Direct);
+        let p: Proxy = "socks5h://me:secret@127.0.0.1:1080".parse().unwrap();
+        assert_eq!(p.to_string(), "socks5h://127.0.0.1:1080");
+        for bad in [
+            "ftp://x:1",
+            "127.0.0.1:1080",
+            "socks5://:1080",
+            "secret-is-here",
+        ] {
+            let e = bad.parse::<Proxy>().unwrap_err().to_string();
+            assert!(!e.contains(bad), "the input is not echoed: {e}");
+        }
+    }
 
     #[test]
     fn retry_after_takes_seconds_and_dates() {

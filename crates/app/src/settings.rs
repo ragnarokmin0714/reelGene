@@ -44,6 +44,9 @@ pub struct Settings {
     pub quiet_hours: Option<[u8; 2]>,
     /// `None`: a current browser's.
     pub user_agent: Option<String>,
+    /// `system`, `none`, or a proxy URL such as `socks5h://127.0.0.1:1080`
+    /// (see `reelgene_core::http::Proxy`).
+    pub proxy: String,
     /// `en` or `zh-TW`; `None`: the system's language.
     pub language: Option<String>,
     /// Closing the window keeps reelgene running in the tray, if there is one.
@@ -72,6 +75,7 @@ impl Default for Settings {
             volume: 0.8,
             quiet_hours: None,
             user_agent: None,
+            proxy: "system".to_owned(),
             language: None,
             close_to_tray: true,
             auto_add: false,
