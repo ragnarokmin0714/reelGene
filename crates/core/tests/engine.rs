@@ -1088,3 +1088,50 @@ async fn episodes_added_page_by_page_share_their_series_folder() {
         ]
     );
 }
+
+#[tokio::test]
+async fn the_qualities_on_offer_come_with_sizes_best_first() {
+    let cdn = FakeCdn::start().await;
+    cdn.serve(
+        "/master.m3u8",
+        "#EXTM3U\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nv360.m3u8\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720\nv720a.m3u8\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720\nv720b.m3u8\n\
+         #EXT-X-STREAM-INF:BANDWIDTH=6000000,AVERAGE-BANDWIDTH=4000000,RESOLUTION=1920x1080\nv1080.m3u8\n",
+    );
+    // Ten four-second segments: forty seconds, in every variant.
+    for v in ["v360", "v720a", "v720b", "v1080"] {
+        cdn.serve(&format!("/{v}.m3u8"), playlist(v, 10, false));
+    }
+    let h = harness("qualities").await;
+    let url = cdn.url("/master.m3u8");
+    let found = h.engine.discover(&url, None).await.unwrap();
+    let options = h.engine.qualities(&url, &found).await.unwrap();
+    let got: Vec<(u32, u64, Option<u64>)> = options
+        .iter()
+        .map(|o| (o.height, o.bitrate, o.size))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (1080, 4_000_000, Some(20_000_000)),
+            (720, 2_400_000, Some(12_000_000)),
+            (360, 800_000, Some(4_000_000)),
+        ],
+        "one per height, the richer 720, the average where given, bytes = bits/s x 40 s / 8"
+    );
+    assert_eq!(options[1].quality, Quality::Height(720));
+
+    // A playlist of one quality: nothing to choose.
+    put_episode(&cdn, 2, 0);
+    let single = cdn.url("/index.m3u8");
+    let found = h.engine.discover(&single, None).await.unwrap();
+    assert!(
+        h.engine
+            .qualities(&single, &found)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

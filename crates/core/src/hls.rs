@@ -30,7 +30,10 @@ pub struct Master {
 #[derive(Debug, Clone)]
 pub struct Variant {
     pub url: Url,
+    /// Peak bits a second (`BANDWIDTH`).
     pub bandwidth: u64,
+    /// `AVERAGE-BANDWIDTH`, when given: the better guide to size.
+    pub average_bandwidth: Option<u64>,
     pub height: Option<u32>,
     pub codecs: Option<String>,
     /// `AUDIO=` group id: the sound is in a separate rendition of that group.
@@ -165,6 +168,7 @@ fn parse_master(text: &str, base: &Url) -> Result<Master> {
                     .get("BANDWIDTH")
                     .and_then(|b| b.parse().ok())
                     .unwrap_or(0),
+                average_bandwidth: attrs.get("AVERAGE-BANDWIDTH").and_then(|b| b.parse().ok()),
                 height,
                 codecs: attrs.get("CODECS").map(str::to_owned),
                 audio_group: attrs.get("AUDIO").map(str::to_owned),

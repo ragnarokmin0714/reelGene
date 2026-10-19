@@ -84,6 +84,18 @@ impl Default for EngineConfig {
     }
 }
 
+/// One quality a video comes in, for the user to choose from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityOption {
+    /// What to store in the job to get exactly this one.
+    pub quality: crate::hls::Quality,
+    pub height: u32,
+    /// Bits a second: the playlist's average when it gives one, else its peak.
+    pub bitrate: u64,
+    /// Bytes for the first episode, from bitrate and length; an estimate.
+    pub size: Option<u64>,
+}
+
 /// What a resolver found behind a link, before the user picks episodes.
 #[derive(Debug, Clone)]
 pub struct Discovery {
@@ -395,6 +407,74 @@ impl Engine {
             Some(e) => e,
             None => Error::Unsupported(format!("no resolver handles {}", net::redact(url))),
         })
+    }
+
+    /// The qualities the first episode of `found` comes in, best first, with
+    /// estimated sizes: one per height, the richest of each, which is what
+    /// `Quality::Height` then picks. Empty when there is nothing to choose:
+    /// a single file, a playlist of one quality, or heights not given.
+    pub async fn qualities(&self, source: &Url, found: &Discovery) -> Result<Vec<QualityOption>> {
+        use crate::hls::{self, Playlist, Quality};
+        let r =
+            self.shared.registry.get(&found.resolver).ok_or_else(|| {
+                Error::Invalid(format!("no resolver called {:?}", found.resolver))
+            })?;
+        let Some(ep) = found.found.episodes.first() else {
+            return Ok(Vec::new());
+        };
+        let cancel = CancellationToken::new();
+        let http = &self.shared.http;
+        let cx = Ctx {
+            http,
+            cancel: &cancel,
+        };
+        let resolved = r.resolve(&found.found.spec, &ep.hint, cx).await?;
+        if resolved.kind != crate::resolver::MediaKind::Hls
+            || !net::may_follow(source, &resolved.url)
+        {
+            return Ok(Vec::new());
+        }
+        let text = http
+            .get_text(&resolved.url, &resolved.headers, &cancel)
+            .await?;
+        let Playlist::Master(master) = hls::parse(&text, &resolved.url)? else {
+            return Ok(Vec::new());
+        };
+        if master.variants.iter().any(|v| v.height.is_none()) {
+            return Ok(Vec::new());
+        }
+        // All variants share the length: read it from one.
+        let first = &master.variants[0];
+        let secs = match net::may_follow(source, &first.url) {
+            true => match http.get_text(&first.url, &resolved.headers, &cancel).await {
+                Ok(text) => match hls::parse(&text, &first.url) {
+                    Ok(Playlist::Media(m)) => Some(m.duration()),
+                    _ => None,
+                },
+                Err(_) => None,
+            },
+            false => None,
+        };
+        let mut best: BTreeMap<u32, &hls::Variant> = BTreeMap::new();
+        for v in &master.variants {
+            let h = v.height.unwrap_or(0);
+            if best.get(&h).is_none_or(|b| v.bandwidth > b.bandwidth) {
+                best.insert(h, v);
+            }
+        }
+        Ok(best
+            .into_iter()
+            .rev()
+            .map(|(height, v)| {
+                let bitrate = v.average_bandwidth.unwrap_or(v.bandwidth);
+                QualityOption {
+                    quality: Quality::Height(height),
+                    height,
+                    bitrate,
+                    size: secs.map(|s| (bitrate as f64 * s / 8.0) as u64),
+                }
+            })
+            .collect())
     }
 
     pub async fn add(&self, job: NewJob) -> Result<JobId> {
