@@ -86,7 +86,9 @@ and episode has its own pause, resume, retry, remove and open-folder buttons.
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
 export a problem report. The window remembers its size and place. Starting
 reelgene again while it runs brings the window back instead of opening a
-second one.
+second one. When a batch ends while the window is closed or in the
+background, a system notification says how it went (Settings can turn it
+off).
 
 ## The command line
 

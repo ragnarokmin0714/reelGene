@@ -474,6 +474,7 @@ fn settings_ui(
             ui.checkbox(&mut form.s.auto_add, t.auto_add);
             ui.checkbox(&mut form.s.autostart, t.autostart);
             ui.checkbox(&mut form.s.close_to_tray, t.close_to_tray);
+            ui.checkbox(&mut form.s.notify, t.notify);
         });
     ui.add_space(18.0);
     ui.horizontal(|ui| {

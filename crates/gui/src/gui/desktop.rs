@@ -10,6 +10,7 @@
 
 use super::{Grabbed, Msg};
 use crate::clipboard::Watcher;
+use crate::notify::{self, Note};
 use crate::sound::{Cue, Player};
 use crate::tray::TrayCmd;
 use eframe::egui;
@@ -56,6 +57,8 @@ pub(crate) struct Desktop {
     stash: Mutex<Stash>,
     clipboard: Mutex<Option<Watcher>>,
     sound: Mutex<Option<Player>>,
+    /// Off in tests, like the sounds.
+    notifies: bool,
     reading: AtomicUsize,
     running: AtomicBool,
     /// The window closed into the tray rather than for good.
@@ -97,6 +100,7 @@ impl Desktop {
             tray_tx,
             tray_rx: Mutex::new(tray_rx),
             window: Mutex::new(None),
+            notifies: desktop,
             stash: Mutex::new(Stash {
                 warnings,
                 ..Stash::default()
@@ -133,6 +137,13 @@ impl Desktop {
         if let Some(p) = lock(&self.sound).as_mut() {
             p.configure(settings);
         }
+    }
+
+    /// The window is open, shown and focused: the user can see the queue.
+    fn in_front(&self) -> bool {
+        lock(&self.window)
+            .as_ref()
+            .is_some_and(|ctx| ctx.input(|i| i.viewport().focused == Some(true)))
     }
 
     pub fn running(&self) -> bool {
@@ -334,9 +345,30 @@ fn listen(me: &Arc<Desktop>) {
             {
                 player.play(cue);
             }
+            let settings = me.settings();
+            if me.notifies
+                && settings.notify
+                && !me.in_front()
+                && let Some(note) =
+                    batch_note(super::text::pick(settings.language.as_deref()), &event)
+            {
+                notify::show(&me.rt, note);
+            }
             me.wake();
         }
     });
+}
+
+/// What to tell someone not looking at the window: how a batch that did
+/// anything ended.
+fn batch_note(t: &super::text::Text, event: &Event) -> Option<Note> {
+    match *event {
+        Event::Idle { done, failed } if done + failed > 0 => Some(Note {
+            title: t.notify_title.to_owned(),
+            body: (t.notify_body)(done, failed),
+        }),
+        _ => None,
+    }
 }
 
 /// Which events deserve a sound: an episode failing for good (once), and a
@@ -367,6 +399,16 @@ impl Cues {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batch_that_did_something_is_told_and_an_empty_one_is_not() {
+        let t = &crate::gui::text::EN;
+        let note = |done, failed| batch_note(t, &Event::Idle { done, failed }).map(|n| n.body);
+        assert_eq!(note(3, 0).as_deref(), Some("3 done"));
+        assert_eq!(note(2, 1).as_deref(), Some("2 done, 1 failed"));
+        assert_eq!(note(0, 0), None, "stopping an empty queue is not news");
+        assert!(batch_note(t, &Event::Running(false)).is_none());
+    }
     use reelgene_core::engine::JobId;
 
     fn status(ep: i64, status: Status) -> Event {

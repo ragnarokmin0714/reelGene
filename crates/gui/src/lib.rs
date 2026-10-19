@@ -5,6 +5,7 @@
 mod clipboard;
 mod gui;
 mod icon;
+mod notify;
 mod sound;
 mod tray;
 

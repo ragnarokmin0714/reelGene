@@ -17,7 +17,7 @@ window clicked through its accessibility tree (kittest).
 - **Windows has never been compiled or run.** The development machine has no
   MSVC tools, so everything under `cfg(windows)` (tray-icon, PlaySound,
   console attach, locale, reduced motion, Mark of the Web, the hand-off
-  pipe, explorer `/select`) is checked by CI only.
+  pipe, toasts, explorer `/select`) is checked by CI only.
 - **The window has never been seen.** The development machine has no
   display; layout, CJK rendering through the system font fallback, the tray
   and sounds need a look on a real desktop.
@@ -210,6 +210,13 @@ copying ordinary pages adds nothing. Tray: `ksni` (D-Bus, no GTK) on Linux,
 tray only if a tray actually registered. Sounds are synthesised WAVs played with PlaySound or
 `pw-play`/`paplay`/`aplay`: linking an audio library would need ALSA on Linux
 and stop reelgene from starting at all where it is missing.
+Notifications (`notify.rs`) come when a batch ends and the window is not in
+front: D-Bus `Notify` through the zbus ksni already brings (tested against a
+private `dbus-daemon` with a stand-in service), a WinRT toast on Windows
+through the `windows` crate eframe already brings. Windows drops toasts from
+a program it does not know, so the app id is registered under
+`HKCU\Software\Classes\AppUserModelId\reelgene` first — the one trace
+reelgene leaves in the registry.
 
 ## Layout
 
@@ -240,7 +247,7 @@ crates/app/             package `reelgene-app`: what the front ends share, no UI
 crates/gui/             package `reelgene-gui`: the window; the only one that knows egui
   src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,
                         theme, widgets, tests
-  src/tray.rs sound.rs clipboard.rs icon.rs
+  src/tray.rs sound.rs notify.rs clipboard.rs icon.rs
   assets/               Inter fonts; font licences
 ```
 

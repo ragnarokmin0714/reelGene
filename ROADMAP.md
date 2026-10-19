@@ -10,7 +10,8 @@ animations, sounds, English and Traditional Chinese), the CLI, portable mode.
 Since then, from the v0.2 list: **single-instance hand-off** (starting
 reelgene again brings the window back; `reelgene get/add URL` passes its
 links to the reelgene already running); **a free-space check** (a download
-that cannot fit stops early with how much it needs).
+that cannot fit stops early with how much it needs); **system
+notifications** when a batch ends and the window is in the background.
 
 Before calling it released:
 - build and run on a real Windows machine (CI compiles it; nobody has run it);
@@ -33,7 +34,6 @@ Before calling it released:
   common case needs no ffmpeg. CI compares it against ffmpeg on the same
   samples with ffprobe (duration, frame count, A/V sync); unusual streams
   fall back to ffmpeg, then to `.ts`.
-- **System notifications** when a batch finishes.
 - **`reelgene doctor` resolver checks**: one real request per resolver, to
   tell which ones a site change has broken.
 

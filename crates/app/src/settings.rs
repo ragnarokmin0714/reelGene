@@ -50,6 +50,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     /// Queue detected links by themselves instead of listing them first.
     pub auto_add: bool,
+    /// A system notification when a batch ends and the window is not in front.
+    pub notify: bool,
 }
 
 impl Default for Settings {
@@ -73,6 +75,7 @@ impl Default for Settings {
             language: None,
             close_to_tray: true,
             auto_add: false,
+            notify: true,
         }
     }
 }

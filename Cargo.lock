@@ -4078,6 +4078,7 @@ dependencies = [
  "async-trait",
  "eframe",
  "egui_kittest",
+ "futures",
  "jiff",
  "ksni",
  "log",
@@ -4088,7 +4089,10 @@ dependencies = [
  "tokio",
  "tray-icon",
  "url",
+ "windows",
+ "windows-registry",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

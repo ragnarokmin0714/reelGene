@@ -352,11 +352,20 @@ fn settings_are_saved_to_the_file_and_take_effect() {
     settle(&mut h);
     h.get_by_label(EN.auto_add).click();
     settle(&mut h);
+    h.get_by_label(EN.notify).scroll_to_me();
+    settle(&mut h);
+    h.get_by_label(EN.notify).click();
+    settle(&mut h);
     h.get_by_label(EN.save).click();
     settle(&mut h);
     assert!(h.state_mut().gui().settings.auto_add);
+    assert!(
+        !h.state_mut().gui().settings.notify,
+        "notifications are on until turned off"
+    );
     let saved = std::fs::read_to_string(env.dir.join("settings.json")).unwrap();
     assert!(saved.contains("\"auto_add\": true"), "{saved}");
+    assert!(saved.contains("\"notify\": false"), "{saved}");
     assert!(h.query_by_label(EN.save).is_none(), "the dialog closed");
 }
 

@@ -34,12 +34,18 @@ screenshots = ["dep:egui_kittest"]
 [target.'cfg(target_os = "linux")'.dependencies]
 # Tray over D-Bus (StatusNotifierItem): pure Rust, no GTK.
 ksni = "0.3.6"
+# Notifications over D-Bus: the same zbus ksni uses, so nothing new.
+zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.26.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Media_Audio"] }
+# Toasts (WinRT) and the app id they need; both already in the graph via eframe.
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications"] }
+windows-registry = "0.6.1"
 
 [dev-dependencies]
+futures.workspace = true
 egui_kittest.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
