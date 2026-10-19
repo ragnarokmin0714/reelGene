@@ -1,8 +1,9 @@
 name: Release
 
-# A version tag builds the executables and drafts a GitHub release with them
-# and their SHA-256 checksums, for Roger to look over and publish. A manual
-# run builds the same files as workflow artifacts and drafts nothing.
+# A version tag builds the executables and publishes a GitHub release with
+# them and their SHA-256 checksums, ready to download. A tag with a `-`
+# (v0.1.0-rc.1) is a pre-release: downloadable, but never shown as the
+# latest. A manual run builds the same files as workflow artifacts only.
 on:
   push:
     tags: ["v*"]
@@ -84,8 +85,8 @@ jobs:
               cat "$f"
             done
           } > dist/THIRD-PARTY-NOTICES.txt
-      # A draft left by a failed try is filled in rather than created again.
-      - name: Draft a release with the executables
+      # A release left by a failed try is filled in rather than created again.
+      - name: Publish a release with the executables
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: dist
@@ -96,7 +97,9 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
+            pre=()
+            case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease) ;; esac
             gh release create "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
-              --draft --verify-tag --title "reelgene $GITHUB_REF_NAME" \
+              "${pre[@]}" --verify-tag --title "reelgene $GITHUB_REF_NAME" \
               --notes "Portable executables built from $GITHUB_REF_NAME, with SHA-256 checksums in SHA256SUMS. Not code-signed yet: Windows SmartScreen may warn before the first run."
           fi

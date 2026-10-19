@@ -305,5 +305,6 @@ accessible name, which kittest checks.
 
 A `v*` tag runs `.github/workflows/release.yml`: Windows x86-64 built
 natively, Linux x86-64 and ARM64 with `cargo zigbuild` against glibc 2.31, all
-attached to a draft release with SHA-256 checksums for review before
-publishing.
+published as a release with SHA-256 checksums, as gamegene does. A tag with
+a `-` (`v0.1.0-rc.1`) is a pre-release: downloadable for trying on real
+machines, never shown as the latest; the plain tag follows once it passes.

@@ -12,7 +12,8 @@ running); a free-space check; a proxy (the system's, none, or HTTP/SOCKS); a
 speed limit changeable while downloads run; download hours; a yt-dlp
 fallback for pages without a resolver, using the user's own yt-dlp.
 
-The tag drafts a release; before publishing it:
+Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
+`v0.1.0` follows once these pass:
 - run the Windows executable on a real Windows machine (CI compiles and
   tests it; nobody has run the window there);
 - look at the window on a real Linux desktop, Chinese titles included;
