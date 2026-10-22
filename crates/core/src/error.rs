@@ -71,6 +71,15 @@ pub enum Error {
     #[error("too large: {0}")]
     TooLarge(String),
 
+    /// A program reelgene runs (yt-dlp) is not there.
+    #[error("{0} is not installed: reelgene fetches it in Settings, or with `reelgene {0}`")]
+    Missing(&'static str),
+
+    /// A program, or the list of checksums it is checked against, failed its
+    /// signature check (`tools.rs`).
+    #[error("not verified: {0}")]
+    Untrusted(String),
+
     #[error("cancelled")]
     Cancelled,
 

@@ -37,6 +37,12 @@ pub struct Settings {
     pub ffmpeg: Option<PathBuf>,
     /// For pages no resolver handles; found like ffmpeg.
     pub yt_dlp: Option<PathBuf>,
+    /// A key file to check yt-dlp's releases with instead of the built-in
+    /// one, should yt-dlp ever change keys.
+    pub yt_dlp_key: Option<PathBuf>,
+    /// Run a yt-dlp that is not an official build (pip, a distribution
+    /// package): it is then not checked at all.
+    pub yt_dlp_unofficial: bool,
     /// Continue the queue as soon as reelgene starts.
     pub autostart: bool,
     /// Watch the clipboard for links.
@@ -87,6 +93,8 @@ impl Default for Settings {
             convert_mp4: true,
             ffmpeg: None,
             yt_dlp: None,
+            yt_dlp_key: None,
+            yt_dlp_unofficial: false,
             autostart: true,
             clipboard: true,
             animations: None,

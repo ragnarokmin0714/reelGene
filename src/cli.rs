@@ -10,7 +10,9 @@ use reelgene_app::settings::Settings;
 use reelgene_core::engine::{
     Command, Engine, EpisodeId, Event, JobId, JobView, Notice, Status, Target,
 };
+use reelgene_core::http::Http;
 use reelgene_core::net;
+use reelgene_core::tools::{self as yt, YtDlpTool};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
@@ -20,6 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -66,6 +69,14 @@ pub enum Cmd {
     },
     /// Show where reelgene keeps things, which ffmpeg it uses, its resolvers.
     Doctor,
+    /// Fetch the latest yt-dlp into the tools folder, checked against the
+    /// signature on its official release before it is put there.
+    #[command(name = "yt-dlp")]
+    YtDlp {
+        /// Only check the yt-dlp reelgene would use, fetching nothing.
+        #[arg(long)]
+        check: bool,
+    },
     /// Write a problem report (settings, queue, recent log; no links' secrets,
     /// no home folder name) to the current folder.
     Report,
@@ -126,6 +137,10 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     if let Cmd::Doctor = cmd {
         // No lock: it must work while the window is open.
         return doctor().await;
+    }
+    if let Cmd::YtDlp { check } = cmd {
+        // No lock either: it touches the tools folder, not the queue.
+        return yt_dlp(check).await;
     }
     if let Cmd::Licenses = cmd {
         println!("reelgene {}: MIT OR Apache-2.0", reelgene_app::VERSION);
@@ -206,7 +221,7 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             println!("report written: {}", path.display());
             ExitCode::SUCCESS
         }
-        Cmd::Doctor | Cmd::Licenses => unreachable!("handled above"),
+        Cmd::Doctor | Cmd::Licenses | Cmd::YtDlp { .. } => unreachable!("handled above"),
     };
     engine.shutdown().await;
     Ok(code)
@@ -717,16 +732,66 @@ async fn doctor() -> Result<ExitCode, String> {
             println!("ffmpeg     not found: playlists stay .ts and separate sound is not merged")
         }
     }
-    let (yt_dlp, yt_warning) = app::find_yt_dlp(&settings, &places);
-    match &yt_dlp {
-        Some(p) => println!("yt-dlp     {} (for pages no resolver handles)", p.display()),
-        None => println!("yt-dlp     not found: pages need a resolver of their own"),
+    let (yt_config, yt_warnings) = app::yt_dlp_config(&settings, &places);
+    let unofficial = yt_config.allow_unofficial;
+    let key = match &yt_config.key {
+        Ok(k) if settings.yt_dlp_key.is_some() => format!("{} (from settings)", k.fingerprint()),
+        Ok(k) => k.fingerprint(),
+        Err(e) => e.clone(),
+    };
+    match YtDlpTool::new(yt_config).status() {
+        yt::Status::Missing => println!("yt-dlp     not installed: `reelgene yt-dlp` fetches it"),
+        yt::Status::Official { path, verified } => println!(
+            "yt-dlp     {} (official {}, {})",
+            path.display(),
+            verified.file,
+            verified.date()
+        ),
+        yt::Status::Unchecked { path } if unofficial => println!(
+            "yt-dlp     {} (not checked: unofficial builds are allowed in settings)",
+            path.display()
+        ),
+        yt::Status::Unchecked { path } => println!(
+            "yt-dlp     {} (not checked yet: it must match the latest official release to run)",
+            path.display()
+        ),
     }
+    println!("yt-dlp key {key}");
     let resolvers: Vec<_> = reelgene_core::resolver::Registry::new().ids().collect();
     println!("resolvers  {}", resolvers.join(", "));
-    for w in warning.into_iter().chain(ff_warning).chain(yt_warning) {
+    for w in warning.into_iter().chain(ff_warning).chain(yt_warnings) {
         println!("warning    {w}");
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn yt_dlp(check: bool) -> Result<ExitCode, String> {
+    let places = Places::detect()?;
+    let (settings, warning) = Settings::load(&places.settings_file());
+    let (config, warnings) = app::yt_dlp_config(&settings, &places);
+    for w in warning.iter().chain(&warnings) {
+        eprintln!("warning: {w}");
+    }
+    let http = Http::new(app::http_config(&settings)?).map_err(|e| e.to_string())?;
+    let tool = YtDlpTool::new(config);
+    let cancel = CancellationToken::new();
+    let (path, v) = if check {
+        tool.check(&http, &cancel).await
+    } else {
+        eprintln!("fetching the latest yt-dlp…");
+        tool.install(&http, &cancel).await
+    }
+    .map_err(|e| e.to_string())?;
+    println!(
+        "{} is the official {} of {}, signed by {}",
+        path.display(),
+        v.file,
+        v.date(),
+        tool.config()
+            .key
+            .map(|k| k.fingerprint())
+            .unwrap_or_default()
+    );
     Ok(ExitCode::SUCCESS)
 }
 

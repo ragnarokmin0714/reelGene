@@ -12,6 +12,7 @@ publish.workspace = true
 reelgene-core.workspace = true
 reelgene-app.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 url.workspace = true
 log.workspace = true
 eframe.workspace = true

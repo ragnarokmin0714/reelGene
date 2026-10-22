@@ -22,16 +22,34 @@ use reelgene_core::detect::Link;
 use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, QualityOption, Status};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
+use reelgene_core::tools::{self, YtDlpTool};
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak, mpsc};
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 /// A link read, waiting for the picker: what was found, and the qualities
 /// to choose from (empty: no choice to make).
 pub(crate) type Waiting = (Url, Discovery, Vec<QualityOption>);
+
+/// What the settings window shows about yt-dlp.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct YtState {
+    /// `None` until the file has been looked for and hashed.
+    pub status: Option<tools::Status>,
+    pub busy: Option<YtTask>,
+    /// Why the last fetch or check failed.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum YtTask {
+    Fetching,
+    Checking,
+}
 
 /// A window's unfinished business, kept while no window is open.
 #[derive(Default)]
@@ -48,6 +66,9 @@ pub(crate) struct Desktop {
     pub places: Places,
     /// The ffmpeg found, used or not (`Settings::convert_mp4`).
     ffmpeg: Mutex<Option<reelgene_core::mux::Ffmpeg>>,
+    /// Shared with the engine's resolver: settings reach both.
+    pub yt_dlp: YtDlpTool,
+    yt_state: Mutex<YtState>,
     /// Write settings to `places.settings_file()` when they change.
     pub save_settings: bool,
     pub reduced_motion: bool,
@@ -88,6 +109,7 @@ impl Desktop {
         places: Places,
         save_settings: bool,
         ffmpeg: Option<reelgene_core::mux::Ffmpeg>,
+        yt_dlp: YtDlpTool,
         warnings: Vec<String>,
         running: bool,
         desktop: bool,
@@ -101,6 +123,8 @@ impl Desktop {
             engine,
             places,
             ffmpeg: Mutex::new(ffmpeg),
+            yt_dlp,
+            yt_state: Mutex::default(),
             save_settings,
             reduced_motion: desktop && reelgene_app::platform::reduced_motion(),
             settings: Mutex::new(settings),
@@ -123,6 +147,7 @@ impl Desktop {
             closed_to_tray: AtomicBool::new(false),
         });
         listen(&me);
+        me.refresh_yt_dlp();
         let weak = Arc::downgrade(&me);
         let schedule = Schedule::follow(&me.rt, &me.engine, move || {
             weak.upgrade().and_then(|d| d.settings().schedule)
@@ -156,6 +181,9 @@ impl Desktop {
         if let Some(s) = lock(&self.schedule).as_ref() {
             s.changed();
         }
+        let (config, warnings) = reelgene_app::app::yt_dlp_config(settings, &self.places);
+        self.yt_dlp.configure(config);
+        lock(&self.yt_state).error = warnings.into_iter().next();
     }
 
     pub fn ffmpeg(&self) -> Option<reelgene_core::mux::Ffmpeg> {
@@ -175,6 +203,57 @@ impl Desktop {
             let _ = me
                 .tx
                 .send(Msg::Ffmpeg(found.map(|f| f.version().to_owned())));
+            me.wake();
+        });
+    }
+
+    pub fn yt_state(&self) -> YtState {
+        lock(&self.yt_state).clone()
+    }
+
+    /// Look for yt-dlp and hash it, off the window's thread.
+    pub fn refresh_yt_dlp(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        self.rt.spawn_blocking(move || {
+            let status = me.yt_dlp.status();
+            lock(&me.yt_state).status = Some(status);
+            me.wake();
+        });
+    }
+
+    /// Fetch the latest yt-dlp (`fetch`) or check the one there against its
+    /// signed release; the window hears the outcome.
+    pub fn yt_dlp_task(self: &Arc<Self>, task: YtTask) {
+        {
+            let mut state = lock(&self.yt_state);
+            if state.busy.is_some() {
+                return;
+            }
+            state.busy = Some(task);
+            state.error = None;
+        }
+        let me = Arc::clone(self);
+        self.rt.spawn(async move {
+            let cancel = CancellationToken::new();
+            let http = me.engine.http();
+            let result = match task {
+                YtTask::Fetching => me.yt_dlp.install(http, &cancel).await,
+                YtTask::Checking => me.yt_dlp.check(http, &cancel).await,
+            };
+            let tool = me.yt_dlp.clone();
+            let status = tokio::task::spawn_blocking(move || tool.status())
+                .await
+                .ok();
+            {
+                let mut state = lock(&me.yt_state);
+                state.busy = None;
+                state.status = status;
+                state.error = result.as_ref().err().map(ToString::to_string);
+            }
+            let _ = me.tx.send(Msg::YtDlp(
+                task,
+                result.map(|(_, v)| v.date()).map_err(|e| e.to_string()),
+            ));
             me.wake();
         });
     }

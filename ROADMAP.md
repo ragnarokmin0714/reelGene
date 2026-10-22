@@ -15,14 +15,16 @@ resolver, the video the page names in its HTML, then the user's own yt-dlp,
 with episodes added one page at a time filed under their series; choosing
 among qualities, with sizes, one or several; settings in pages; a light/dark
 switch; the version shown in the window; a tools folder for ffmpeg, with
-directions in Settings and no restart needed.
+directions in Settings and no restart needed; yt-dlp fetched and checked
+against the signature on its official release, before every run.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:
 - run the Windows executable on a real Windows machine (CI compiles and
   tests it; nobody has run the window there);
 - look at the window on a real Linux desktop, Chinese titles included;
-- one download through a real ffmpeg, and one through a real yt-dlp.
+- one download through a real ffmpeg (a real yt-dlp was fetched and checked
+  on 2026-10-22).
 
 ## Next
 

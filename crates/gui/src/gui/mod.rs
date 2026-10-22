@@ -57,6 +57,8 @@ pub(crate) enum Msg {
     Picked(dialogs::Field, PathBuf),
     /// ffmpeg looked for again: its version, or not found.
     Ffmpeg(Option<String>),
+    /// yt-dlp fetched or checked: its release date, or why not.
+    YtDlp(desktop::YtTask, Result<String, String>),
 }
 
 pub(crate) struct Grabbed {
@@ -102,6 +104,7 @@ pub(crate) enum Action {
     OpenTools,
     OpenUrl(&'static str),
     RecheckFfmpeg,
+    YtDlp(desktop::YtTask),
 }
 
 pub struct Gui {
@@ -294,6 +297,16 @@ impl Gui {
                     );
                 }
             },
+            Msg::YtDlp(task, result) => match result {
+                Ok(date) => {
+                    let done = match task {
+                        desktop::YtTask::Fetching => self.t.yt_fetched,
+                        desktop::YtTask::Checking => self.t.yt_checked,
+                    };
+                    self.toast(done(&date), false);
+                }
+                Err(e) => self.toast(e, true),
+            },
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
                 (Some(Dialog::Settings(form)), field) => form.set(field, &path),
@@ -372,6 +385,7 @@ impl Gui {
             }
             Action::OpenUrl(url) => reelgene_app::platform::open_url(url),
             Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(),
+            Action::YtDlp(task) => self.desktop.yt_dlp_task(task),
         }
     }
 
@@ -383,7 +397,9 @@ impl Gui {
         std::thread::spawn(move || {
             let dialog = rfd::FileDialog::new().set_directory(&start);
             let picked = match field {
-                dialogs::Field::Ffmpeg => dialog.pick_file(),
+                dialogs::Field::Ffmpeg | dialogs::Field::YtDlp | dialogs::Field::YtDlpKey => {
+                    dialog.pick_file()
+                }
                 dialogs::Field::PickFolder | dialogs::Field::Folder => dialog.pick_folder(),
             };
             if let Some(path) = picked {
@@ -432,6 +448,9 @@ impl Gui {
         }
         if s.ffmpeg != old.ffmpeg || s.convert_mp4 != old.convert_mp4 {
             self.desktop.recheck_ffmpeg();
+        }
+        if s.yt_dlp != old.yt_dlp {
+            self.desktop.refresh_yt_dlp();
         }
         if s.speed_limit != old.speed_limit {
             self.desktop
@@ -538,6 +557,7 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
         app.places.clone(),
         true,
         app.ffmpeg.clone(),
+        app.yt_dlp.clone(),
         app.warnings.clone(),
         app.settings.autostart,
         true,

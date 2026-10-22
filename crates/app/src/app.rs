@@ -7,8 +7,10 @@ use crate::settings::Settings;
 use reelgene_core::engine::{Engine, EngineConfig};
 use reelgene_core::http::HttpConfig;
 use reelgene_core::mux::{self, Ffmpeg};
+use reelgene_core::pgp::PublicKey;
 use reelgene_core::resolver::Registry;
 use reelgene_core::resolver::ytdlp::{self, YtDlp};
+use reelgene_core::tools::{YtDlpConfig, YtDlpTool};
 use std::path::PathBuf;
 
 /// ffmpeg older than this still works for `-c copy`, but has had demuxer bugs
@@ -19,8 +21,8 @@ pub struct App {
     pub places: Places,
     pub settings: Settings,
     pub ffmpeg: Option<Ffmpeg>,
-    /// Read pages no resolver handles; absent, such links are refused.
-    pub yt_dlp: Option<PathBuf>,
+    /// Reads pages no resolver handles, once checked against its releases.
+    pub yt_dlp: YtDlpTool,
     /// Things the user should hear about, for the front end to show.
     pub warnings: Vec<String>,
     _instance: Instance,
@@ -79,8 +81,9 @@ impl App {
         }
         let (ffmpeg, ff_warning) = find_ffmpeg(&settings, &places).await;
         warnings.extend(ff_warning);
-        let (yt_dlp, yt_warning) = find_yt_dlp(&settings, &places);
+        let (yt_dlp, yt_warning) = yt_dlp_config(&settings, &places);
         warnings.extend(yt_warning);
+        let yt_dlp = YtDlpTool::new(yt_dlp);
         for w in &warnings {
             log::warn!("{w}");
         }
@@ -102,21 +105,7 @@ impl App {
     }
 
     pub async fn engine(&self, autostart: bool) -> Result<Engine, String> {
-        let mut http = HttpConfig {
-            per_host: self.settings.per_host,
-            speed_limit: self.settings.speed_limit.saturating_mul(1000),
-            ..HttpConfig::default()
-        };
-        if let Some(ua) = &self.settings.user_agent {
-            http.user_agent.clone_from(ua);
-        }
-        // A proxy that does not parse stops here: going direct instead would
-        // be a surprise to someone who set one.
-        http.proxy = self
-            .settings
-            .proxy
-            .parse()
-            .map_err(|e: reelgene_core::Error| format!("settings: {e}"))?;
+        let http = http_config(&self.settings)?;
         let engine = Engine::start(EngineConfig {
             db_path: Some(self.places.queue_db()),
             http,
@@ -143,28 +132,62 @@ impl App {
     }
 }
 
+/// Requests as the settings want them: proxy, speed limit, user agent.
+pub fn http_config(settings: &Settings) -> Result<HttpConfig, String> {
+    let mut http = HttpConfig {
+        per_host: settings.per_host,
+        speed_limit: settings.speed_limit.saturating_mul(1000),
+        ..HttpConfig::default()
+    };
+    if let Some(ua) = &settings.user_agent {
+        http.user_agent.clone_from(ua);
+    }
+    // A proxy that does not parse stops here: going direct instead would
+    // be a surprise to someone who set one.
+    http.proxy = settings
+        .proxy
+        .parse()
+        .map_err(|e: reelgene_core::Error| format!("settings: {e}"))?;
+    Ok(http)
+}
+
 /// This build's resolvers, with yt-dlp for pages none of them handles. It is
-/// registered even when missing, so jobs queued with it say what is missing.
-pub fn registry(yt_dlp: Option<PathBuf>) -> Registry {
-    let found = yt_dlp.is_some();
+/// there even before yt-dlp is, so fetching it needs no restart.
+pub fn registry(yt_dlp: YtDlpTool) -> Registry {
     let mut registry = Registry::new();
     registry.add(Box::new(YtDlp::new(yt_dlp)));
-    if found {
-        registry.add_fallback(ytdlp::ID);
-    }
+    registry.add_fallback(ytdlp::ID);
     registry
 }
 
-/// The configured yt-dlp, else one beside a portable install, else PATH.
-pub fn find_yt_dlp(settings: &Settings, places: &Places) -> (Option<PathBuf>, Option<String>) {
-    let tools = places.tools_dir();
-    let found = mux::locate_program("yt-dlp", settings.yt_dlp.as_deref(), Some(&tools));
-    let warning = settings
+/// How yt-dlp is found and checked, from the settings: the yt-dlp set there,
+/// else one in the tools folder, else PATH; the key set there, else the
+/// built-in one.
+pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<String>) {
+    let mut config = YtDlpConfig::new(
+        settings.yt_dlp.clone(),
+        places.tools_dir(),
+        places.data_dir.join("yt-dlp-checked.json"),
+    );
+    config.allow_unofficial = settings.yt_dlp_unofficial;
+    let mut warnings: Vec<String> = settings
         .yt_dlp
         .as_ref()
-        .filter(|_| found.is_none())
-        .map(|p| format!("the yt-dlp set in settings ({}) was not found", p.display()));
-    (found, warning)
+        .filter(|p| !(p.is_absolute() && p.is_file()))
+        .map(|p| format!("the yt-dlp set in settings ({}) was not found", p.display()))
+        .into_iter()
+        .collect();
+    if let Some(file) = &settings.yt_dlp_key {
+        config.key = std::fs::read(file)
+            .map_err(|e| format!("cannot read {}: {e}", file.display()))
+            .and_then(|data| {
+                PublicKey::parse(&data).map_err(|e| format!("{}: {e}", file.display()))
+            });
+        if let Err(e) = &config.key {
+            warnings.push(format!("the yt-dlp signing key in settings: {e}"));
+        }
+    }
+    (config, warnings)
 }
 
 /// The configured ffmpeg, else one beside a portable install, else PATH.

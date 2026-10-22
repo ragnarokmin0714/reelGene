@@ -293,9 +293,13 @@ fn a_page_without_a_resolver_is_read_by_the_users_yt_dlp() {
     )
     .unwrap();
     std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // A stand-in is no official build: allowed, so no release is asked.
     std::fs::write(
         home.path().join("settings.json"),
-        format!("{{\"yt_dlp\": \"{}\"}}", tool.display()),
+        format!(
+            "{{\"yt_dlp\": \"{}\", \"yt_dlp_unofficial\": true}}",
+            tool.display()
+        ),
     )
     .unwrap();
 
@@ -315,4 +319,14 @@ fn a_page_without_a_resolver_is_read_by_the_users_yt_dlp() {
 
     let out = home.run(&["doctor"]);
     assert!(text(&out).contains("yt-dlp     /"), "{}", text(&out));
+    assert!(
+        text(&out).contains("unofficial builds are allowed"),
+        "{}",
+        text(&out)
+    );
+    assert!(
+        text(&out).contains("yt-dlp key AC0C BBE6 848D 6A87 3464  AF4E 57CF 6593 3B5A 7581"),
+        "{}",
+        text(&out)
+    );
 }

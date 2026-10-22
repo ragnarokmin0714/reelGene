@@ -22,11 +22,14 @@ log.workspace = true
 aes.workspace = true
 cbc.workspace = true
 hex.workspace = true
+aws-lc-rs.workspace = true
 rusqlite.workspace = true
 # Free disk space, without unsafe code of our own.
 fs4 = { version = "1.1.0", default-features = false }
 
 [dev-dependencies]
+# ring-io: the test signer reads its own key's modulus.
+aws-lc-rs = { workspace = true, features = ["ring-io"] }
 tokio = { workspace = true, features = ["test-util", "net"] }
 
 [lints.rust]

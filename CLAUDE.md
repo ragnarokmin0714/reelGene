@@ -76,10 +76,28 @@ external program; `Engine::discover` turns to `Registry::fallback` only for
 a link the user added that nobody claims. It answers facts only (`-J`):
 discovery lists entries, `resolve` asks for a fresh link every attempt like
 any resolver, and the engine downloads, so the guards all apply (a public
-page's video on a private address is refused, tested). Always registered,
-fallback only when found, so queued jobs say "not found" instead of naming
-an unknown resolver. Run with `--ignore-config` (a config could add
+page's video on a private address is refused, tested). Run with `--ignore-config` (a config could add
 downloads or `--exec`), the link after `--`, a timeout, capped output.
+
+**Only an official yt-dlp runs** (`tools.rs`, `pgp.rs`). yt-dlp signs each
+release's `SHA2-256SUMS` with its OpenPGP key, built in as `yt-dlp.asc`. Before
+every run the file is hashed: the checksum recorded when it last passed
+(`<data>/yt-dlp-checked.json`) lets it run; otherwise the latest release's list
+is fetched, its signature checked, and the file must be in it. Unofficial
+builds run only with `yt_dlp_unofficial`, unchecked. A list signed earlier
+than the recorded one is refused, so an old signed release cannot be replayed.
+A key set in settings (`yt_dlp_key`) replaces the built-in one; if it cannot
+be read nothing passes, rather than falling back. "Get yt-dlp" /
+`reelgene yt-dlp` downloads the release file for this system into the tools
+folder, checks it before the rename, and records it. The resolver is
+registered even with no yt-dlp present (`Error::Missing`), so fetching one
+needs no restart; `Engine::discover` then keeps the page's own reason and
+adds the hint. `pgp.rs` parses packets only (v4 RSA key and detached v4
+signature over a binary file, SHA-256/384/512, unknown critical subpackets
+refused); SHA and RSA are aws-lc-rs, already in the build through rustls:
+hand-written RSA that is wrong accepts forgeries. Tests sign with a key made
+on the spot (`tests/support/signer.rs`) and check the real release of
+2026-10-21 (`tests/data/`).
 
 **Choosing qualities.** `Engine::qualities` resolves the first episode and
 lists its master playlist's variants, one per height (the richest, which is
@@ -197,7 +215,7 @@ final rename never crosses filesystems. Single files keep only media
 extensions.
 
 **ffmpeg** is not bundled (size, security updates, GPL obligations) and is
-optional. The user puts it (and yt-dlp) in the tools folder
+optional. The user puts it in the tools folder
 (`Places::tools_dir`: beside the program when portable, else `<data>/tools`);
 Settings says where, opens the folder, and "Check again" probes and hands it
 to the engine (`Engine::set_ffmpeg`) without a restart. `convert_mp4` off
@@ -281,6 +299,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/error.rs          one typed error; is_transient / is_expired_url
   src/net.rs            redact, is_private, may_follow
   src/hls.rs crypto.rs  M3U8 parsing, AES-128 (from reelhold)
+  src/pgp.rs tools.rs   OpenPGP signature check; official yt-dlp only
   src/http.rs           the one client: retries, backoff, ranges, resume
   src/paths.rs          safe names and the naming template
   src/detect.rs         links in clipboard text

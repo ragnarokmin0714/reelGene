@@ -107,6 +107,7 @@ reelgene resume [JOB]                                      # queue failed or pau
 reelgene pause [JOB]
 reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
+reelgene yt-dlp [--check]                                  # fetch the official yt-dlp, checked
 reelgene report                                            # a problem report, in this folder
 reelgene licenses                                          # reelgene's and its fonts' licences
 ```
@@ -153,14 +154,35 @@ links you add are read this way, never what the clipboard picks up.
 ## yt-dlp (optional)
 
 A page that names no video in its HTML (the player loads it by script) can
-still be added if [yt-dlp](https://github.com/yt-dlp/yt-dlp) is installed:
-reelgene asks it
-what the page holds and where the video is, then downloads with its own
+still be added with [yt-dlp](https://github.com/yt-dlp/yt-dlp): reelgene asks
+it what the page holds and where the video is, then downloads with its own
 engine, so resume, the speed limit and the local-network guard apply as
 usual. Only links you add yourself go to yt-dlp, never what the clipboard
-picks up. It is found like ffmpeg (`yt_dlp` in `settings.json`, beside a
-portable executable, or on `PATH`), run with `--ignore-config`, and asked
-for one file with both picture and sound. DRM-protected videos are refused.
+picks up. It is run with `--ignore-config`, and asked for one file with both
+picture and sound. DRM-protected videos are refused.
+
+**Only the official yt-dlp runs.** yt-dlp signs every release: a list of its
+files' SHA-256 checksums, with an OpenPGP signature from yt-dlp's release
+key, which reelgene has built in (fingerprint
+`AC0C BBE6 848D 6A87 3464  AF4E 57CF 6593 3B5A 7581`). Before yt-dlp runs,
+reelgene checks that its checksum is in the latest release's list and that
+the list is signed by that key; after that, only that the file has not
+changed since. A copy someone altered — on the way, on a mirror or on disk —
+never runs.
+
+- **Settings → yt-dlp → Get yt-dlp** (or `reelgene yt-dlp`) fetches the
+  latest official build into the tools folder, checked before it is put
+  there. Press it again to update; yt-dlp needs updating often, as sites
+  change.
+- A yt-dlp of your own is found like ffmpeg (`yt_dlp` in `settings.json`, the
+  tools folder, or `PATH`) and checked the same way, so it must be the latest
+  official release. One from pip or a distribution package cannot be
+  checked: allow it with **Run unofficial builds without checking them**
+  (`yt_dlp_unofficial`), knowing a changed copy would then run too.
+- Should yt-dlp ever change its key, point **Signing key**
+  (`yt_dlp_key`) at the new `public.key` from yt-dlp's own repository, after
+  comparing its fingerprint with the one yt-dlp announces. A key from anyone
+  else lets their builds through.
 
 ## Where files live
 

@@ -19,6 +19,10 @@ pub(crate) enum Field {
     Folder,
     /// The ffmpeg program in settings.
     Ffmpeg,
+    /// The yt-dlp program in settings.
+    YtDlp,
+    /// The key yt-dlp's releases are checked with.
+    YtDlpKey,
 }
 
 /// Choosing episodes from a series: the multiselect from the design.
@@ -194,6 +198,8 @@ pub(crate) struct SettingsForm {
     /// Shown in the empty folder field: where downloads go by default.
     default_folder: String,
     ffmpeg: String,
+    yt_dlp: String,
+    yt_dlp_key: String,
     /// Blank stands for `system`.
     proxy: String,
     /// MB/s, as speeds are shown; stored in KB/s.
@@ -212,6 +218,7 @@ pub(crate) enum Tab {
     Connections,
     Look,
     Behaviour,
+    YtDlp,
 }
 
 impl SettingsForm {
@@ -225,6 +232,8 @@ impl SettingsForm {
             default_folder: default_folder.display().to_string(),
             folder: text(&settings.download_dir),
             ffmpeg: text(&settings.ffmpeg),
+            yt_dlp: text(&settings.yt_dlp),
+            yt_dlp_key: text(&settings.yt_dlp_key),
             limit_mb: settings.speed_limit as f64 / 1000.0,
             proxy: Some(settings.proxy.clone())
                 .filter(|p| p != "system")
@@ -247,6 +256,8 @@ impl SettingsForm {
         match field {
             Field::Folder => self.folder = text,
             Field::Ffmpeg => self.ffmpeg = text,
+            Field::YtDlp => self.yt_dlp = text,
+            Field::YtDlpKey => self.yt_dlp_key = text,
             Field::PickFolder => {}
         }
     }
@@ -263,6 +274,8 @@ impl SettingsForm {
         Settings {
             download_dir: path(&self.folder),
             ffmpeg: path(&self.ffmpeg),
+            yt_dlp: path(&self.yt_dlp),
+            yt_dlp_key: path(&self.yt_dlp_key),
             speed_limit: (self.limit_mb * 1000.0).round() as u64,
             proxy: match self.proxy.trim() {
                 "" => "system".to_owned(),
@@ -281,6 +294,8 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
     let tools = Tools {
         ffmpeg: g.desktop_ffmpeg(),
         dir: g.tools_dir(),
+        yt: g.desktop.yt_state(),
+        yt_key: g.desktop.yt_dlp.config().key.map(|k| k.fingerprint()),
     };
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
@@ -449,12 +464,15 @@ fn quality_list(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui) {
     }
 }
 
-/// What the settings window shows about ffmpeg: what was found, and where to
-/// put it.
+/// What the settings window shows about ffmpeg and yt-dlp: what was found,
+/// and where to put it.
 pub(crate) struct Tools {
     /// Version and path.
     pub ffmpeg: Option<(String, PathBuf)>,
     pub dir: PathBuf,
+    pub yt: super::desktop::YtState,
+    /// The fingerprint of the key yt-dlp is checked with, or why it is unusable.
+    pub yt_key: Result<String, String>,
 }
 
 fn settings_ui(
@@ -484,6 +502,7 @@ fn settings_ui(
             (Tab::Connections, t.section_connections),
             (Tab::Look, t.section_look),
             (Tab::Behaviour, t.section_behaviour),
+            (Tab::YtDlp, "yt-dlp"),
         ] {
             ui.selectable_value(&mut form.tab, tab, label);
         }
@@ -688,6 +707,9 @@ fn settings_ui(
                     );
                 });
             }
+            if form.tab == Tab::YtDlp {
+                yt_dlp_page(t, form, tools, &p, ui, actions);
+            }
             if form.tab == Tab::Behaviour {
                 ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
                 ui.checkbox(&mut form.s.auto_add, t.auto_add);
@@ -785,6 +807,142 @@ fn ffmpeg_note(
             actions.push(Action::RecheckFfmpeg);
         }
     });
+}
+
+/// yt-dlp: what is there and whether it passed, fetching and checking it,
+/// and the key and switch that decide what may run.
+fn yt_dlp_page(
+    t: &super::text::Text,
+    form: &mut SettingsForm,
+    tools: &Tools,
+    p: &super::theme::Palette,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    use super::desktop::YtTask;
+    use reelgene_core::tools::Status;
+    let note = |ui: &mut egui::Ui, text: &str, color| {
+        ui.add(egui::Label::new(RichText::new(text).color(color).size(13.0)).wrap());
+    };
+    note(ui, t.yt_about, p.weak);
+    ui.add_space(10.0);
+    let yt = &tools.yt;
+    let (status, color) = match (&yt.busy, &yt.status) {
+        (Some(YtTask::Fetching), _) => (t.yt_fetching.to_owned(), p.weak),
+        (Some(YtTask::Checking), _) => (t.yt_checking.to_owned(), p.weak),
+        (None, None) => (t.yt_looking.to_owned(), p.weak),
+        (None, Some(Status::Missing)) => (t.yt_missing.to_owned(), p.warning),
+        (None, Some(Status::Official { verified, .. })) => {
+            ((t.yt_official)(&verified.date(), &verified.file), p.success)
+        }
+        (None, Some(Status::Unchecked { path })) if form.s.yt_dlp_unofficial => (
+            (t.yt_unofficial_runs)(&path.display().to_string()),
+            p.warning,
+        ),
+        (None, Some(Status::Unchecked { path })) => {
+            ((t.yt_unchecked)(&path.display().to_string()), p.weak)
+        }
+    };
+    ui.horizontal(|ui| {
+        if yt.busy.is_some() {
+            ui.spinner();
+        }
+        note(ui, &status, color);
+    });
+    if let Some(e) = &yt.error {
+        note(ui, e, ui.visuals().error_fg_color);
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(yt.busy.is_none(), |ui| {
+            let have = matches!(
+                yt.status,
+                Some(Status::Official { .. } | Status::Unchecked { .. })
+            );
+            let fetch = if have { t.yt_update } else { t.yt_fetch };
+            if widgets::button(ui, Kind::Primary, Some(widgets::Icon::Download), fetch).clicked() {
+                actions.push(Action::YtDlp(YtTask::Fetching));
+            }
+            if have
+                && widgets::button(ui, Kind::Secondary, Some(widgets::Icon::Retry), t.yt_check)
+                    .clicked()
+            {
+                actions.push(Action::YtDlp(YtTask::Checking));
+            }
+        });
+        if widgets::button(
+            ui,
+            Kind::Secondary,
+            Some(widgets::Icon::Folder),
+            t.open_folder,
+        )
+        .clicked()
+        {
+            actions.push(Action::OpenTools);
+        }
+    });
+    ui.add_space(12.0);
+    egui::Grid::new("settings-yt-dlp")
+        .num_columns(2)
+        .min_col_width(170.0)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("yt-dlp");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.yt_dlp)
+                        .hint_text(t.yt_path_hint)
+                        .desired_width(240.0),
+                )
+                .on_hover_text(t.yt_path_hint);
+                if ui.button(t.browse).on_hover_text("yt-dlp").clicked() {
+                    actions.push(Action::Browse(Field::YtDlp));
+                }
+            });
+            ui.end_row();
+            ui.label(t.yt_key);
+            let (text, color) = match &tools.yt_key {
+                Ok(fpr) => {
+                    let from = if form.s.yt_dlp_key.is_some() {
+                        t.yt_key_from_file
+                    } else {
+                        t.yt_key_builtin
+                    };
+                    // Five groups a line, as GnuPG splits it.
+                    (format!("{} ({from})", fpr.replacen("  ", "\n", 1)), p.weak)
+                }
+                Err(e) => (e.clone(), ui.visuals().error_fg_color),
+            };
+            ui.add(
+                egui::Label::new(RichText::new(text).monospace().size(12.0).color(color))
+                    .selectable(true)
+                    .wrap(),
+            );
+            ui.end_row();
+            ui.label(t.yt_key_file);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.yt_dlp_key)
+                        .hint_text(t.yt_key_hint)
+                        .desired_width(240.0),
+                )
+                .on_hover_text(t.yt_key_help);
+                if ui.button(t.browse).on_hover_text(t.yt_key_file).clicked() {
+                    actions.push(Action::Browse(Field::YtDlpKey));
+                }
+            });
+            ui.end_row();
+        });
+    ui.label(RichText::new(t.yt_key_help).color(p.weak).size(12.0));
+    ui.add_space(8.0);
+    ui.checkbox(&mut form.s.yt_dlp_unofficial, t.yt_unofficial)
+        .on_hover_text(t.yt_unofficial_help);
+    let color = if form.s.yt_dlp_unofficial {
+        p.warning
+    } else {
+        p.weak
+    };
+    note(ui, t.yt_unofficial_help, color);
 }
 
 /// Clock hours, 0:00 to 23:00.

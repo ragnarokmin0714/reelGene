@@ -201,6 +201,7 @@ impl State {
 
 /// What `run` sets up once: the part that outlives windows.
 fn desktop(env: &Env, settings: Settings, save: bool) -> Arc<Desktop> {
+    let (yt_dlp, _) = reelgene_app::app::yt_dlp_config(&settings, &places(env));
     Desktop::start(
         env.rt.handle().clone(),
         env.engine.clone(),
@@ -208,6 +209,7 @@ fn desktop(env: &Env, settings: Settings, save: bool) -> Arc<Desktop> {
         places(env),
         save,
         None,
+        reelgene_core::tools::YtDlpTool::new(yt_dlp),
         Vec::new(),
         false,
         false,
@@ -555,6 +557,41 @@ fn ffmpeg_put_in_the_tools_folder_is_found_without_a_restart() {
         "the status bar knows too"
     );
     let _ = h.get_by_label("ffmpeg 7.1");
+}
+
+#[test]
+fn the_yt_dlp_page_says_what_is_missing_and_what_may_run() {
+    let env = env("yt-dlp-page");
+    let settings = Settings {
+        // Named but absent, so a yt-dlp on this machine's PATH is not found.
+        yt_dlp: Some(env.dir.join("no-yt-dlp")),
+        ..english()
+    };
+    let mut h = window(&env, settings);
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label("yt-dlp").click();
+    until(&mut h, "yt-dlp looked for", |h| {
+        h.query_by_label(EN.yt_missing).is_some()
+    });
+    let _ = h.get_by_label(EN.yt_fetch);
+    assert!(h.query_by_label(EN.yt_check).is_none(), "nothing to check");
+    let _ =
+        h.get_by_label_contains("AC0C BBE6 848D 6A87 3464\nAF4E 57CF 6593 3B5A 7581 (built in)");
+
+    // Below the fold: the page scrolls.
+    h.get_by_label(EN.yt_unofficial).scroll_to_me();
+    settle(&mut h);
+    h.get_by_label(EN.yt_unofficial).click();
+    settle(&mut h);
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    let saved = Settings::load(&env.dir.join("settings.json")).0;
+    assert!(saved.yt_dlp_unofficial);
+    assert!(
+        h.state().desktop.yt_dlp.config().allow_unofficial,
+        "the resolver hears at once"
+    );
 }
 
 #[test]
@@ -971,6 +1008,8 @@ mod screens {
             ("settings-connections", Light, "en", Tab::Connections),
             ("settings-look", Dark, "zh-TW", Tab::Look),
             ("settings-behaviour", Dark, "en", Tab::Behaviour),
+            ("settings-yt-dlp", Dark, "zh-TW", Tab::YtDlp),
+            ("settings-yt-dlp-light", Light, "en", Tab::YtDlp),
         ] {
             shoot(name, theme, lang, move |g| {
                 let mut form =

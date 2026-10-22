@@ -17,9 +17,12 @@ use reelgene_core::http::HttpConfig;
 use reelgene_core::paths::DEFAULT_TEMPLATE;
 use reelgene_core::resolver::EpisodeRef;
 use reelgene_core::store::NewJob;
+use reelgene_core::tools::{YtDlpConfig, YtDlpTool};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+#[cfg(unix)]
+use support::signer::{Sig, TestKey};
 use support::{FakeCdn, Fault};
 use tokio::sync::broadcast;
 use url::Url;
@@ -876,12 +879,68 @@ async fn add_found(h: &Harness, page: &Url) -> EpisodeId {
 }
 
 #[cfg(unix)]
-fn with_ytdlp(path: PathBuf) -> impl FnOnce(&mut EngineConfig) {
+fn with_ytdlp(tool: YtDlpTool) -> impl FnOnce(&mut EngineConfig) {
     use reelgene_core::resolver::ytdlp::{ID, YtDlp};
     move |c| {
-        c.registry.add(Box::new(YtDlp::new(Some(path))));
+        c.registry.add(Box::new(YtDlp::new(tool)));
         c.registry.add_fallback(ID);
     }
+}
+
+/// yt-dlp's releases as the tests see them: the fake CDN serves files and
+/// their `SHA2-256SUMS` under /release/, signed by a key made for the test.
+#[cfg(unix)]
+fn publish(cdn: &FakeCdn, key: &TestKey, files: &[(&str, Vec<u8>)], created: u32) {
+    use aws_lc_rs::digest;
+    let sums: String = files
+        .iter()
+        .map(|(name, body)| {
+            let sha = hex::encode(digest::digest(&digest::SHA256, body));
+            format!("{sha}  {name}\n")
+        })
+        .collect();
+    let sig = key.sign_with(
+        sums.as_bytes(),
+        Sig {
+            created,
+            issuer: Some(key.fingerprint),
+            ..Sig::default()
+        },
+    );
+    cdn.serve("/release/SHA2-256SUMS", sums);
+    cdn.serve("/release/SHA2-256SUMS.sig", sig);
+    for (name, body) in files {
+        cdn.serve(&format!("/release/{name}"), body.clone());
+    }
+}
+
+/// yt-dlp found at `configured` (else in `dir/tools`), checked against the
+/// releases `publish` makes with `key`.
+#[cfg(unix)]
+fn release_tool(
+    cdn: &FakeCdn,
+    key: &TestKey,
+    dir: &Path,
+    configured: Option<PathBuf>,
+) -> YtDlpTool {
+    let mut c = YtDlpConfig::new(configured, dir.join("tools"), dir.join("checked.json"));
+    c.key = Ok(reelgene_core::pgp::PublicKey::parse(&key.public).unwrap());
+    c.source = cdn.url("/release/");
+    YtDlpTool::new(c)
+}
+
+/// A fake yt-dlp that is the official one, as far as `release_tool` knows.
+#[cfg(unix)]
+fn official_ytdlp(cdn: &FakeCdn, dir: &Path, media: &Url) -> YtDlpTool {
+    let key = TestKey::new();
+    let path = fake_ytdlp(dir, media);
+    publish(
+        cdn,
+        &key,
+        &[("yt-dlp", std::fs::read(&path).unwrap())],
+        1_000,
+    );
+    release_tool(cdn, &key, dir, Some(path))
 }
 
 #[cfg(unix)]
@@ -891,7 +950,7 @@ async fn a_page_nobody_claims_goes_to_yt_dlp_and_downloads_with_the_engine() {
     let data: Vec<u8> = (0..50_000u32).map(|i| (i % 7) as u8).collect();
     cdn.serve("/clip.mp4", data.clone());
     let dir = scratch("ytdlp-tool");
-    let tool = fake_ytdlp(&dir, &cdn.url("/clip.mp4"));
+    let tool = official_ytdlp(&cdn, &dir, &cdn.url("/clip.mp4"));
     let mut h = harness_with("ytdlp", with_ytdlp(tool)).await;
 
     let series = Url::parse("https://site.example/series/9").unwrap();
@@ -932,6 +991,11 @@ async fn a_page_nobody_claims_goes_to_yt_dlp_and_downloads_with_the_engine() {
     let error = h.failed(ep).await;
     assert!(error.contains("into the local network"), "{error}");
 
+    assert_eq!(
+        cdn.hits("/release/SHA2-256SUMS.sig").len(),
+        1,
+        "checked against the release once, then by its checksum alone"
+    );
     let args = std::fs::read_to_string(dir.join("args.log")).unwrap();
     for line in args.lines() {
         assert!(line.starts_with("--ignore-config"), "{line}");
@@ -947,13 +1011,110 @@ async fn a_page_nobody_claims_goes_to_yt_dlp_and_downloads_with_the_engine() {
 #[cfg(unix)]
 #[tokio::test]
 async fn yt_dlp_saying_drm_is_refused_like_any_drm() {
+    let cdn = FakeCdn::start().await;
     let dir = scratch("ytdlp-drm");
-    let tool = fake_ytdlp(&dir, &Url::parse("http://unused.example/").unwrap());
+    let tool = official_ytdlp(&cdn, &dir, &Url::parse("http://unused.example/").unwrap());
     let h = harness_with("ytdlp-drm", with_ytdlp(tool)).await;
     let page = Url::parse("https://site.example/drm/1").unwrap();
     let e = h.engine.discover(&page, None).await.unwrap_err();
     assert!(e.to_string().contains("DRM"), "{e}");
     assert!(matches!(e, reelgene_core::Error::Drm(_)));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_yt_dlp_not_in_the_signed_release_never_runs_unless_allowed() {
+    let cdn = FakeCdn::start().await;
+    let dir = scratch("ytdlp-unofficial");
+    let key = TestKey::new();
+    let path = fake_ytdlp(&dir, &Url::parse("http://unused.example/").unwrap());
+    publish(&cdn, &key, &[("yt-dlp", b"the real one".to_vec())], 1_000);
+    let tool = release_tool(&cdn, &key, &dir, Some(path));
+    let h = harness_with("ytdlp-unofficial", with_ytdlp(tool.clone())).await;
+    let page = Url::parse("https://site.example/watch/1").unwrap();
+
+    let e = h
+        .engine
+        .discover(&page, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not verified"), "{e}");
+    assert!(!dir.join("args.log").exists(), "it never ran");
+
+    // The user's word, in settings, and it runs.
+    tool.configure(YtDlpConfig {
+        allow_unofficial: true,
+        ..tool.config()
+    });
+    h.engine.discover(&page, None).await.unwrap();
+    assert!(dir.join("args.log").exists());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn yt_dlp_is_fetched_checked_and_put_in_place() {
+    use reelgene_core::http::Http;
+    use std::os::unix::fs::PermissionsExt;
+    let cdn = FakeCdn::start().await;
+    let data: Vec<u8> = (0..20_000u32).map(|i| (i % 11) as u8).collect();
+    cdn.serve("/clip.mp4", data.clone());
+    let dir = scratch("ytdlp-install");
+    let made = fake_ytdlp(&dir, &cdn.url("/clip.mp4"));
+    let script = std::fs::read(&made).unwrap();
+    std::fs::remove_file(&made).unwrap();
+    let file = reelgene_core::tools::release_file().unwrap();
+    let key = TestKey::new();
+    let http = Http::new(HttpConfig::default()).unwrap();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let tool = release_tool(&cdn, &key, &dir, None);
+    let installed = dir.join("tools").join("yt-dlp");
+
+    // A file that is not what the release signed is not installed.
+    publish(&cdn, &key, &[(file, b"something else".to_vec())], 1_000);
+    cdn.serve(&format!("/release/{file}"), script.clone());
+    let e = tool.install(&http, &cancel).await.unwrap_err().to_string();
+    assert!(e.contains("not the one yt-dlp signed"), "{e}");
+    assert!(!installed.exists());
+    assert!(!dir.join("tools").join("yt-dlp.part").exists());
+
+    // Nor anything from a list signed by another key.
+    publish(&cdn, &TestKey::new(), &[(file, script.clone())], 1_000);
+    let e = tool.install(&http, &cancel).await.unwrap_err().to_string();
+    assert!(e.contains("not signed by its key"), "{e}");
+    assert!(!installed.exists());
+
+    publish(&cdn, &key, &[(file, script.clone())], 2_000);
+    let (path, v) = tool.install(&http, &cancel).await.unwrap();
+    assert_eq!(path, installed);
+    assert_eq!(v.file, file);
+    assert_eq!(std::fs::read(&path).unwrap(), script);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+
+    // Fetched while the engine runs, and used at once.
+    let mut h = harness_with("ytdlp-install", with_ytdlp(tool.clone())).await;
+    let ep = add_found(&h, &cdn.url("/watch/1")).await;
+    let output = h.done(ep).await;
+    assert_eq!(std::fs::read(output).unwrap(), data);
+
+    // An older list, though signed, would bring back an older build.
+    publish(&cdn, &key, &[(file, script.clone())], 1_500);
+    let e = tool.check(&http, &cancel).await.unwrap_err().to_string();
+    assert!(e.contains("older than the one checked before"), "{e}");
+
+    // A changed file is checked again, and fails.
+    std::fs::write(&installed, [script.as_slice(), b"\n# changed"].concat()).unwrap();
+    publish(&cdn, &key, &[(file, script)], 3_000);
+    let e = h
+        .engine
+        .discover(&cdn.url("/watch/2"), None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not verified"), "{e}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1033,7 +1194,20 @@ async fn a_page_naming_its_video_is_downloaded_without_any_site_resolver() {
 async fn a_page_without_a_player_says_so_and_points_at_yt_dlp() {
     let cdn = FakeCdn::start().await;
     cdn.serve("/article", "<html><p>no video here</p></html>");
-    let h = harness("page-none").await;
+    let dir = scratch("page-none-tools");
+    let missing = YtDlpConfig {
+        // Named but absent: PATH is not searched, so one installed here is not found.
+        configured: Some(dir.join("no-yt-dlp")),
+        ..YtDlpConfig::new(None, dir.join("tools"), dir.join("checked.json"))
+    };
+    let h = harness_with("page-none", |c| {
+        c.registry
+            .add(Box::new(reelgene_core::resolver::ytdlp::YtDlp::new(
+                YtDlpTool::new(missing),
+            )));
+        c.registry.add_fallback(reelgene_core::resolver::ytdlp::ID);
+    })
+    .await;
     let e = h
         .engine
         .discover(&cdn.url("/article"), None)

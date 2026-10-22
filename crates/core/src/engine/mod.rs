@@ -360,6 +360,12 @@ impl Engine {
         self.shared.registry.find(url).map(|r| r.id())
     }
 
+    /// The engine's client: its proxy, limits and backoff, for requests of
+    /// the front ends' own (fetching yt-dlp).
+    pub fn http(&self) -> &Http {
+        &self.shared.http
+    }
+
     /// Ask a resolver what is behind `url`, without queueing anything. With
     /// `resolver`, that one is used even if it does not claim the link.
     pub async fn discover(&self, url: &Url, resolver: Option<&str>) -> Result<Discovery> {
@@ -383,6 +389,7 @@ impl Engine {
             cancel: &cancel,
         };
         let mut last = None;
+        let mut missing = None;
         for r in candidates {
             match r.discover(url, cx).await {
                 Ok(found) if !found.episodes.is_empty() => {
@@ -394,18 +401,18 @@ impl Engine {
                 Ok(_) => last = Some(Error::resolver(r.id(), "found no episodes")),
                 // Final: what DRM protects is not fetched by another route.
                 Err(e @ (Error::Drm(_) | Error::Cancelled)) => return Err(e),
+                // The page's own reason says more than "yt-dlp is missing".
+                Err(Error::Missing(program)) => missing = Some(program),
                 Err(e) => last = Some(e),
             }
         }
-        let without_ytdlp = registry
-            .fallbacks()
-            .all(|r| r.id() != crate::resolver::ytdlp::ID);
-        Err(match last {
-            Some(e) if without_ytdlp => Error::Unsupported(format!(
-                "{e} (with yt-dlp installed, reelgene tries pages like this too)"
+        Err(match (last, missing) {
+            (Some(e), Some(program)) => Error::Unsupported(format!(
+                "{e} (with {program} installed, reelgene tries pages like this too)"
             )),
-            Some(e) => e,
-            None => Error::Unsupported(format!("no resolver handles {}", net::redact(url))),
+            (Some(e), None) => e,
+            (None, Some(program)) => Error::Missing(program),
+            (None, None) => Error::Unsupported(format!("no resolver handles {}", net::redact(url))),
         })
     }
 

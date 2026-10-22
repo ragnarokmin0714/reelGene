@@ -6,6 +6,8 @@
 
 #![allow(dead_code)] // each test binary uses a different part
 
+pub mod signer;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

@@ -13,7 +13,9 @@ pub mod http;
 pub mod mux;
 pub mod net;
 pub mod paths;
+pub mod pgp;
 pub mod resolver;
 pub mod store;
+pub mod tools;
 
 pub use error::{Error, Result};

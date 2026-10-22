@@ -9,14 +9,16 @@
 //!
 //! yt-dlp runs by absolute path with an argument array, the link after `--`
 //! so it can never be read as an option, and `--ignore-config` so a config
-//! file cannot add downloads, commands or output of its own.
+//! file cannot add downloads, commands or output of its own. Before every
+//! run it is checked against yt-dlp's signed releases (`tools.rs`).
 
 use super::{Ctx, Discovered, EpisodeRef, MediaKind, Resolved, Resolver};
 use crate::error::{Error, Result};
+use crate::http::Http;
 use crate::net;
+use crate::tools::YtDlpTool;
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -33,23 +35,24 @@ const MAX_OUTPUT: usize = 64 << 20;
 const FORMAT: &str = "b[protocol=https]/b[protocol=http]/b[protocol*=m3u8]";
 
 pub struct YtDlp {
-    path: Option<PathBuf>,
+    tool: YtDlpTool,
 }
 
 impl YtDlp {
-    /// `None` keeps the resolver known, so jobs queued with it say what is
-    /// missing instead of naming an unknown resolver.
-    pub fn new(path: Option<PathBuf>) -> Self {
-        Self { path }
+    /// Registered whether or not yt-dlp is there, so it can be fetched while
+    /// reelgene runs, and jobs queued with it say what is missing.
+    pub fn new(tool: YtDlpTool) -> Self {
+        Self { tool }
     }
 
-    async fn run(&self, args: &[&str], url: &Url, cancel: &CancellationToken) -> Result<Value> {
-        let path = self.path.as_ref().ok_or_else(|| {
-            Error::resolver(
-                ID,
-                "yt-dlp was not found: install it, or set its path in settings",
-            )
-        })?;
+    async fn run(
+        &self,
+        args: &[&str],
+        url: &Url,
+        http: &Http,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        let path = &self.tool.ready(http, cancel).await?;
         let mut cmd = crate::mux::command(path);
         cmd.args(["--ignore-config", "--no-warnings", "--no-progress", "-J"])
             .args(args)
@@ -91,7 +94,9 @@ impl Resolver for YtDlp {
     }
 
     async fn discover(&self, url: &Url, cx: Ctx<'_>) -> Result<Discovered> {
-        let info = self.run(&["--flat-playlist"], url, cx.cancel).await?;
+        let info = self
+            .run(&["--flat-playlist"], url, cx.http, cx.cancel)
+            .await?;
         let title = text(&info, "title").unwrap_or("video").to_owned();
         let episodes = if info["_type"] == "playlist" {
             info["entries"]
@@ -146,7 +151,7 @@ impl Resolver for YtDlp {
             .find_map(web_link)
             .ok_or_else(|| Error::resolver(ID, "the stored link is unreadable"))?;
         let info = self
-            .run(&["--no-playlist", "-f", FORMAT], &page, cx.cancel)
+            .run(&["--no-playlist", "-f", FORMAT], &page, cx.http, cx.cancel)
             .await?;
         let protocol = text(&info, "protocol").unwrap_or_default();
         let (kind, link) = if protocol.contains("m3u8") {
@@ -220,7 +225,8 @@ mod tests {
 
     #[test]
     fn it_never_claims_a_link_by_itself() {
-        let r = YtDlp::new(Some("/usr/bin/yt-dlp".into()));
+        let tool = crate::tools::YtDlpConfig::new(None, "/tools".into(), "/r.json".into());
+        let r = YtDlp::new(YtDlpTool::new(tool));
         assert!(!r.matches(&Url::parse("https://site.example/watch/1").unwrap()));
     }
 }
