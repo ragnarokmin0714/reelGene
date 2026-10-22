@@ -159,7 +159,9 @@ it what the page holds and where the video is, then downloads with its own
 engine, so resume, the speed limit and the local-network guard apply as
 usual. Only links you add yourself go to yt-dlp, never what the clipboard
 picks up. It is run with `--ignore-config`, and asked for one file with both
-picture and sound. DRM-protected videos are refused.
+picture and sound, or else for an HLS playlist, whose separate sound
+reelgene fetches and (with ffmpeg) joins like any other. DRM-protected
+videos are refused.
 
 **Only the official yt-dlp runs.** yt-dlp signs every release: a list of its
 files' SHA-256 checksums, with an OpenPGP signature from yt-dlp's release

@@ -23,8 +23,8 @@ Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 - run the Windows executable on a real Windows machine (CI compiles and
   tests it; nobody has run the window there);
 - look at the window on a real Linux desktop, Chinese titles included;
-- one download through a real ffmpeg (a real yt-dlp was fetched and checked
-  on 2026-10-22).
+- one download through a real ffmpeg (a real yt-dlp worked on 2026-10-22:
+  fetched and checked, then a 1080p video in HLS with separate sound).
 
 ## Next
 

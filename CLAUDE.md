@@ -77,7 +77,10 @@ a link the user added that nobody claims. It answers facts only (`-J`):
 discovery lists entries, `resolve` asks for a fresh link every attempt like
 any resolver, and the engine downloads, so the guards all apply (a public
 page's video on a private address is refused, tested). Run with `--ignore-config` (a config could add
-downloads or `--exec`), the link after `--`, a timeout, capped output.
+downloads or `--exec`), the link after `--`, a timeout, capped output. It is
+asked for one file with picture and sound, else any HLS video *for its master
+playlist* (`manifest_url`): such masters list the sound as audio renditions,
+which the engine already fetches and joins. Never separate DASH files.
 
 **Only an official yt-dlp runs** (`tools.rs`, `pgp.rs`). yt-dlp signs each
 release's `SHA2-256SUMS` with its OpenPGP key, built in as `yt-dlp.asc`. Before

@@ -30,9 +30,11 @@ pub const ID: &str = "yt-dlp";
 const TIMEOUT: Duration = Duration::from_secs(120);
 /// A very long playlist's JSON is a few MB; anything far past that is not.
 const MAX_OUTPUT: usize = 64 << 20;
-/// One file with both picture and sound, as a plain download or HLS: never
-/// DASH or separate streams, which reelgene does not join.
-const FORMAT: &str = "b[protocol=https]/b[protocol=http]/b[protocol*=m3u8]";
+/// One file with both picture and sound, as a plain download or HLS; else
+/// any HLS video, for its master playlist: that lists the sound as audio
+/// renditions, which the engine fetches and joins like any other playlist's.
+/// Never DASH or separate files, which reelgene does not join.
+const FORMAT: &str = "b[protocol=https]/b[protocol=http]/b[protocol*=m3u8]/bv*[protocol*=m3u8]";
 
 pub struct YtDlp {
     tool: YtDlpTool,
@@ -197,7 +199,11 @@ fn last_error(stderr: &[u8]) -> String {
     let line = line.trim_start_matches("ERROR:").trim();
     let redacted: Vec<String> = line
         .split(' ')
-        .map(|w| Url::parse(w).map_or_else(|_| w.to_owned(), |u| net::redact(&u)))
+        .map(|w| match web_link(w) {
+            Some(u) => net::redact(&u),
+            // "abc123:" parses as a URL too; only web links carry secrets.
+            None => w.to_owned(),
+        })
         .collect();
     let mut out = redacted.join(" ");
     if out.len() > 300 {
@@ -221,6 +227,8 @@ mod tests {
         let why = last_error(stderr);
         assert!(why.starts_with("[generic] Unable to download"), "{why}");
         assert!(!why.contains("SECRET"), "{why}");
+        let why = last_error(b"ERROR: [x] AbC123: Requested format is not available\n");
+        assert_eq!(why, "[x] AbC123: Requested format is not available");
     }
 
     #[test]
