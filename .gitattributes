@@ -1,0 +1,4 @@
+# Signed or hashed byte for byte: a Windows checkout turning LF into CRLF
+# would change them.
+crates/core/tests/data/** -text
+crates/core/src/yt-dlp.asc -text
