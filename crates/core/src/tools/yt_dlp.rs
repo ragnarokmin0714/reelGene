@@ -13,13 +13,12 @@
 //! Anything else is refused unless the user allows unofficial builds: pip
 //! installs, distribution packages, older releases.
 
+use super::{civil_from_days, hash, join, parse_sums, read_record, sha256_file, write_record};
 use crate::error::{Error, Result};
 use crate::http::{FileDownload, Http};
 use crate::mux;
 use crate::pgp::PublicKey;
-use aws_lc_rs::digest;
 use serde::{Deserialize, Serialize};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use tokio_util::sync::CancellationToken;
@@ -51,8 +50,10 @@ pub fn release_file() -> Option<&'static str> {
 pub struct YtDlpConfig {
     /// A yt-dlp the user named; `None` looks in `tools_dir`, then on PATH.
     pub configured: Option<PathBuf>,
-    /// Where reelgene puts the yt-dlp it fetches.
+    /// Where reelgene puts the yt-dlp it fetches; searched first.
     pub tools_dir: PathBuf,
+    /// Searched next: where earlier versions kept their tools.
+    pub also: Vec<PathBuf>,
     /// Where the checksum of the yt-dlp that last passed is kept.
     pub record: PathBuf,
     /// The key releases must be signed with, or why the one set in settings
@@ -71,6 +72,7 @@ impl YtDlpConfig {
         Self {
             configured,
             tools_dir,
+            also: Vec::new(),
             record,
             key: PublicKey::parse(YT_DLP_KEY.as_bytes()).map_err(|e| e.to_string()),
             allow_unofficial: false,
@@ -136,7 +138,8 @@ impl YtDlpTool {
 
     pub fn locate(&self) -> Option<PathBuf> {
         let c = self.config();
-        mux::locate_program("yt-dlp", c.configured.as_deref(), Some(&c.tools_dir))
+        let dirs: Vec<PathBuf> = std::iter::once(c.tools_dir).chain(c.also).collect();
+        mux::locate_program("yt-dlp", c.configured.as_deref(), &dirs)
     }
 
     /// Hashes the file: run it off the UI thread.
@@ -144,7 +147,10 @@ impl YtDlpTool {
         let Some(path) = self.locate() else {
             return Status::Missing;
         };
-        match (sha256_file(&path), recorded(&self.config().record)) {
+        match (
+            sha256_file(&path),
+            read_record::<Verified>(&self.config().record),
+        ) {
             (Ok(sha), Some(v)) if v.sha256 == sha => Status::Official { path, verified: v },
             _ => Status::Unchecked { path },
         }
@@ -156,7 +162,7 @@ impl YtDlpTool {
         let config = self.config();
         let path = self.locate().ok_or(Error::Missing("yt-dlp"))?;
         let sha = hash(&path).await?;
-        if recorded(&config.record).is_some_and(|v| v.sha256 == sha) {
+        if read_record::<Verified>(&config.record).is_some_and(|v| v.sha256 == sha) {
             return Ok(path);
         }
         if config.allow_unofficial {
@@ -304,78 +310,19 @@ impl YtDlpTool {
         })?;
         // A signed but older list would bring back an older, perhaps flawed,
         // build: never go back past what was checked before.
-        if let Some(seen) = recorded(&config.record).filter(|v| v.signed > signed) {
+        if let Some(seen) = read_record::<Verified>(&config.record).filter(|v| v.signed > signed) {
             return Err(Error::Untrusted(format!(
                 "the release offered is older than the one checked before ({})",
                 seen.date()
             )));
         }
-        let sums = sums
-            .lines()
-            .filter_map(|l| {
-                let (sha, name) = l.split_once(char::is_whitespace)?;
-                Some((sha.to_ascii_lowercase(), name.trim().to_owned()))
-            })
-            .collect();
-        Ok((sums, signed))
+        Ok((parse_sums(&sums), signed))
     }
 
     fn remember(&self, v: &Verified) {
-        let path = self.config().record;
-        let tmp = path.with_extension("tmp");
-        let written = serde_json::to_vec_pretty(v)
-            .map_err(std::io::Error::other)
-            .and_then(|json| std::fs::write(&tmp, json))
-            .and_then(|()| std::fs::rename(&tmp, &path));
-        if let Err(e) = written {
-            // Only costs a check against the release next time.
-            log::warn!("cannot write {}: {e}", path.display());
-        }
+        // Failing only costs a check against the release next time.
+        write_record(&self.config().record, v);
     }
-}
-
-fn join(base: &Url, file: &str) -> Result<Url> {
-    base.join(file)
-        .map_err(|e| Error::Invalid(format!("release file {file}: {e}")))
-}
-
-fn recorded(path: &Path) -> Option<Verified> {
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
-}
-
-async fn hash(path: &Path) -> Result<String> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || sha256_file(&path))
-        .await
-        .map_err(|e| Error::Invalid(format!("hashing stopped: {e}")))?
-}
-
-fn sha256_file(path: &Path) -> Result<String> {
-    let io = |e| Error::io(path, e);
-    let mut file = std::fs::File::open(path).map_err(io)?;
-    let mut ctx = digest::Context::new(&digest::SHA256);
-    let mut buf = vec![0; 1 << 20];
-    loop {
-        let n = file.read(&mut buf).map_err(io)?;
-        if n == 0 {
-            break;
-        }
-        ctx.update(&buf[..n]);
-    }
-    Ok(hex::encode(ctx.finish()))
-}
-
-/// Year, month, day of a day count since 1970-01-01 (H. Hinnant).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 #[cfg(test)]

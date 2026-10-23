@@ -6,7 +6,7 @@ mod support;
 use reelgene_core::pgp::PublicKey;
 use support::signer::{Sig, TestKey};
 
-const YT_DLP_KEY: &[u8] = include_bytes!("../src/yt-dlp.asc");
+const YT_DLP_KEY: &[u8] = include_bytes!("../src/tools/yt-dlp.asc");
 const SUMS: &[u8] = include_bytes!("data/SHA2-256SUMS");
 const SUMS_SIG: &[u8] = include_bytes!("data/SHA2-256SUMS.sig");
 

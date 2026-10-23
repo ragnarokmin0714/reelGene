@@ -107,6 +107,7 @@ reelgene resume [JOB]                                      # queue failed or pau
 reelgene pause [JOB]
 reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
+reelgene ffmpeg [--accept]                                 # fetch ffmpeg, checked
 reelgene yt-dlp [--check]                                  # fetch the official yt-dlp, checked
 reelgene report                                            # a problem report, in this folder
 reelgene licenses                                          # reelgene's and its fonts' licences
@@ -133,15 +134,37 @@ reelgene downloads and joins everything itself. With
 separate audio into the video. Without it you get `.ts`, and separate audio
 is saved next to the video.
 
-reelgene does not include ffmpeg. To get MP4s, download ffmpeg and put
-`ffmpeg.exe` (Windows) or `ffmpeg` in reelgene's **tools folder** —
-Settings → Downloads shows where it is and has a button to open it — then
-press **Check again**; no restart needed. The tools folder is beside the
-program in portable mode, else `tools` in reelgene's data folder
-(`reelgene doctor` prints it). reelgene also finds ffmpeg at the path set in
-Settings, or on `PATH` (never in the current folder). **Convert to MP4** can
-be switched off to keep downloads as they came. ffmpeg is only ever given
-local files: reelgene does all the networking itself.
+reelgene does not include ffmpeg. **Settings → Tools → Get ffmpeg** (or
+`reelgene ffmpeg`) fetches one into reelgene's tools folder; no restart
+needed. The "ffmpeg not found" badge in the status bar leads there.
+
+- ffmpeg's developers publish source only, and nobody signs builds. reelgene
+  fetches [BtbN's](https://github.com/BtbN/FFmpeg-Builds) static LGPL build
+  of the newest release branch (about 120–170 MB) and checks it against the
+  checksum published with it. That proves the download is intact, not who
+  made it: weaker than yt-dlp's signature, and enough for a program that here
+  only copies streams between local files reelgene wrote.
+- Or put your own `ffmpeg.exe` (Windows) or `ffmpeg` in the tools folder and
+  press **Check again**. reelgene also finds ffmpeg at the path set in
+  Settings, or on `PATH` (never in the current folder); on Linux your
+  distribution's package is a good choice.
+- The ffmpeg in the tools folder has its checksum recorded the first time it
+  is used. If the file changes afterwards it is not run until you press
+  **Check again** (`reelgene ffmpeg --accept`), or fetch it again.
+
+**Convert to MP4** can be switched off to keep downloads as they came.
+ffmpeg is only ever given local files: reelgene does all the networking
+itself.
+
+## The tools folder
+
+ffmpeg and yt-dlp are fetched to, and looked for first in, the tools folder:
+`tools` beside the program in portable mode, else `tools` in reelgene's data
+folder (`reelgene doctor` prints it). Settings → Tools can name another one,
+but not one inside the download folder or your Downloads folder: downloaded
+files must never land beside the programs (Windows loads a program's DLLs
+from its own folder first). Portable installs from before `tools` existed
+kept these beside the program, and they are still found there.
 
 ## Pages without a resolver
 
@@ -172,7 +195,7 @@ the list is signed by that key; after that, only that the file has not
 changed since. A copy someone altered — on the way, on a mirror or on disk —
 never runs.
 
-- **Settings → yt-dlp → Get yt-dlp** (or `reelgene yt-dlp`) fetches the
+- **Settings → Tools → Get yt-dlp** (or `reelgene yt-dlp`) fetches the
   latest official build into the tools folder, checked before it is put
   there. Press it again to update; yt-dlp needs updating often, as sites
   change.

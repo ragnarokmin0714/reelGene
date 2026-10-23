@@ -66,6 +66,10 @@ hex = "0.4.3"
 # SHA-2 and RSA for checking signed releases (pgp.rs). Already in the build
 # through rustls, with the same features.
 aws-lc-rs = { version = "1.18.2", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+# Unpacking a fetched ffmpeg: zip on Windows, tar.xz on Linux; pure Rust.
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] }
+tar = { version = "0.4.46", default-features = false }
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 clap = { version = "4.6.7", features = ["derive"] }
 # The window. glow (OpenGL) rather than wgpu: smaller, and runs in VMs and on

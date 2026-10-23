@@ -169,19 +169,19 @@ pub fn mark_of_the_web(path: &Path, source: &Url) {
     let _ = (path, source);
 }
 
-/// Where to find ffmpeg: the configured path, else reelgene's tools folder,
+/// Where to find ffmpeg: the configured path, else reelgene's tools folders,
 /// else `PATH` — absolute entries only, so the current directory is never
 /// searched. A configured path that does not exist gives `None` rather than
 /// silently using some other ffmpeg.
-pub fn locate(configured: Option<&Path>, tools_dir: Option<&Path>) -> Option<PathBuf> {
-    locate_program("ffmpeg", configured, tools_dir)
+pub fn locate(configured: Option<&Path>, tools_dirs: &[PathBuf]) -> Option<PathBuf> {
+    locate_program("ffmpeg", configured, tools_dirs)
 }
 
 /// The same search for any program reelgene may run (ffmpeg, yt-dlp).
 pub fn locate_program(
     name: &str,
     configured: Option<&Path>,
-    tools_dir: Option<&Path>,
+    tools_dirs: &[PathBuf],
 ) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
         format!("{name}.exe")
@@ -191,7 +191,11 @@ pub fn locate_program(
     if let Some(p) = configured {
         return (p.is_absolute() && p.is_file()).then(|| p.to_path_buf());
     }
-    if let Some(p) = tools_dir.map(|d| d.join(&exe)).filter(|p| p.is_file()) {
+    if let Some(p) = tools_dirs
+        .iter()
+        .map(|d| d.join(&exe))
+        .find(|p| p.is_file())
+    {
         return Some(p);
     }
     let path = std::env::var_os("PATH")?;
@@ -498,9 +502,9 @@ mod tests {
     #[test]
     fn a_missing_configured_ffmpeg_is_not_silently_replaced() {
         let missing = std::env::temp_dir().join("reelgene-no-such-ffmpeg");
-        assert_eq!(locate(Some(&missing), None), None);
+        assert_eq!(locate(Some(&missing), &[]), None);
         assert_eq!(
-            locate(Some(Path::new("ffmpeg")), None),
+            locate(Some(Path::new("ffmpeg")), &[]),
             None,
             "relative paths are refused"
         );

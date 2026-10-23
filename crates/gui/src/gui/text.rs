@@ -101,6 +101,16 @@ pub struct Text {
     pub ffmpeg_needed: fn(&str) -> String,
     pub ts_kept: &'static str,
     pub get_ffmpeg: &'static str,
+    pub section_tools: &'static str,
+    pub tools_folder: &'static str,
+    pub tools_not_absolute: &'static str,
+    pub tools_in_download_folder: &'static str,
+    pub tools_in_downloads: &'static str,
+    pub ff_about: &'static str,
+    pub ff_update: &'static str,
+    pub ff_fetching: &'static str,
+    pub ff_missing: &'static str,
+    pub no_ffmpeg_help: &'static str,
     pub check_again: &'static str,
     pub yt_about: &'static str,
     pub yt_missing: &'static str,
@@ -199,7 +209,7 @@ pub static EN: Text = Text {
     restarted: "The video changed on the server; starting over",
     not_vod: "Live playlist: downloading what is listed now",
     kept_ts: "Kept as .ts (with ffmpeg it becomes .mp4)",
-    audio_separate: "Sound saved as a separate file",
+    audio_separate: "Sound saved as a separate file: get ffmpeg (Settings → Tools) to have it joined",
     short_duration: |expected, actual| {
         format!("Plays {actual:.0}s, though the playlist says {expected:.0}s: part may be missing")
     },
@@ -265,11 +275,21 @@ pub static EN: Text = Text {
     ffmpeg_uses: |v, path| format!("Uses ffmpeg {v}: {path}"),
     ffmpeg_needed: |exe| {
         format!(
-            "MP4 needs ffmpeg, which reelgene does not include. Download it, put {exe} in this folder (or install it so it is on PATH), then press Check again. Until then downloads stay .ts:"
+            "MP4 needs ffmpeg, and so does joining separate sound; reelgene does not include it. Get ffmpeg fetches it into this folder; or put your own {exe} there and press Check again. Until then downloads stay .ts and sound is saved separately:"
         )
     },
     ts_kept: "Downloads stay as they came (.ts).",
     get_ffmpeg: "Get ffmpeg",
+    section_tools: "Tools",
+    tools_folder: "Tools folder",
+    tools_not_absolute: "Use a full path",
+    tools_in_download_folder: "Not inside the download folder: downloaded files could land beside the programs",
+    tools_in_downloads: "Not inside your Downloads folder: downloaded files could land beside the programs",
+    ff_about: "ffmpeg turns .ts into .mp4 and joins separate sound to the picture. Its developers publish no builds; Get ffmpeg fetches BtbN's release build from GitHub (about 150 MB) and checks it against the checksum published with it. That proves the download is intact, not who made it; here ffmpeg only ever copies local files.",
+    ff_update: "Update ffmpeg",
+    ff_fetching: "Fetching ffmpeg (about 150 MB) and checking it…",
+    ff_missing: "ffmpeg is not installed: downloads stay .ts and separate sound is saved beside the video.",
+    no_ffmpeg_help: "Get ffmpeg: it joins separate sound to the picture and makes MP4s",
     check_again: "Check again",
     yt_about: "For pages no resolver handles, reelgene asks yt-dlp where the video is, then downloads it itself. Only the official build runs: its checksum must be in yt-dlp's latest release, signed with yt-dlp's key.",
     yt_missing: "yt-dlp is not installed.",
@@ -377,7 +397,7 @@ pub static ZH_TW: Text = Text {
     restarted: "伺服器上的影片已變更，重新下載",
     not_vod: "直播或未完成的清單：只下載目前列出的部分",
     kept_ts: "保留為 .ts（有 ffmpeg 可轉成 .mp4）",
-    audio_separate: "聲音另存為獨立檔案",
+    audio_separate: "聲音另存為獨立檔案：到「設定 → 工具」取得 ffmpeg 就會自動合併",
     short_duration: |expected, actual| {
         format!("實際只有 {actual:.0} 秒，清單寫 {expected:.0} 秒：可能缺了一段")
     },
@@ -437,11 +457,21 @@ pub static ZH_TW: Text = Text {
     ffmpeg_uses: |v, path| format!("使用 ffmpeg {v}：{path}"),
     ffmpeg_needed: |exe| {
         format!(
-            "轉成 MP4 需要 ffmpeg，reelgene 沒有內附。請下載 ffmpeg，把 {exe} 放進這個資料夾（或安裝到系統 PATH），再按「重新偵測」。在那之前，下載會維持 .ts："
+            "轉成 MP4、合併聲音都需要 ffmpeg，reelgene 沒有內附。按「取得 ffmpeg」會下載到這個資料夾；或把你自己的 {exe} 放進去，再按「重新偵測」。在那之前，下載會維持 .ts，聲音另存："
         )
     },
     ts_kept: "下載後維持原本格式（.ts）。",
-    get_ffmpeg: "下載 ffmpeg",
+    get_ffmpeg: "取得 ffmpeg",
+    section_tools: "工具",
+    tools_folder: "工具資料夾",
+    tools_not_absolute: "請輸入完整路徑",
+    tools_in_download_folder: "不能放在下載資料夾裡：下載的檔案可能落在程式旁邊",
+    tools_in_downloads: "不能放在系統的「下載」資料夾裡：下載的檔案可能落在程式旁邊",
+    ff_about: "ffmpeg 負責把 .ts 轉成 .mp4，並把分開的聲音合併回影片。ffmpeg 官方不提供執行檔；「取得 ffmpeg」會從 GitHub 下載 BtbN 打包的穩定版（約 150 MB），並比對隨附的雜湊值。這只能證明下載完整，無法證明是誰做的；不過 ffmpeg 在這裡只處理本機檔案。",
+    ff_update: "更新 ffmpeg",
+    ff_fetching: "正在下載 ffmpeg（約 150 MB）並檢查…",
+    ff_missing: "尚未安裝 ffmpeg：下載會維持 .ts，聲音另存在影片旁邊。",
+    no_ffmpeg_help: "取得 ffmpeg：用來合併聲音、轉成 MP4",
     check_again: "重新偵測",
     yt_about: "遇到沒有專屬解析器的網頁時，reelgene 會問 yt-dlp 影片在哪裡，再由 reelgene 自己下載。只會執行官方版本：它的雜湊值必須列在 yt-dlp 最新版的清單裡，而且清單要有 yt-dlp 金鑰的簽章。",
     yt_missing: "尚未安裝 yt-dlp。",

@@ -69,6 +69,14 @@ pub enum Cmd {
     },
     /// Show where reelgene keeps things, which ffmpeg it uses, its resolvers.
     Doctor,
+    /// Fetch ffmpeg (a release build, checked against its published checksum)
+    /// into the tools folder, for MP4s and joining separate sound.
+    Ffmpeg {
+        /// Accept the ffmpeg in the tools folder as it is now, after you
+        /// replaced it yourself, instead of fetching one.
+        #[arg(long)]
+        accept: bool,
+    },
     /// Fetch the latest yt-dlp into the tools folder, checked against the
     /// signature on its official release before it is put there.
     #[command(name = "yt-dlp")]
@@ -141,6 +149,9 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     if let Cmd::YtDlp { check } = cmd {
         // No lock either: it touches the tools folder, not the queue.
         return yt_dlp(check).await;
+    }
+    if let Cmd::Ffmpeg { accept } = cmd {
+        return ffmpeg(accept).await;
     }
     if let Cmd::Licenses = cmd {
         println!("reelgene {}: MIT OR Apache-2.0", reelgene_app::VERSION);
@@ -221,7 +232,9 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             println!("report written: {}", path.display());
             ExitCode::SUCCESS
         }
-        Cmd::Doctor | Cmd::Licenses | Cmd::YtDlp { .. } => unreachable!("handled above"),
+        Cmd::Doctor | Cmd::Licenses | Cmd::YtDlp { .. } | Cmd::Ffmpeg { .. } => {
+            unreachable!("handled above")
+        }
     };
     engine.shutdown().await;
     Ok(code)
@@ -695,7 +708,8 @@ fn list(jobs: &[JobView]) {
 async fn doctor() -> Result<ExitCode, String> {
     let places = Places::detect()?;
     let (settings, warning) = Settings::load(&places.settings_file());
-    let (ffmpeg, ff_warning) = app::find_ffmpeg(&settings, &places).await;
+    let tools = app::tools_dirs(&settings, &places);
+    let (ffmpeg, ff_warning) = app::find_ffmpeg(&settings, &places, false).await;
     let downloads = settings
         .download_dir
         .clone()
@@ -715,8 +729,8 @@ async fn doctor() -> Result<ExitCode, String> {
     );
     println!("downloads  {}", downloads.display());
     println!(
-        "tools      {} (put ffmpeg and yt-dlp here)",
-        places.tools_dir().display()
+        "tools      {} (`reelgene ffmpeg` / `reelgene yt-dlp` fetch them here)",
+        tools.dir.display()
     );
     match settings.proxy.parse::<reelgene_core::http::Proxy>() {
         Ok(p) => println!("proxy      {p}"),
@@ -729,7 +743,10 @@ async fn doctor() -> Result<ExitCode, String> {
             ff.version()
         ),
         None => {
-            println!("ffmpeg     not found: playlists stay .ts and separate sound is not merged")
+            println!(
+                "ffmpeg     not found: playlists stay .ts and separate sound is not merged; \
+                 `reelgene ffmpeg` fetches it"
+            )
         }
     }
     let (yt_config, yt_warnings) = app::yt_dlp_config(&settings, &places);
@@ -759,10 +776,46 @@ async fn doctor() -> Result<ExitCode, String> {
     println!("yt-dlp key {key}");
     let resolvers: Vec<_> = reelgene_core::resolver::Registry::new().ids().collect();
     println!("resolvers  {}", resolvers.join(", "));
-    for w in warning.into_iter().chain(ff_warning).chain(yt_warnings) {
+    for w in warning
+        .into_iter()
+        .chain(tools.warning)
+        .chain(ff_warning)
+        .chain(yt_warnings)
+    {
         println!("warning    {w}");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+async fn ffmpeg(accept: bool) -> Result<ExitCode, String> {
+    let places = Places::detect()?;
+    let (settings, warning) = Settings::load(&places.settings_file());
+    for w in warning
+        .iter()
+        .chain(&app::tools_dirs(&settings, &places).warning)
+    {
+        eprintln!("warning: {w}");
+    }
+    if !accept {
+        let http = Http::new(app::http_config(&settings)?).map_err(|e| e.to_string())?;
+        eprintln!("fetching ffmpeg (about 120-170 MB)…");
+        let (path, version) = app::ffmpeg_fetch(&settings, &places)
+            .install(&http, &CancellationToken::new())
+            .await
+            .map_err(|e| e.to_string())?;
+        eprintln!(
+            "{} is ffmpeg {version}, its checksum matching the build's",
+            path.display()
+        );
+    }
+    match app::find_ffmpeg(&settings, &places, accept).await {
+        (Some(ff), _) => {
+            println!("ffmpeg {} in use: {}", ff.version(), ff.path().display());
+            Ok(ExitCode::SUCCESS)
+        }
+        (None, Some(why)) => Err(why),
+        (None, None) => Err("no ffmpeg found".into()),
+    }
 }
 
 async fn yt_dlp(check: bool) -> Result<ExitCode, String> {

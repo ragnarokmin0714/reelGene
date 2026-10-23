@@ -23,8 +23,12 @@ pub struct Places {
     pub data_dir: PathBuf,
     /// The default download folder.
     pub downloads: PathBuf,
-    /// The executable's folder: a portable install keeps ffmpeg there.
+    /// The executable's folder: a portable install keeps its tools in
+    /// `tools` beside it.
     pub exe_dir: Option<PathBuf>,
+    /// The system's Downloads folder, when reelgene's default download folder
+    /// is inside it: no place for programs (`app::tools_dir_problem`).
+    pub user_downloads: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,13 +63,19 @@ impl Places {
         self.data_dir.join("queue.db")
     }
 
-    /// Where to put ffmpeg and yt-dlp for reelgene to find them: beside the
-    /// program when portable, else a `tools` folder with its data.
+    /// Where ffmpeg and yt-dlp go unless settings say otherwise: a `tools`
+    /// folder beside the program when portable, else with its data.
     pub fn tools_dir(&self) -> PathBuf {
         match &self.exe_dir {
-            Some(dir) if self.portable => dir.clone(),
+            Some(dir) if self.portable => dir.join("tools"),
             _ => self.data_dir.join("tools"),
         }
+    }
+
+    /// Where versions before 0.1.0-rc.6 kept a portable install's tools:
+    /// beside the program itself. Still searched, never written.
+    pub fn old_tools_dir(&self) -> Option<PathBuf> {
+        self.exe_dir.clone().filter(|_| self.portable)
     }
 }
 
@@ -84,6 +94,7 @@ fn resolve(
             data_dir: home.clone(),
             downloads: home.join("downloads"),
             exe_dir,
+            user_downloads: None,
         });
     }
     if let Some(dir) = exe_dir.as_ref().filter(|_| portable) {
@@ -93,6 +104,7 @@ fn resolve(
             data_dir: dir.join("data"),
             downloads: dir.join("downloads"),
             exe_dir,
+            user_downloads: None,
         });
     }
     let (config, data, downloads) = match os {
@@ -117,12 +129,14 @@ fn resolve(
     };
     let missing =
         || "cannot tell where your home folder is (HOME / USERPROFILE is not set)".to_owned();
+    let user_downloads = downloads.ok_or_else(missing)?;
     Ok(Places {
         portable: false,
         config_dir: config.ok_or_else(missing)?.join("reelgene"),
         data_dir: data.ok_or_else(missing)?.join("reelgene"),
-        downloads: downloads.ok_or_else(missing)?.join("reelgene"),
+        downloads: user_downloads.join("reelgene"),
         exe_dir,
+        user_downloads: Some(user_downloads),
     })
 }
 

@@ -33,6 +33,9 @@ pub struct Settings {
     pub per_host: usize,
     /// Turn TS into MP4 after a download; needs ffmpeg.
     pub convert_mp4: bool,
+    /// Where ffmpeg and yt-dlp are fetched to and looked for first; `None`:
+    /// `tools` beside a portable program, else in the data folder.
+    pub tools_dir: Option<PathBuf>,
     /// `None`: look in the tools folder, then on PATH.
     pub ffmpeg: Option<PathBuf>,
     /// For pages no resolver handles; found like ffmpeg.
@@ -91,6 +94,7 @@ impl Default for Settings {
             speed_limit: 0,
             per_host: 6,
             convert_mp4: true,
+            tools_dir: None,
             ffmpeg: None,
             yt_dlp: None,
             yt_dlp_key: None,

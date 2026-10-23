@@ -129,6 +129,7 @@ mod tests {
             data_dir: root.join("data"),
             downloads: root.join("dl"),
             exe_dir: None,
+            user_downloads: None,
         }
     }
 

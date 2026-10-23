@@ -10,8 +10,8 @@ use reelgene_core::mux::{self, Ffmpeg};
 use reelgene_core::pgp::PublicKey;
 use reelgene_core::resolver::Registry;
 use reelgene_core::resolver::ytdlp::{self, YtDlp};
-use reelgene_core::tools::{YtDlpConfig, YtDlpTool};
-use std::path::PathBuf;
+use reelgene_core::tools::{self, FfmpegFetch, Seen, YtDlpConfig, YtDlpTool};
+use std::path::{Path, PathBuf};
 
 /// ffmpeg older than this still works for `-c copy`, but has had demuxer bugs
 /// fixed since; worth a warning, not a refusal.
@@ -21,6 +21,8 @@ pub struct App {
     pub places: Places,
     pub settings: Settings,
     pub ffmpeg: Option<Ffmpeg>,
+    /// Why no ffmpeg is used, when one was found but refused.
+    pub ffmpeg_warning: Option<String>,
     /// Reads pages no resolver handles, once checked against its releases.
     pub yt_dlp: YtDlpTool,
     /// Things the user should hear about, for the front end to show.
@@ -79,8 +81,9 @@ impl App {
                 warnings.push(format!("cannot write {}: {e}", file.display()));
             }
         }
-        let (ffmpeg, ff_warning) = find_ffmpeg(&settings, &places).await;
-        warnings.extend(ff_warning);
+        warnings.extend(tools_dirs(&settings, &places).warning);
+        let (ffmpeg, ffmpeg_warning) = find_ffmpeg(&settings, &places, false).await;
+        warnings.extend(ffmpeg_warning.clone());
         let (yt_dlp, yt_warning) = yt_dlp_config(&settings, &places);
         warnings.extend(yt_warning);
         let yt_dlp = YtDlpTool::new(yt_dlp);
@@ -92,6 +95,7 @@ impl App {
             places,
             settings,
             ffmpeg,
+            ffmpeg_warning,
             yt_dlp,
             _instance: instance,
         })
@@ -164,11 +168,13 @@ pub fn registry(yt_dlp: YtDlpTool) -> Registry {
 /// else one in the tools folder, else PATH; the key set there, else the
 /// built-in one.
 pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<String>) {
+    let tools = tools_dirs(settings, places);
     let mut config = YtDlpConfig::new(
         settings.yt_dlp.clone(),
-        places.tools_dir(),
+        tools.dir,
         places.data_dir.join("yt-dlp-checked.json"),
     );
+    config.also = tools.also;
     config.allow_unofficial = settings.yt_dlp_unofficial;
     let mut warnings: Vec<String> = settings
         .yt_dlp
@@ -190,16 +196,140 @@ pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<
     (config, warnings)
 }
 
-/// The configured ffmpeg, else one beside a portable install, else PATH.
-pub async fn find_ffmpeg(settings: &Settings, places: &Places) -> (Option<Ffmpeg>, Option<String>) {
-    let tools = places.tools_dir();
-    let Some(path) = mux::locate(settings.ffmpeg.as_deref(), Some(&tools)) else {
+/// Why a folder is no place for the programs reelgene runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsDirProblem {
+    NotAbsolute,
+    /// Downloaded files could land beside the programs, and Windows loads a
+    /// program's DLLs from its own folder first.
+    InDownloadFolder,
+    InDownloads,
+}
+
+impl std::fmt::Display for ToolsDirProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotAbsolute => "is not a full path",
+            Self::InDownloadFolder => "is inside the download folder",
+            Self::InDownloads => "is inside your Downloads folder",
+        })
+    }
+}
+
+pub fn tools_dir_problem(
+    dir: &Path,
+    settings: &Settings,
+    places: &Places,
+) -> Option<ToolsDirProblem> {
+    // Windows paths compare without regard to case.
+    let key = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        PathBuf::from(if cfg!(windows) { s.to_lowercase() } else { s })
+    };
+    let inside = |outer: &Path| key(dir).starts_with(key(outer));
+    let downloads = settings.download_dir.as_ref().unwrap_or(&places.downloads);
+    if !dir.is_absolute() {
+        Some(ToolsDirProblem::NotAbsolute)
+    } else if inside(downloads) {
+        Some(ToolsDirProblem::InDownloadFolder)
+    } else if places.user_downloads.as_deref().is_some_and(inside) {
+        Some(ToolsDirProblem::InDownloads)
+    } else {
+        None
+    }
+}
+
+/// The tools folder in use, and older places still searched after it.
+pub struct ToolsDirs {
+    pub dir: PathBuf,
+    pub also: Vec<PathBuf>,
+    /// Why the folder set in settings is not used.
+    pub warning: Option<String>,
+}
+
+impl ToolsDirs {
+    pub fn search(&self) -> Vec<PathBuf> {
+        std::iter::once(self.dir.clone())
+            .chain(self.also.iter().cloned())
+            .collect()
+    }
+}
+
+pub fn tools_dirs(settings: &Settings, places: &Places) -> ToolsDirs {
+    let default = places.tools_dir();
+    let (dir, warning) = match &settings.tools_dir {
+        Some(dir) => match tools_dir_problem(dir, settings, places) {
+            None => (dir.clone(), None),
+            Some(why) => {
+                let warning = format!(
+                    "the tools folder in settings ({}) {why}; using {} instead",
+                    dir.display(),
+                    default.display()
+                );
+                (default.clone(), Some(warning))
+            }
+        },
+        None => (default.clone(), None),
+    };
+    let also = [Some(default), places.old_tools_dir()]
+        .into_iter()
+        .flatten()
+        .filter(|d| *d != dir)
+        .collect();
+    ToolsDirs { dir, also, warning }
+}
+
+/// Fetching ffmpeg into the tools folder.
+pub fn ffmpeg_fetch(settings: &Settings, places: &Places) -> FfmpegFetch {
+    FfmpegFetch::new(tools_dirs(settings, places).dir, ffmpeg_record(places))
+}
+
+fn ffmpeg_record(places: &Places) -> PathBuf {
+    places.data_dir.join("ffmpeg-checked.json")
+}
+
+/// The configured ffmpeg, else one in the tools folder, else PATH. One from
+/// the tools folder runs only if it is the one used before (`ffmpeg_seen`),
+/// or with `accept`: the user's word for a changed one.
+pub async fn find_ffmpeg(
+    settings: &Settings,
+    places: &Places,
+    accept: bool,
+) -> (Option<Ffmpeg>, Option<String>) {
+    let tools = tools_dirs(settings, places).search();
+    let Some(path) = mux::locate(settings.ffmpeg.as_deref(), &tools) else {
         let warning = settings
             .ffmpeg
             .as_ref()
             .map(|p| format!("the ffmpeg set in settings ({}) was not found", p.display()));
         return (None, warning);
     };
+    // One named in settings is the user's, one on PATH the system's.
+    let in_tools = settings.ffmpeg.is_none() && tools.iter().any(|d| path.parent() == Some(d));
+    if in_tools {
+        let (file, record) = (path.clone(), ffmpeg_record(places));
+        let seen = tokio::task::spawn_blocking(move || {
+            if accept {
+                tools::accept_ffmpeg(&file, &record).map(|()| Seen::First)
+            } else {
+                tools::ffmpeg_seen(&file, &record)
+            }
+        })
+        .await;
+        match seen {
+            Ok(Ok(Seen::Changed)) => {
+                let warning = format!(
+                    "{} has changed since reelgene last used it, so it is not run: if you \
+                     replaced it yourself, press Check again (or `reelgene ffmpeg --accept`); \
+                     if not, press Get ffmpeg",
+                    path.display()
+                );
+                return (None, Some(warning));
+            }
+            Ok(Err(e)) => return (None, Some(e.to_string())),
+            _ => {}
+        }
+    }
     match Ffmpeg::probe(&path).await {
         Ok(ff) => {
             let warning = ff.major().filter(|m| *m < FFMPEG_MIN_MAJOR).map(|m| {
@@ -211,5 +341,101 @@ pub async fn find_ffmpeg(settings: &Settings, places: &Places) -> (Option<Ffmpeg
             None,
             Some(format!("{} does not work as ffmpeg: {e}", path.display())),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An absolute path on this system: Windows wants a drive.
+    fn a(path: &str) -> PathBuf {
+        PathBuf::from(if cfg!(windows) {
+            format!("C:{path}")
+        } else {
+            path.to_owned()
+        })
+    }
+
+    fn places() -> Places {
+        Places {
+            portable: false,
+            config_dir: a("/home/u/.config/reelgene"),
+            data_dir: a("/home/u/.local/share/reelgene"),
+            downloads: a("/home/u/Downloads/reelgene"),
+            exe_dir: Some(a("/opt/reelgene")),
+            user_downloads: Some(a("/home/u/Downloads")),
+        }
+    }
+
+    #[test]
+    fn programs_stay_out_of_download_folders() {
+        let p = places();
+        let s = Settings {
+            download_dir: Some(a("/media/videos")),
+            ..Settings::default()
+        };
+        let problem = |dir: &str| {
+            let dir = if dir.starts_with('/') {
+                a(dir)
+            } else {
+                dir.into()
+            };
+            tools_dir_problem(&dir, &s, &p)
+        };
+        assert_eq!(problem("/opt/tools"), None);
+        assert_eq!(problem("tools"), Some(ToolsDirProblem::NotAbsolute));
+        assert_eq!(
+            problem("/media/videos"),
+            Some(ToolsDirProblem::InDownloadFolder)
+        );
+        assert_eq!(
+            problem("/media/videos/tools"),
+            Some(ToolsDirProblem::InDownloadFolder)
+        );
+        assert_eq!(
+            problem("/home/u/Downloads/bin"),
+            Some(ToolsDirProblem::InDownloads)
+        );
+        // A folder that merely starts with the same letters is another folder.
+        assert_eq!(problem("/media/videos2"), None);
+    }
+
+    #[test]
+    fn a_tools_folder_refused_falls_back_with_a_warning() {
+        let p = places();
+        let s = Settings {
+            tools_dir: Some(a("/home/u/Downloads/reelgene/tools")),
+            ..Settings::default()
+        };
+        let t = tools_dirs(&s, &p);
+        assert_eq!(t.dir, a("/home/u/.local/share/reelgene/tools"));
+        assert!(t.warning.unwrap().contains("inside the download folder"));
+
+        let s = Settings {
+            tools_dir: Some(a("/opt/tools")),
+            ..Settings::default()
+        };
+        let t = tools_dirs(&s, &p);
+        assert_eq!(t.dir, a("/opt/tools"));
+        assert_eq!(
+            t.search()[1],
+            p.tools_dir(),
+            "the default is still searched"
+        );
+    }
+
+    #[test]
+    fn a_portable_install_keeps_tools_in_their_own_folder_and_finds_old_ones() {
+        let p = Places {
+            portable: true,
+            exe_dir: Some(a("/usb/reelgene")),
+            downloads: a("/usb/reelgene/downloads"),
+            user_downloads: None,
+            ..places()
+        };
+        let t = tools_dirs(&Settings::default(), &p);
+        assert_eq!(t.dir, a("/usb/reelgene/tools"));
+        assert_eq!(t.also, [a("/usb/reelgene")]);
     }
 }

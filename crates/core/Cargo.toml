@@ -23,6 +23,9 @@ aes.workspace = true
 cbc.workspace = true
 hex.workspace = true
 aws-lc-rs.workspace = true
+zip.workspace = true
+tar.workspace = true
+lzma-rust2.workspace = true
 rusqlite.workspace = true
 # Free disk space, without unsafe code of our own.
 fs4 = { version = "1.1.0", default-features = false }
@@ -30,6 +33,9 @@ fs4 = { version = "1.1.0", default-features = false }
 [dev-dependencies]
 # ring-io: the test signer reads its own key's modulus.
 aws-lc-rs = { workspace = true, features = ["ring-io"] }
+# Building archives like the ones ffmpeg comes in.
+lzma-rust2 = { workspace = true, features = ["encoder"] }
+tar = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "net"] }
 
 [lints.rust]

@@ -29,7 +29,7 @@ pub(super) fn draw(g: &mut Gui, ui: &mut egui::Ui) {
     let mut actions = Vec::new();
     let p = theme::palette(ui);
     header(g, ui, &p, &mut actions);
-    status_bar(g, ui, &p);
+    status_bar(g, ui, &p, &mut actions);
     let frame = Frame::new().fill(p.bg).inner_margin(Margin {
         left: 16,
         right: 16,
@@ -459,7 +459,7 @@ fn status_cell(t: &Text, animate: bool, ep: &EpRow, now: f64, ui: &mut egui::Ui,
     }
 }
 
-fn status_bar(g: &Gui, ui: &mut egui::Ui, p: &Palette) {
+fn status_bar(g: &Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
     let t = g.t;
     let frame = Frame::new()
         .fill(p.card)
@@ -487,7 +487,12 @@ fn status_bar(g: &Gui, ui: &mut egui::Ui, p: &Palette) {
                         ui.label(RichText::new(v).color(p.weak).size(12.0));
                     }
                     None => {
-                        widgets::badge(ui, t.no_ffmpeg, p.warning);
+                        if widgets::badge_button(ui, t.no_ffmpeg, p.warning)
+                            .on_hover_text(t.no_ffmpeg_help)
+                            .clicked()
+                        {
+                            actions.push(Action::OpenSettings(dialogs::Tab::Tools));
+                        }
                     }
                 }
                 if g.restart_note {

@@ -183,6 +183,7 @@ fn places(env: &Env) -> reelgene_app::places::Places {
         data_dir: env.dir.clone(),
         downloads: env.dir.join("downloads"),
         exe_dir: None,
+        user_downloads: None,
     }
 }
 
@@ -208,6 +209,7 @@ fn desktop(env: &Env, settings: Settings, save: bool) -> Arc<Desktop> {
         settings,
         places(env),
         save,
+        None,
         None,
         reelgene_core::tools::YtDlpTool::new(yt_dlp),
         Vec::new(),
@@ -570,7 +572,7 @@ fn the_yt_dlp_page_says_what_is_missing_and_what_may_run() {
     let mut h = window(&env, settings);
     h.get_by_label(EN.settings).click();
     settle(&mut h);
-    h.get_by_label("yt-dlp").click();
+    h.get_by_label(EN.section_tools).click();
     until(&mut h, "yt-dlp looked for", |h| {
         h.query_by_label(EN.yt_missing).is_some()
     });
@@ -591,6 +593,44 @@ fn the_yt_dlp_page_says_what_is_missing_and_what_may_run() {
     assert!(
         h.state().desktop.yt_dlp.config().allow_unofficial,
         "the resolver hears at once"
+    );
+}
+
+#[test]
+fn ffmpeg_not_found_leads_to_where_it_is_fetched() {
+    let env = env("ffmpeg-badge");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.no_ffmpeg).click();
+    settle(&mut h);
+    let _ = h.get_by_label(EN.ff_about);
+    let _ = h.get_by_label(EN.ff_missing);
+    let _ = h.get_by_label(EN.get_ffmpeg);
+}
+
+#[test]
+fn a_tools_folder_among_downloads_cannot_be_saved() {
+    let env = env("tools-folder");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    let downloads = env.dir.join("downloads").join("tools");
+    let field = h.get_by_role_and_label(egui::accesskit::Role::TextInput, EN.tools_folder);
+    field.focus();
+    field.type_text(&downloads.display().to_string());
+    settle(&mut h);
+    let _ = h.get_by_label(EN.tools_in_download_folder);
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled(),
+        "downloaded files could land beside the programs"
+    );
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    let saved = Settings::load(&env.dir.join("settings.json")).0;
+    assert_eq!(
+        saved.tools_dir, None,
+        "Save is off while the folder is refused"
     );
 }
 
@@ -1008,8 +1048,8 @@ mod screens {
             ("settings-connections", Light, "en", Tab::Connections),
             ("settings-look", Dark, "zh-TW", Tab::Look),
             ("settings-behaviour", Dark, "en", Tab::Behaviour),
-            ("settings-yt-dlp", Dark, "zh-TW", Tab::YtDlp),
-            ("settings-yt-dlp-light", Light, "en", Tab::YtDlp),
+            ("settings-tools", Dark, "zh-TW", Tab::Tools),
+            ("settings-tools-light", Light, "en", Tab::Tools),
         ] {
             shoot(name, theme, lang, move |g| {
                 let mut form =

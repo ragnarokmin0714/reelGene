@@ -16,15 +16,18 @@ with episodes added one page at a time filed under their series; choosing
 among qualities, with sizes, one or several; settings in pages; a light/dark
 switch; the version shown in the window; a tools folder for ffmpeg, with
 directions in Settings and no restart needed; yt-dlp fetched and checked
-against the signature on its official release, before every run.
+against the signature on its official release, before every run; ffmpeg
+fetched and checked against its build's checksum, and watched for changes;
+a tools folder of its own, never among downloads.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:
 - run the Windows executable on a real Windows machine (CI compiles and
   tests it; nobody has run the window there);
 - look at the window on a real Linux desktop, Chinese titles included;
-- one download through a real ffmpeg (a real yt-dlp worked on 2026-10-22:
-  fetched and checked, then a 1080p video in HLS with separate sound).
+- (done 2026-10-22/24: a real yt-dlp, fetched and checked, read a 1080p
+  video in HLS with separate sound; a fetched ffmpeg 9.0 joined picture and
+  sound into one MP4.)
 
 ## Next
 
@@ -46,8 +49,6 @@ supply (a browser to test in, real samples, a site to try).
 - **Video link detection from the browser**: an extension watches network
   requests for playlists and hands them over through Native Messaging — never
   through a local HTTP port, which any web page could call.
-- **One-click ffmpeg download**: a pinned version, SHA-256 checked, into the
-  portable folder.
 - **A Rust TS → MP4 remuxer** (H.264/H.265 + AAC, about 1,500 lines), so the
   common case needs no ffmpeg. CI compares it against ffmpeg on the same
   samples with ffprobe (duration, frame count, A/V sync); unusual streams

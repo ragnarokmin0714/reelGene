@@ -3,6 +3,7 @@
 use super::widgets::{self, Kind};
 use super::{Action, Dialog, Gui};
 use eframe::egui::{self, RichText};
+use reelgene_app::app::ToolsDirProblem;
 use reelgene_app::settings::Settings;
 use reelgene_core::engine::{Command, Discovery, QualityOption};
 use reelgene_core::hls::Quality;
@@ -23,6 +24,8 @@ pub(crate) enum Field {
     YtDlp,
     /// The key yt-dlp's releases are checked with.
     YtDlpKey,
+    /// The tools folder.
+    Tools,
 }
 
 /// Choosing episodes from a series: the multiselect from the design.
@@ -198,6 +201,7 @@ pub(crate) struct SettingsForm {
     /// Shown in the empty folder field: where downloads go by default.
     default_folder: String,
     ffmpeg: String,
+    tools: String,
     yt_dlp: String,
     yt_dlp_key: String,
     /// Blank stands for `system`.
@@ -218,7 +222,7 @@ pub(crate) enum Tab {
     Connections,
     Look,
     Behaviour,
-    YtDlp,
+    Tools,
 }
 
 impl SettingsForm {
@@ -232,6 +236,7 @@ impl SettingsForm {
             default_folder: default_folder.display().to_string(),
             folder: text(&settings.download_dir),
             ffmpeg: text(&settings.ffmpeg),
+            tools: text(&settings.tools_dir),
             yt_dlp: text(&settings.yt_dlp),
             yt_dlp_key: text(&settings.yt_dlp_key),
             limit_mb: settings.speed_limit as f64 / 1000.0,
@@ -256,10 +261,20 @@ impl SettingsForm {
         match field {
             Field::Folder => self.folder = text,
             Field::Ffmpeg => self.ffmpeg = text,
+            Field::Tools => self.tools = text,
             Field::YtDlp => self.yt_dlp = text,
             Field::YtDlpKey => self.yt_dlp_key = text,
             Field::PickFolder => {}
         }
+    }
+
+    /// Why the tools folder typed is no place for programs.
+    fn tools_problem(&self, places: &reelgene_app::places::Places) -> Option<ToolsDirProblem> {
+        let typed = self.tools.trim();
+        if typed.is_empty() {
+            return None;
+        }
+        reelgene_app::app::tools_dir_problem(Path::new(typed), &self.finish(), places)
     }
 
     fn proxy_ok(&self) -> bool {
@@ -274,6 +289,7 @@ impl SettingsForm {
         Settings {
             download_dir: path(&self.folder),
             ffmpeg: path(&self.ffmpeg),
+            tools_dir: path(&self.tools),
             yt_dlp: path(&self.yt_dlp),
             yt_dlp_key: path(&self.yt_dlp_key),
             speed_limit: (self.limit_mb * 1000.0).round() as u64,
@@ -293,7 +309,10 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
     let t = g.t;
     let tools = Tools {
         ffmpeg: g.desktop_ffmpeg(),
+        ff: g.desktop.ff_state(),
         dir: g.tools_dir(),
+        default_dir: g.desktop.places.tools_dir(),
+        places: g.desktop.places.clone(),
         yt: g.desktop.yt_state(),
         yt_key: g.desktop.yt_dlp.config().key.map(|k| k.fingerprint()),
     };
@@ -469,7 +488,12 @@ fn quality_list(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui) {
 pub(crate) struct Tools {
     /// Version and path.
     pub ffmpeg: Option<(String, PathBuf)>,
+    pub ff: super::desktop::FfState,
+    /// The tools folder in use.
     pub dir: PathBuf,
+    /// The one used when settings name none.
+    pub default_dir: PathBuf,
+    pub places: reelgene_app::places::Places,
     pub yt: super::desktop::YtState,
     /// The fingerprint of the key yt-dlp is checked with, or why it is unusable.
     pub yt_key: Result<String, String>,
@@ -502,7 +526,7 @@ fn settings_ui(
             (Tab::Connections, t.section_connections),
             (Tab::Look, t.section_look),
             (Tab::Behaviour, t.section_behaviour),
-            (Tab::YtDlp, "yt-dlp"),
+            (Tab::Tools, t.section_tools),
         ] {
             ui.selectable_value(&mut form.tab, tab, label);
         }
@@ -554,20 +578,6 @@ fn settings_ui(
                     ui.end_row();
                     ui.label(t.convert_mp4);
                     ui.checkbox(&mut form.s.convert_mp4, t.on);
-                    ui.end_row();
-                    ui.label("ffmpeg");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut form.ffmpeg)
-                                .hint_text(t.ffmpeg)
-                                .desired_width(240.0),
-                        )
-                        .on_hover_text(t.ffmpeg);
-                        // Its own name: the folder's "Browse…" is a different button.
-                        if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
-                            actions.push(Action::Browse(Field::Ffmpeg));
-                        }
-                    });
                     ui.end_row();
                 });
                 ui.add_space(8.0);
@@ -707,8 +717,8 @@ fn settings_ui(
                     );
                 });
             }
-            if form.tab == Tab::YtDlp {
-                yt_dlp_page(t, form, tools, &p, ui, actions);
+            if form.tab == Tab::Tools {
+                tools_page(t, form, tools, &p, ui, actions);
             }
             if form.tab == Tab::Behaviour {
                 ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
@@ -722,7 +732,7 @@ fn settings_ui(
     ui.add_space(18.0);
     ui.horizontal(|ui| {
         // Saving an unusable proxy would stop every download at the next start.
-        let ok = form.proxy_ok();
+        let ok = form.proxy_ok() && form.tools_problem(&tools.places).is_none();
         if ui
             .add_enabled_ui(ok, |ui| widgets::button(ui, Kind::Primary, None, t.save))
             .inner
@@ -793,8 +803,16 @@ fn ffmpeg_note(
         {
             actions.push(Action::OpenTools);
         }
-        if widgets::button(ui, Kind::Secondary, Some(widgets::Icon::Link), t.get_ffmpeg).clicked() {
-            actions.push(Action::OpenUrl("https://ffmpeg.org/download.html"));
+        let fetch = |ui: &mut egui::Ui| {
+            widgets::button(
+                ui,
+                Kind::Primary,
+                Some(widgets::Icon::Download),
+                t.get_ffmpeg,
+            )
+        };
+        if ui.add_enabled_ui(!tools.ff.fetching, fetch).inner.clicked() {
+            actions.push(Action::FetchFfmpeg);
         }
         if widgets::button(
             ui,
@@ -807,6 +825,126 @@ fn ffmpeg_note(
             actions.push(Action::RecheckFfmpeg);
         }
     });
+}
+
+/// The tools folder, ffmpeg, and yt-dlp.
+fn tools_page(
+    t: &super::text::Text,
+    form: &mut SettingsForm,
+    tools: &Tools,
+    p: &super::theme::Palette,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    let note = |ui: &mut egui::Ui, text: &str, color| {
+        ui.add(egui::Label::new(RichText::new(text).color(color).size(13.0)).wrap());
+    };
+    let grid = |id: &str| {
+        egui::Grid::new(id)
+            .num_columns(2)
+            .min_col_width(170.0)
+            .spacing([12.0, 8.0])
+    };
+    grid("settings-tools").show(ui, |ui| {
+        let label = ui.label(t.tools_folder).id;
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut form.tools)
+                    .hint_text(tools.default_dir.display().to_string())
+                    .desired_width(240.0),
+            )
+            .labelled_by(label);
+            if ui.button(t.browse).on_hover_text(t.tools_folder).clicked() {
+                actions.push(Action::Browse(Field::Tools));
+            }
+        });
+        ui.end_row();
+    });
+    if let Some(problem) = form.tools_problem(&tools.places) {
+        let why = match problem {
+            ToolsDirProblem::NotAbsolute => t.tools_not_absolute,
+            ToolsDirProblem::InDownloadFolder => t.tools_in_download_folder,
+            ToolsDirProblem::InDownloads => t.tools_in_downloads,
+        };
+        note(ui, why, ui.visuals().error_fg_color);
+    }
+    ui.add_space(4.0);
+    if widgets::button(
+        ui,
+        Kind::Secondary,
+        Some(widgets::Icon::Folder),
+        t.open_folder,
+    )
+    .clicked()
+    {
+        actions.push(Action::OpenTools);
+    }
+
+    ui.add_space(14.0);
+    ui.heading("ffmpeg");
+    note(ui, t.ff_about, p.weak);
+    ui.add_space(8.0);
+    let (status, color) = match (&tools.ffmpeg, &tools.ff) {
+        (_, ff) if ff.fetching => (t.ff_fetching.to_owned(), p.weak),
+        (Some((version, path)), _) => (
+            (t.ffmpeg_uses)(version, &path.display().to_string()),
+            p.success,
+        ),
+        (None, ff) => match &ff.warning {
+            Some(why) => (why.clone(), ui.visuals().error_fg_color),
+            None => (t.ff_missing.to_owned(), p.warning),
+        },
+    };
+    ui.horizontal(|ui| {
+        if tools.ff.fetching {
+            ui.spinner();
+        }
+        note(ui, &status, color);
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(!tools.ff.fetching, |ui| {
+            let fetch = if tools.ffmpeg.is_some() {
+                t.ff_update
+            } else {
+                t.get_ffmpeg
+            };
+            if widgets::button(ui, Kind::Primary, Some(widgets::Icon::Download), fetch).clicked() {
+                actions.push(Action::FetchFfmpeg);
+            }
+            if widgets::button(
+                ui,
+                Kind::Secondary,
+                Some(widgets::Icon::Retry),
+                t.check_again,
+            )
+            .clicked()
+            {
+                actions.push(Action::RecheckFfmpeg);
+            }
+        });
+    });
+    ui.add_space(8.0);
+    grid("settings-ffmpeg").show(ui, |ui| {
+        ui.label("ffmpeg");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut form.ffmpeg)
+                    .hint_text(t.ffmpeg)
+                    .desired_width(240.0),
+            )
+            .on_hover_text(t.ffmpeg);
+            // Its own name: the folder's "Browse…" is a different button.
+            if ui.button(t.browse).on_hover_text("ffmpeg").clicked() {
+                actions.push(Action::Browse(Field::Ffmpeg));
+            }
+        });
+        ui.end_row();
+    });
+
+    ui.add_space(14.0);
+    ui.heading("yt-dlp");
+    yt_dlp_page(t, form, tools, p, ui, actions);
 }
 
 /// yt-dlp: what is there and whether it passed, fetching and checking it,
@@ -870,16 +1008,6 @@ fn yt_dlp_page(
                 actions.push(Action::YtDlp(YtTask::Checking));
             }
         });
-        if widgets::button(
-            ui,
-            Kind::Secondary,
-            Some(widgets::Icon::Folder),
-            t.open_folder,
-        )
-        .clicked()
-        {
-            actions.push(Action::OpenTools);
-        }
     });
     ui.add_space(12.0);
     egui::Grid::new("settings-yt-dlp")

@@ -218,14 +218,33 @@ final rename never crosses filesystems. Single files keep only media
 extensions.
 
 **ffmpeg** is not bundled (size, security updates, GPL obligations) and is
-optional. The user puts it in the tools folder
-(`Places::tools_dir`: beside the program when portable, else `<data>/tools`);
-Settings says where, opens the folder, and "Check again" probes and hands it
-to the engine (`Engine::set_ffmpeg`) without a restart. `convert_mp4` off
-keeps TS even with ffmpeg present. It only ever gets absolute local paths with a `file:` prefix,
-`-protocol_whitelist file` before every input, `-c copy`, `-nostdin`, a
-timeout, and is killed on cancel. Without it, TS stays TS and separate audio
-is saved beside the video.
+optional, but separate sound is only joined with it, and some sites never
+offer picture and sound together. "Get ffmpeg" / `reelgene ffmpeg`
+(`tools/ffmpeg.rs`) fetches BtbN's static LGPL build of the newest release
+branch from the rolling `latest` release, checks the archive against
+`checksums.sha256` (unsigned: integrity, not origin; nobody signs ffmpeg
+builds, and BtbN prunes old builds, so a hash pinned in reelgene would break),
+and copies out only `…/bin/ffmpeg(.exe)`, capped at 1 GiB; the archive is
+deleted. zip and tar.xz are read with pure-Rust crates. The tools folder's
+ffmpeg — fetched or dropped in — has its SHA-256 recorded on first use
+(`<data>/ffmpeg-checked.json`); a changed file is not run until "Check again"
+(`find_ffmpeg(.., accept)`) or `reelgene ffmpeg --accept`. One set in settings
+or on PATH is not watched: the user's or the system's. "Check again" probes
+and hands it to the engine (`Engine::set_ffmpeg`) without a restart.
+`convert_mp4` off keeps TS even with ffmpeg present. It only ever gets
+absolute local paths with a `file:` prefix, `-protocol_whitelist file`
+before every input, `-c copy`, `-nostdin`, a timeout, and is killed on
+cancel. Without it, TS stays TS and separate audio is saved beside the video.
+A real ffmpeg 9.0 joined a 720p VP9 video with AAC sound on 2026-10-24.
+
+**The tools folder** (`app::tools_dirs`) is `tools` beside a portable
+program (before rc.6 it was the program's own folder, still searched, never
+written), else `<data>/tools`, or `Settings::tools_dir`. `tools_dir_problem`
+refuses one inside the download folder or the system's Downloads folder
+(`Places::user_downloads`): downloaded files must never land beside the
+programs, as Windows loads a program's DLLs from its own folder first. A
+refused folder in settings falls back to the default with a warning; the
+window will not save one.
 
 **How it looks.** When stability, performance and compatibility are close,
 appearance decides (Roger, 2026-10-19). All colours, spacing and type live in
@@ -302,7 +321,8 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/error.rs          one typed error; is_transient / is_expired_url
   src/net.rs            redact, is_private, may_follow
   src/hls.rs crypto.rs  M3U8 parsing, AES-128 (from reelhold)
-  src/pgp.rs tools.rs   OpenPGP signature check; official yt-dlp only
+  src/pgp.rs            OpenPGP signature check
+  src/tools/            yt_dlp.rs (official only), ffmpeg.rs (fetch, watch)
   src/http.rs           the one client: retries, backoff, ranges, resume
   src/paths.rs          safe names and the naming template
   src/detect.rs         links in clipboard text

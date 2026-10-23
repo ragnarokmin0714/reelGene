@@ -55,8 +55,11 @@ pub(crate) enum Msg {
     Links(Vec<Link>),
     /// A path chosen in the system's file dialog.
     Picked(dialogs::Field, PathBuf),
-    /// ffmpeg looked for again: its version, or not found.
-    Ffmpeg(Option<String>),
+    /// ffmpeg looked for again: its version, or why none is used (empty:
+    /// none found).
+    Ffmpeg(Result<String, String>),
+    /// ffmpeg fetched: its version, or why not.
+    FfmpegFetched(Result<String, String>),
     /// yt-dlp fetched or checked: its release date, or why not.
     YtDlp(desktop::YtTask, Result<String, String>),
 }
@@ -102,8 +105,11 @@ pub(crate) enum Action {
     Report,
     /// The folder ffmpeg and yt-dlp go in, made if missing, in the file manager.
     OpenTools,
-    OpenUrl(&'static str),
+    /// Look for ffmpeg again, accepting a changed one in the tools folder.
     RecheckFfmpeg,
+    FetchFfmpeg,
+    /// The settings window, on this page.
+    OpenSettings(dialogs::Tab),
     YtDlp(desktop::YtTask),
 }
 
@@ -191,8 +197,9 @@ impl Gui {
             .map(|f| (f.version().to_owned(), f.path().to_path_buf()))
     }
 
+    /// The tools folder in use, from the settings saved (not the form).
     pub(crate) fn tools_dir(&self) -> PathBuf {
-        self.desktop.places.tools_dir()
+        reelgene_app::app::tools_dirs(&self.settings, &self.desktop.places).dir
     }
 
     /// "ffmpeg 7.1" when MP4s are made, else `None`.
@@ -287,15 +294,16 @@ impl Gui {
                     }
                 }
             }
-            Msg::Ffmpeg(found) => match found {
-                Some(v) => self.toast((self.t.ffmpeg_ready)(&v), false),
-                None => {
-                    let dir = self.desktop.places.tools_dir();
+            Msg::Ffmpeg(found) | Msg::FfmpegFetched(found) => match found {
+                Ok(v) => self.toast((self.t.ffmpeg_ready)(&v), false),
+                Err(why) if why.is_empty() => {
+                    let dir = self.tools_dir();
                     self.toast(
                         (self.t.ffmpeg_still_missing)(&dir.display().to_string()),
                         true,
                     );
                 }
+                Err(why) => self.toast(why, true),
             },
             Msg::YtDlp(task, result) => match result {
                 Ok(date) => {
@@ -377,14 +385,19 @@ impl Gui {
             Action::Browse(field) => self.browse(field),
             Action::Report => self.report(),
             Action::OpenTools => {
-                let dir = self.desktop.places.tools_dir();
+                let dir = self.tools_dir();
                 if let Err(e) = std::fs::create_dir_all(&dir) {
                     self.toast(format!("{}: {e}", dir.display()), true);
                 }
                 reelgene_app::platform::reveal(&dir);
             }
-            Action::OpenUrl(url) => reelgene_app::platform::open_url(url),
-            Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(),
+            Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(true),
+            Action::FetchFfmpeg => self.desktop.fetch_ffmpeg(),
+            Action::OpenSettings(tab) => {
+                let mut form = dialogs::SettingsForm::new(&self.settings, &self.default_folder());
+                form.tab = tab;
+                self.dialog = Some(Dialog::Settings(Box::new(form)));
+            }
             Action::YtDlp(task) => self.desktop.yt_dlp_task(task),
         }
     }
@@ -400,7 +413,9 @@ impl Gui {
                 dialogs::Field::Ffmpeg | dialogs::Field::YtDlp | dialogs::Field::YtDlpKey => {
                     dialog.pick_file()
                 }
-                dialogs::Field::PickFolder | dialogs::Field::Folder => dialog.pick_folder(),
+                dialogs::Field::PickFolder | dialogs::Field::Folder | dialogs::Field::Tools => {
+                    dialog.pick_folder()
+                }
             };
             if let Some(path) = picked {
                 let _ = desktop.tx.send(Msg::Picked(field, path));
@@ -446,10 +461,13 @@ impl Gui {
         if s.pace != old.pace {
             self.desktop.engine.send(Command::SetPace(s.pace));
         }
-        if s.ffmpeg != old.ffmpeg || s.convert_mp4 != old.convert_mp4 {
-            self.desktop.recheck_ffmpeg();
+        if s.ffmpeg != old.ffmpeg
+            || s.convert_mp4 != old.convert_mp4
+            || s.tools_dir != old.tools_dir
+        {
+            self.desktop.recheck_ffmpeg(false);
         }
-        if s.yt_dlp != old.yt_dlp {
+        if s.yt_dlp != old.yt_dlp || s.tools_dir != old.tools_dir {
             self.desktop.refresh_yt_dlp();
         }
         if s.speed_limit != old.speed_limit {
@@ -557,6 +575,7 @@ pub fn run(rt: tokio::runtime::Runtime) -> ExitCode {
         app.places.clone(),
         true,
         app.ffmpeg.clone(),
+        app.ffmpeg_warning.clone(),
         app.yt_dlp.clone(),
         app.warnings.clone(),
         app.settings.autostart,

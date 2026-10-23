@@ -257,13 +257,32 @@ pub fn button(ui: &mut Ui, kind: Kind, icon: Option<Icon>, text: &str) -> Respon
 
 /// A small rounded label in a tone: a status, a count.
 pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    pill(ui, text, color, false)
+}
+
+/// A badge that does something when clicked.
+pub fn badge_button(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    pill(ui, text, color, true).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn pill(ui: &mut Ui, text: &str, color: Color32, clickable: bool) -> Response {
     let p = theme::palette(ui);
     let galley =
         ui.painter()
             .layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.0), color);
     let size = galley.size() + vec2(16.0, 6.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, text));
+    let (sense, role) = if clickable {
+        (Sense::click(), Role::Button)
+    } else {
+        (Sense::hover(), Role::Label)
+    };
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    response.widget_info(|| WidgetInfo::labeled(role, true, text));
+    let color = if clickable && response.hovered() {
+        color.gamma_multiply(1.2)
+    } else {
+        color
+    };
     let alpha = if p.bg == theme::DARK.bg { 0.18 } else { 0.12 };
     ui.painter()
         .rect_filled(rect, CornerRadius::same(255), color.gamma_multiply(alpha));

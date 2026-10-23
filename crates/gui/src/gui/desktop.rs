@@ -45,6 +45,14 @@ pub(crate) struct YtState {
     pub error: Option<String>,
 }
 
+/// What the settings window shows about ffmpeg beyond what was found.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FfState {
+    pub fetching: bool,
+    /// Why none is used: refused, broken, or the last fetch failed.
+    pub warning: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum YtTask {
     Fetching,
@@ -66,6 +74,7 @@ pub(crate) struct Desktop {
     pub places: Places,
     /// The ffmpeg found, used or not (`Settings::convert_mp4`).
     ffmpeg: Mutex<Option<reelgene_core::mux::Ffmpeg>>,
+    ff_state: Mutex<FfState>,
     /// Shared with the engine's resolver: settings reach both.
     pub yt_dlp: YtDlpTool,
     yt_state: Mutex<YtState>,
@@ -109,6 +118,7 @@ impl Desktop {
         places: Places,
         save_settings: bool,
         ffmpeg: Option<reelgene_core::mux::Ffmpeg>,
+        ffmpeg_warning: Option<String>,
         yt_dlp: YtDlpTool,
         warnings: Vec<String>,
         running: bool,
@@ -123,6 +133,10 @@ impl Desktop {
             engine,
             places,
             ffmpeg: Mutex::new(ffmpeg),
+            ff_state: Mutex::new(FfState {
+                fetching: false,
+                warning: ffmpeg_warning,
+            }),
             yt_dlp,
             yt_state: Mutex::default(),
             save_settings,
@@ -190,19 +204,63 @@ impl Desktop {
         lock(&self.ffmpeg).clone()
     }
 
+    pub fn ff_state(&self) -> FfState {
+        lock(&self.ff_state).clone()
+    }
+
     /// Look for ffmpeg again — put in the tools folder, or set in settings —
     /// and use it from the next episode on; the window hears the outcome.
-    pub fn recheck_ffmpeg(self: &Arc<Self>) {
+    /// `accept`: the user's word for a changed one in the tools folder.
+    pub fn recheck_ffmpeg(self: &Arc<Self>, accept: bool) {
         let me = Arc::clone(self);
         self.rt.spawn(async move {
-            let settings = me.settings();
-            let (found, _) = reelgene_app::app::find_ffmpeg(&settings, &me.places).await;
-            *lock(&me.ffmpeg) = found.clone();
-            me.engine
-                .set_ffmpeg(found.clone().filter(|_| settings.convert_mp4));
-            let _ = me
-                .tx
-                .send(Msg::Ffmpeg(found.map(|f| f.version().to_owned())));
+            let found = me.find_ffmpeg(accept).await;
+            let _ = me.tx.send(Msg::Ffmpeg(found));
+            me.wake();
+        });
+    }
+
+    async fn find_ffmpeg(&self, accept: bool) -> Result<String, String> {
+        let settings = self.settings();
+        let (found, warning) =
+            reelgene_app::app::find_ffmpeg(&settings, &self.places, accept).await;
+        *lock(&self.ffmpeg) = found.clone();
+        lock(&self.ff_state).warning.clone_from(&warning);
+        self.engine
+            .set_ffmpeg(found.clone().filter(|_| settings.convert_mp4));
+        match (found, warning) {
+            (Some(ff), _) => Ok(ff.version().to_owned()),
+            (None, Some(why)) => Err(why),
+            (None, None) => Err(String::new()),
+        }
+    }
+
+    /// Fetch ffmpeg into the tools folder, then use it.
+    pub fn fetch_ffmpeg(self: &Arc<Self>) {
+        {
+            let mut state = lock(&self.ff_state);
+            if state.fetching {
+                return;
+            }
+            state.fetching = true;
+            state.warning = None;
+        }
+        let me = Arc::clone(self);
+        self.rt.spawn(async move {
+            let fetch = reelgene_app::app::ffmpeg_fetch(&me.settings(), &me.places);
+            let fetched = fetch
+                .install(me.engine.http(), &CancellationToken::new())
+                .await
+                .map_err(|e| e.to_string());
+            let result = match fetched {
+                Ok(_) => me.find_ffmpeg(false).await,
+                Err(e) => {
+                    lock(&me.ff_state).warning = Some(e.clone());
+                    Err(e)
+                }
+            };
+            lock(&me.ff_state).fetching = false;
+            let _ = me.tx.send(Msg::FfmpegFetched(result));
             me.wake();
         });
     }
