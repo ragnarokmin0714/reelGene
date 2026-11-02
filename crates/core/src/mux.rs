@@ -205,6 +205,10 @@ pub fn locate_program(
         .find(|p| p.is_file())
 }
 
+/// The exit code Windows gives a program whose DLLs are missing, as a
+/// "shared" ffmpeg build copied without its DLLs. Unix codes never reach it.
+const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
+
 #[derive(Debug, Clone)]
 pub struct Ffmpeg {
     path: PathBuf,
@@ -226,6 +230,13 @@ impl Ffmpeg {
             .await
             .map_err(|_| Error::Unsupported("ffmpeg -version did not answer".into()))?
             .map_err(|e| Error::io(path, e))?;
+        if out.status.code() == Some(STATUS_DLL_NOT_FOUND) {
+            return Err(Error::Invalid(
+                "it cannot start without the DLLs a \"shared\" build comes with; take a zip \
+                 without \"-shared\" in its name and copy only bin\\ffmpeg.exe"
+                    .into(),
+            ));
+        }
         let text = String::from_utf8_lossy(&out.stdout);
         let version = text
             .lines()

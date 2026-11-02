@@ -274,8 +274,17 @@ pub static EN: Text = Text {
     ffmpeg_still_missing: |dir| format!("No ffmpeg in {dir} yet"),
     ffmpeg_uses: |v, path| format!("Uses ffmpeg {v}: {path}"),
     ffmpeg_needed: |exe| {
+        // Windows users have no package to install, and ffmpeg's GitHub
+        // page offers only source: say which build to take.
+        let own = if cfg!(windows) {
+            format!(
+                " (ffmpeg's GitHub page and its zip are source code with no {exe}: take a build, such as BtbN's win64 zip without \"-shared\" in its name, and copy only bin\\{exe})"
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "MP4 needs ffmpeg, and so does joining separate sound; reelgene does not include it. Get ffmpeg fetches it into this folder; or put your own {exe} there and press Check again. Until then downloads stay .ts and sound is saved separately:"
+            "MP4 needs ffmpeg, and so does joining separate sound; reelgene does not include it. Get ffmpeg fetches it into this folder; or put your own {exe} there and press Check again{own}. Until then downloads stay .ts and sound is saved separately:"
         )
     },
     ts_kept: "Downloads stay as they came (.ts).",
@@ -456,8 +465,15 @@ pub static ZH_TW: Text = Text {
     ffmpeg_still_missing: |dir| format!("{dir} 裡還沒有 ffmpeg"),
     ffmpeg_uses: |v, path| format!("使用 ffmpeg {v}：{path}"),
     ffmpeg_needed: |exe| {
+        let own = if cfg!(windows) {
+            format!(
+                "（ffmpeg 在 GitHub 上的專案和它的 zip 都是原始碼，裡面沒有 {exe}：要下載編譯好的版本，例如 BtbN 檔名有 win64、沒有「-shared」的 zip，只複製 bin\\{exe}）"
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "轉成 MP4、合併聲音都需要 ffmpeg，reelgene 沒有內附。按「取得 ffmpeg」會下載到這個資料夾；或把你自己的 {exe} 放進去，再按「重新偵測」。在那之前，下載會維持 .ts，聲音另存："
+            "轉成 MP4、合併聲音都需要 ffmpeg，reelgene 沒有內附。按「取得 ffmpeg」會下載到這個資料夾；或把你自己的 {exe} 放進去，再按「重新偵測」{own}。在那之前，下載會維持 .ts，聲音另存："
         )
     },
     ts_kept: "下載後維持原本格式（.ts）。",

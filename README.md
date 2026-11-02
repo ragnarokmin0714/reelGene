@@ -145,7 +145,11 @@ needed. The "ffmpeg not found" badge in the status bar leads there.
   made it: weaker than yt-dlp's signature, and enough for a program that here
   only copies streams between local files reelgene wrote.
 - Or put your own `ffmpeg.exe` (Windows) or `ffmpeg` in the tools folder and
-  press **Check again**. reelgene also finds ffmpeg at the path set in
+  press **Check again**. Cloning ffmpeg's GitHub repository or taking its
+  "Download ZIP" gives source code, with no `ffmpeg.exe` in it: take a build
+  instead, such as BtbN's `ffmpeg-nX.Y-latest-win64-lgpl-X.Y.zip`, and copy
+  only `bin\ffmpeg.exe`. Avoid zips with `-shared` in the name: their
+  `ffmpeg.exe` does not start without the DLLs beside it. reelgene also finds ffmpeg at the path set in
   Settings, or on `PATH` (never in the current folder); on Linux your
   distribution's package is a good choice.
 - The ffmpeg in the tools folder has its checksum recorded the first time it
