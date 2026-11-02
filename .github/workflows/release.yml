@@ -34,6 +34,9 @@ jobs:
           name: reelgene-windows
           path: reelgene.exe
           if-no-files-found: error
+          # From a tag only handed to the release job (the release keeps
+          # the files); a run by hand has no release, so keep its builds.
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 1 || 14 }}
 
   linux:
     strategy:
@@ -69,6 +72,9 @@ jobs:
           name: ${{ matrix.file }}
           path: ${{ matrix.file }}
           if-no-files-found: error
+          # From a tag only handed to the release job (the release keeps
+          # the files); a run by hand has no release, so keep its builds.
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 1 || 14 }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
