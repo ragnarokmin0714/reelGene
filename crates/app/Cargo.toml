@@ -22,13 +22,14 @@ jiff = "0.2.38"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Globalization",
+    "Win32_Security_Cryptography",
     "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
 [lints.rust]
-# A few stateless Win32 calls (console, locale, reduced motion); each gets a
-# local allow and a SAFETY comment.
+# A few Win32 calls (console, locale, reduced motion, DPAPI for cookies);
+# each gets a local allow and a SAFETY comment.
 unsafe_code = "deny"
 
 [lints.clippy]

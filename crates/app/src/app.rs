@@ -86,6 +86,11 @@ impl App {
         warnings.extend(ffmpeg_warning.clone());
         let (yt_dlp, yt_warning) = yt_dlp_config(&settings, &places);
         warnings.extend(yt_warning);
+        if let Some(jar) = &yt_dlp.cookies {
+            // Copies lent to a yt-dlp that a crash cut short; none can be in
+            // use now, under the instance lock.
+            jar.sweep();
+        }
         let yt_dlp = YtDlpTool::new(yt_dlp);
         for w in &warnings {
             log::warn!("{w}");
@@ -176,6 +181,7 @@ pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<
     );
     config.also = tools.also;
     config.allow_unofficial = settings.yt_dlp_unofficial;
+    config.cookies = Some(crate::seal::cookie_jar(&places.data_dir));
     let mut warnings: Vec<String> = settings
         .yt_dlp
         .as_ref()

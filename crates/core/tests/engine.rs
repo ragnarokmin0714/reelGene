@@ -838,8 +838,10 @@ async fn a_queue_the_user_stopped_stays_stopped_when_the_hours_come() {
 }
 
 /// A stand-in yt-dlp: lists a two-part series or one clip, points every
-/// video at `media`, refuses links with "drm" in them, and logs its
-/// arguments to `args.log`.
+/// video at `media`, refuses links with "drm" in them, asks to sign in for
+/// links with "agegate" unless given cookies with `SID` in them (then adds a
+/// renewed one, as sites do, and keeps a copy in `seen-cookies.txt`), and
+/// logs its arguments to `args.log`.
 #[cfg(unix)]
 fn fake_ytdlp(dir: &Path, media: &Url) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -850,6 +852,16 @@ fn fake_ytdlp(dir: &Path, media: &Url) -> PathBuf {
 printf '%s\n' "$*" >> '{log}'
 for a; do url=$a; done
 case "$url" in *drm*) echo 'ERROR: [x] This video is DRM protected' >&2; exit 1;; esac
+case "$url" in *agegate*)
+  cookies=; prev=
+  for a; do [ "$prev" = --cookies ] && cookies=$a; prev=$a; done
+  if [ -z "$cookies" ] || ! grep -q SID "$cookies"; then
+    echo 'ERROR: [x] 1: Sign in to confirm your age. Use --cookies-from-browser or --cookies for the authentication.' >&2
+    exit 1
+  fi
+  printf '.site.example\tTRUE\t/\tTRUE\t0\tRENEWED\tyes\n' >> "$cookies"
+  cp "$cookies" '{seen}' ;;
+esac
 case "$*" in
   *--flat-playlist*)
     case "$url" in
@@ -859,7 +871,8 @@ case "$*" in
   *) echo '{{"protocol":"http","url":"{media}","http_headers":{{"Referer":"https://site.example/"}}}}' ;;
 esac
 "#,
-        log = log.display()
+        log = log.display(),
+        seen = dir.join("seen-cookies.txt").display()
     );
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1019,6 +1032,89 @@ async fn yt_dlp_saying_drm_is_refused_like_any_drm() {
     let e = h.engine.discover(&page, None).await.unwrap_err();
     assert!(e.to_string().contains("DRM"), "{e}");
     assert!(matches!(e, reelgene_core::Error::Drm(_)));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cookies_go_to_yt_dlp_only_when_it_asks_to_sign_in_and_renewals_are_kept() {
+    use reelgene_core::cookies::{CookieJar, Plain};
+    let cdn = FakeCdn::start().await;
+    let dir = scratch("ytdlp-cookies");
+    let tool = official_ytdlp(&cdn, &dir, &Url::parse("http://unused.example/").unwrap());
+    let h = harness_with("ytdlp-cookies", with_ytdlp(tool.clone())).await;
+    let gated = Url::parse("https://site.example/agegate/1").unwrap();
+
+    let e = h
+        .engine
+        .discover(&gated, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("Sign in to confirm your age"),
+        "yt-dlp's reason: {e}"
+    );
+    assert!(e.contains("import a cookies.txt"), "and what to do: {e}");
+
+    let exported = dir.join("cookies.txt");
+    std::fs::write(
+        &exported,
+        "# Netscape HTTP Cookie File\n.site.example\tTRUE\t/\tTRUE\t0\tSID\tsecret\n",
+    )
+    .unwrap();
+    let jar = CookieJar::new(dir.join("data/cookies.sealed"), Box::new(Plain));
+    jar.import(&exported, 1).unwrap();
+    tool.configure(YtDlpConfig {
+        cookies: Some(jar.clone()),
+        ..tool.config()
+    });
+
+    let page = Url::parse("https://site.example/watch/1").unwrap();
+    h.engine.discover(&page, None).await.unwrap();
+    let found = h.engine.discover(&gated, None).await.unwrap();
+    assert_eq!(found.found.title, "Clip");
+    let args = std::fs::read_to_string(dir.join("args.log")).unwrap();
+    let with: Vec<_> = args.lines().filter(|l| l.contains("--cookies")).collect();
+    assert_eq!(
+        with.len(),
+        1,
+        "once, on the retry after a sign-in request: {args}"
+    );
+    assert!(with[0].contains("agegate"), "{args}");
+    let seen = std::fs::read_to_string(dir.join("seen-cookies.txt")).unwrap();
+    assert!(seen.contains("\tSID\tsecret"), "{seen}");
+
+    let kept = jar.summary(2).unwrap().unwrap();
+    assert_eq!(kept.cookies, 2, "what the site renewed is kept");
+    let left: Vec<_> = std::fs::read_dir(dir.join("data"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["cookies.sealed"], "the lent copy is gone");
+
+    // Other failures never bring the cookies out.
+    let drm = Url::parse("https://site.example/drm/1").unwrap();
+    h.engine.discover(&drm, None).await.unwrap_err();
+    let args = std::fs::read_to_string(dir.join("args.log")).unwrap();
+    assert_eq!(args.matches("--cookies").count(), 1, "{args}");
+
+    // Cookies the site no longer takes: said so.
+    jar.remove().unwrap();
+    std::fs::write(
+        &exported,
+        "# Netscape HTTP Cookie File\n.site.example\tTRUE\t/\tTRUE\t0\tOTHER\tx\n",
+    )
+    .unwrap();
+    jar.import(&exported, 1).unwrap();
+    let e = h
+        .engine
+        .discover(&gated, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("even with the imported cookies"), "{e}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

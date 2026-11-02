@@ -102,6 +102,21 @@ hand-written RSA that is wrong accepts forgeries. Tests sign with a key made
 on the spot (`tests/support/signer.rs`) and check the real release of
 2026-10-21 (`tests/data/`).
 
+**Cookies, for yt-dlp only** (`cookies.rs`, `app/seal.rs`). The user
+imports a Netscape `cookies.txt`; it is checked (not text, JSON, no cookie,
+all expired: refused; 1 MiB cap) and kept as `<data>/cookies.sealed`: a
+`reelgene-cookies 1 <seal> <imported>` line, then the text sealed by DPAPI
+on Windows (user scope, no UI) or plain in an owner-only file elsewhere.
+Another seal's file is "import again", never a crash. yt-dlp runs without
+cookies first; only when its error asks to sign in (`asks_to_sign_in`: its
+`--cookies` hint, "sign in to confirm", …) and cookies were imported does it
+run once more with `--cookies <copy>`, a 0600 copy beside the jar removed on
+drop; what yt-dlp writes back is kept if it still reads as cookies and the
+jar was not replaced or removed meanwhile. Crash leftovers are swept in
+`App::open`, under the instance lock. Cookies never reach the engine, the
+queue, logs or the report; summaries show counts and domains only. Import
+and removal act at once, not on Save.
+
 **Choosing qualities.** `Engine::qualities` resolves the first episode and
 lists its master playlist's variants, one per height (the richest, which is
 what `Quality::Height` then picks), sized from `AVERAGE-BANDWIDTH` (else
@@ -322,6 +337,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/net.rs            redact, is_private, may_follow
   src/hls.rs crypto.rs  M3U8 parsing, AES-128 (from reelhold)
   src/pgp.rs            OpenPGP signature check
+  src/cookies.rs        imported cookies: check, seal, lend to yt-dlp
   src/tools/            yt_dlp.rs (official only), ffmpeg.rs (fetch, watch)
   src/http.rs           the one client: retries, backoff, ranges, resume
   src/paths.rs          safe names and the naming template
@@ -335,6 +351,7 @@ crates/app/             package `reelgene-app`: what the front ends share, no UI
   src/app.rs            App::open (places, lock, settings, ffmpeg, log) and the engine
   src/places.rs settings.rs instance.rs handoff.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
+  src/seal.rs           how cookies are kept: DPAPI on Windows
 crates/gui/             package `reelgene-gui`: the window; the only one that knows egui
   src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,
                         theme, widgets, tests

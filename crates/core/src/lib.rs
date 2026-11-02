@@ -4,6 +4,7 @@
 //! progress bars). The window and the CLI are two equal consumers of its public
 //! API, so every behaviour here can be tested headless.
 
+pub mod cookies;
 pub mod crypto;
 pub mod detect;
 pub mod engine;

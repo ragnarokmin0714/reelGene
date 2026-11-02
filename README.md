@@ -109,6 +109,7 @@ reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
 reelgene ffmpeg [--accept]                                 # fetch ffmpeg, checked
 reelgene yt-dlp [--check]                                  # fetch the official yt-dlp, checked
+reelgene cookies [import FILE | remove]                    # cookies for videos that need signing in
 reelgene report                                            # a problem report, in this folder
 reelgene licenses                                          # reelgene's and its fonts' licences
 ```
@@ -213,6 +214,43 @@ never runs.
   comparing its fingerprint with the one yt-dlp announces. A key from anyone
   else lets their builds through.
 
+### Videos that need signing in
+
+Some videos are shown only to someone signed in: age-restricted or
+members-only ones. yt-dlp then fails with "Sign in to confirm…" or a hint to
+use cookies. Give reelgene the cookies of a signed-in browser once, and it
+hands them to yt-dlp for such videos:
+
+1. Make a **separate account** for this, not your main one (for
+   age-restricted videos, an adult one). Downloading with cookies can break a
+   site's terms of use, and the account may be locked.
+2. Open a **private window** and sign in with that account. Allow your
+   cookie export add-on to run in private windows.
+3. Export that site's cookies as `cookies.txt`, in the Netscape format.
+4. **Close the private window at once** and do not browse with it again.
+   Sites renew cookies as you browse, and the exported ones would stop
+   working.
+5. Import the file in **Settings → Tools → Import cookies.txt…** (or
+   `reelgene cookies import FILE`), then delete the exported file: reelgene
+   keeps its own copy.
+
+When videos ask to sign in again, export and import anew (**Import
+again…**). **Remove cookies** (`reelgene cookies remove`) forgets them;
+`reelgene cookies` and `reelgene doctor` show what is imported, as a count
+and the sites, never the values.
+
+- yt-dlp gets the cookies **only after it said a video needs signing in**,
+  for that one run, in a file only you can read that is deleted afterwards.
+  Cookies the site renewed during the run are kept. They go nowhere else:
+  not to reelgene's own downloads, not into the queue, the log or a problem
+  report.
+- On Windows they are kept encrypted for your Windows account (DPAPI):
+  another account or computer cannot read them, so after moving a portable
+  copy to another computer, import them again. On Linux they are kept in a
+  file only your account can read (as browsers keep theirs); in portable
+  mode that file travels with the program, so keep such a copy on a disk
+  only you use.
+
 ## Where files live
 
 | | Settings | Queue | Downloads |
@@ -248,6 +286,9 @@ folder appears as `~`; read it before sending it anyway.
   your account can open (a Unix socket in a folder of yours; a named pipe
   closed to the network on Windows), never a network port that a web page
   could reach.
+- **Cookies** you import are kept like passwords and given only to yt-dlp,
+  only for a video that asks to sign in (see
+  [Videos that need signing in](#videos-that-need-signing-in)).
 - **TLS** certificate checks cannot be turned off. No code is loaded at run
   time: everything is compiled in.
 

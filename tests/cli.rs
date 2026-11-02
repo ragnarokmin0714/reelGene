@@ -330,3 +330,52 @@ fn a_page_without_a_resolver_is_read_by_the_users_yt_dlp() {
         text(&out)
     );
 }
+
+#[test]
+fn cookies_are_imported_shown_and_removed() {
+    let home = Home::new("cookies");
+    let exported = home.path().join("exported.txt");
+    std::fs::write(
+        &exported,
+        "# Netscape HTTP Cookie File\n.site.example\tTRUE\t/\tTRUE\t0\tSID\tsecret\n",
+    )
+    .unwrap();
+
+    let out = home.run(&["cookies"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(text(&out).contains("none imported"), "{}", text(&out));
+
+    let out = home.run(&["cookies", "import", exported.to_str().unwrap()]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        text(&out).contains("1 cookies for site.example"),
+        "{}",
+        text(&out)
+    );
+    assert!(
+        text(&out).contains("delete"),
+        "says to delete the export: {}",
+        text(&out)
+    );
+    let shown = text(&home.run(&["doctor"]));
+    assert!(
+        shown.contains("1 cookies for site.example (imported "),
+        "{shown}"
+    );
+    assert!(!shown.contains("secret"), "{shown}");
+
+    let out = home.run(&["cookies", "import", home.path().to_str().unwrap()]);
+    assert!(!out.status.success(), "a folder is no cookies.txt");
+    std::fs::write(&exported, "[{\"name\": \"SID\"}]").unwrap();
+    let out = home.run(&["cookies", "import", exported.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(text(&out).contains("JSON"), "{}", text(&out));
+    assert!(
+        text(&home.run(&["cookies"])).contains("1 cookies"),
+        "a refused import keeps the ones before"
+    );
+
+    let out = home.run(&["cookies", "remove"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(text(&home.run(&["cookies"])).contains("none imported"));
+}

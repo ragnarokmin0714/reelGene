@@ -85,11 +85,27 @@ pub enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Cookies for videos that need signing in (age-restricted, members-only):
+    /// show what was imported, import a cookies.txt, or remove it. yt-dlp
+    /// gets them only when a video asks to sign in.
+    Cookies {
+        #[command(subcommand)]
+        action: Option<CookiesCmd>,
+    },
     /// Write a problem report (settings, queue, recent log; no links' secrets,
     /// no home folder name) to the current folder.
     Report,
     /// Show reelgene's licence and those of the fonts built into it.
     Licenses,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CookiesCmd {
+    /// Keep a copy of a cookies.txt (Netscape format), replacing any before.
+    /// Delete the exported file afterwards: reelgene keeps its own.
+    Import { file: PathBuf },
+    /// Forget the imported cookies.
+    Remove,
 }
 
 #[derive(Args, Debug)]
@@ -152,6 +168,9 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     }
     if let Cmd::Ffmpeg { accept } = cmd {
         return ffmpeg(accept).await;
+    }
+    if let Cmd::Cookies { action } = cmd {
+        return cookies(action);
     }
     if let Cmd::Licenses = cmd {
         println!("reelgene {}: MIT OR Apache-2.0", reelgene_app::VERSION);
@@ -232,7 +251,11 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
             println!("report written: {}", path.display());
             ExitCode::SUCCESS
         }
-        Cmd::Doctor | Cmd::Licenses | Cmd::YtDlp { .. } | Cmd::Ffmpeg { .. } => {
+        Cmd::Doctor
+        | Cmd::Licenses
+        | Cmd::YtDlp { .. }
+        | Cmd::Ffmpeg { .. }
+        | Cmd::Cookies { .. } => {
             unreachable!("handled above")
         }
     };
@@ -774,6 +797,11 @@ async fn doctor() -> Result<ExitCode, String> {
         ),
     }
     println!("yt-dlp key {key}");
+    let jar = reelgene_app::seal::cookie_jar(&places.data_dir);
+    println!(
+        "cookies    {}",
+        cookie_line(&jar, reelgene_core::cookies::now())
+    );
     let resolvers: Vec<_> = reelgene_core::resolver::Registry::new().ids().collect();
     println!("resolvers  {}", resolvers.join(", "));
     for w in warning
@@ -846,6 +874,47 @@ async fn yt_dlp(check: bool) -> Result<ExitCode, String> {
             .unwrap_or_default()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn cookies(action: Option<CookiesCmd>) -> Result<ExitCode, String> {
+    let places = Places::detect()?;
+    let jar = reelgene_app::seal::cookie_jar(&places.data_dir);
+    let now = reelgene_core::cookies::now();
+    match action {
+        Some(CookiesCmd::Import { file }) => {
+            let s = jar.import(&file, now).map_err(|e| e.to_string())?;
+            println!("imported {}", format::cookie_sites(s.cookies, &s.sites));
+            println!("reelgene keeps its own copy: delete {} now", file.display());
+        }
+        Some(CookiesCmd::Remove) => {
+            jar.remove().map_err(|e| e.to_string())?;
+            println!("no cookies are kept now");
+        }
+        None => println!("cookies    {}", cookie_line(&jar, now)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What `doctor` and `cookies` say about the imported cookies.
+fn cookie_line(jar: &reelgene_core::cookies::CookieJar, now: u64) -> String {
+    match jar.summary(now) {
+        None => {
+            "none imported: `reelgene cookies import FILE` for videos that need signing in".into()
+        }
+        Some(Ok(s)) => {
+            let expired = if s.expired > 0 {
+                format!(", {} expired", s.expired)
+            } else {
+                String::new()
+            };
+            format!(
+                "{} (imported {}{expired})",
+                format::cookie_sites(s.cookies, &s.sites),
+                format::date(s.imported)
+            )
+        }
+        Some(Err(e)) => e.to_string(),
+    }
 }
 
 /// `Name: value` or `Name:value`; only the first colon splits.

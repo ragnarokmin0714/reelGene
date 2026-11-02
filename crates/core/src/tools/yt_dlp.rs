@@ -14,6 +14,7 @@
 //! installs, distribution packages, older releases.
 
 use super::{civil_from_days, hash, join, parse_sums, read_record, sha256_file, write_record};
+use crate::cookies::CookieJar;
 use crate::error::{Error, Result};
 use crate::http::{FileDownload, Http};
 use crate::mux;
@@ -64,6 +65,8 @@ pub struct YtDlpConfig {
     pub allow_unofficial: bool,
     /// `YT_DLP_RELEASES`; tests use a local server.
     pub source: Url,
+    /// Lent to yt-dlp when it says a video needs signing in.
+    pub cookies: Option<CookieJar>,
 }
 
 impl YtDlpConfig {
@@ -77,6 +80,7 @@ impl YtDlpConfig {
             key: PublicKey::parse(YT_DLP_KEY.as_bytes()).map_err(|e| e.to_string()),
             allow_unofficial: false,
             source: Url::parse(YT_DLP_RELEASES).expect("a valid URL"),
+            cookies: None,
         }
     }
 }

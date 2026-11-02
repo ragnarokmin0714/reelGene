@@ -13,12 +13,14 @@
 //! run it is checked against yt-dlp's signed releases (`tools.rs`).
 
 use super::{Ctx, Discovered, EpisodeRef, MediaKind, Resolved, Resolver};
+use crate::cookies;
 use crate::error::{Error, Result};
 use crate::http::Http;
 use crate::net;
 use crate::tools::YtDlpTool;
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +49,8 @@ impl YtDlp {
         Self { tool }
     }
 
+    /// Without cookies first; with them only when yt-dlp says the video
+    /// needs signing in, and cookies were imported (`cookies.rs`).
     async fn run(
         &self,
         args: &[&str],
@@ -55,10 +59,62 @@ impl YtDlp {
         cancel: &CancellationToken,
     ) -> Result<Value> {
         let path = &self.tool.ready(http, cancel).await?;
+        let why = match self.run_once(path, args, url, None, cancel).await? {
+            Ok(info) => return Ok(info),
+            Err(Failed::Other(e)) => return Err(e),
+            Err(Failed::SignIn(why)) => why,
+        };
+        let Some(jar) = self.tool.config().cookies.filter(|j| j.has()) else {
+            return Err(Error::resolver(
+                ID,
+                format!(
+                    "{why} (this video needs signing in: import a cookies.txt in \
+                     Settings → Tools, or with `reelgene cookies import`)"
+                ),
+            ));
+        };
+        let lent = {
+            let jar = jar.clone();
+            tokio::task::spawn_blocking(move || jar.lend())
+                .await
+                .map_err(|e| Error::Invalid(format!("lending the cookies stopped: {e}")))??
+        };
+        log::info!("yt-dlp asked to sign in; trying again with the imported cookies");
+        let outcome = self
+            .run_once(path, args, url, Some(lent.path()), cancel)
+            .await;
+        let back = jar.clone();
+        let _ = tokio::task::spawn_blocking(move || back.give_back(lent, cookies::now())).await;
+        match outcome? {
+            Ok(info) => Ok(info),
+            Err(Failed::Other(e)) => Err(e),
+            Err(Failed::SignIn(why)) => Err(Error::resolver(
+                ID,
+                format!(
+                    "{why} (asked to sign in even with the imported cookies: they may have \
+                     expired or be for another account; export and import them again)"
+                ),
+            )),
+        }
+    }
+
+    /// One run of yt-dlp. The outer error stops everything (cancelled, cannot
+    /// start); the inner one is what yt-dlp itself said.
+    async fn run_once(
+        &self,
+        path: &Path,
+        args: &[&str],
+        url: &Url,
+        cookies: Option<&Path>,
+        cancel: &CancellationToken,
+    ) -> Result<std::result::Result<Value, Failed>> {
         let mut cmd = crate::mux::command(path);
         cmd.args(["--ignore-config", "--no-warnings", "--no-progress", "-J"])
-            .args(args)
-            .arg("--")
+            .args(args);
+        if let Some(file) = cookies {
+            cmd.arg("--cookies").arg(file);
+        }
+        cmd.arg("--")
             .arg(url.as_str())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -73,16 +129,47 @@ impl YtDlp {
         if !out.status.success() {
             let why = last_error(&out.stderr);
             if why.contains("DRM") {
-                return Err(Error::Drm("reported by yt-dlp".into()));
+                return Ok(Err(Failed::Other(Error::Drm("reported by yt-dlp".into()))));
             }
-            return Err(Error::resolver(ID, why));
+            if asks_to_sign_in(&out.stderr) {
+                return Ok(Err(Failed::SignIn(why)));
+            }
+            return Ok(Err(Failed::Other(Error::resolver(ID, why))));
         }
         if out.stdout.len() > MAX_OUTPUT {
             return Err(Error::TooLarge("yt-dlp's answer".into()));
         }
-        serde_json::from_slice(&out.stdout)
-            .map_err(|e| Error::resolver(ID, format!("an answer that is not JSON: {e}")))
+        Ok(serde_json::from_slice(&out.stdout).map_err(|e| {
+            Failed::Other(Error::resolver(
+                ID,
+                format!("an answer that is not JSON: {e}"),
+            ))
+        }))
     }
+}
+
+enum Failed {
+    /// yt-dlp's reason; cookies may help.
+    SignIn(String),
+    Other(Error),
+}
+
+/// yt-dlp's own words when a site wants someone signed in: its hint names
+/// its `--cookies` options, and sites' age and account checks say "sign in".
+/// Read from all of stderr: `last_error` shortens the line.
+fn asks_to_sign_in(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr).to_lowercase();
+    text.lines().filter(|l| l.starts_with("error:")).any(|l| {
+        [
+            "--cookies",
+            "sign in to confirm",
+            "login required",
+            "registered users",
+            "members-only",
+        ]
+        .iter()
+        .any(|w| l.contains(w))
+    })
 }
 
 #[async_trait]
@@ -229,6 +316,20 @@ mod tests {
         assert!(!why.contains("SECRET"), "{why}");
         let why = last_error(b"ERROR: [x] AbC123: Requested format is not available\n");
         assert_eq!(why, "[x] AbC123: Requested format is not available");
+    }
+
+    #[test]
+    fn a_site_asking_to_sign_in_is_told_apart() {
+        let hint = b"ERROR: [x] abc: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.\n";
+        assert!(asks_to_sign_in(hint));
+        assert!(asks_to_sign_in(
+            b"ERROR: [x] abc: This video is only available for registered users\n"
+        ));
+        assert!(!asks_to_sign_in(b"ERROR: [x] abc: Video unavailable\n"));
+        assert!(
+            !asks_to_sign_in(b"WARNING: --cookies is deprecated\nERROR: [x] HTTP Error 404\n"),
+            "only what made it fail counts"
+        );
     }
 
     #[test]

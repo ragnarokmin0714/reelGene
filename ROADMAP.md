@@ -35,9 +35,11 @@ Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
   mixed, saved together under the post's name. Picture formats (JPEG, PNG,
   WebP, AVIF) join the extensions a download may keep; the window says
   "pictures" and "items" for such posts rather than "episodes".
-- **Cookie import**, treated as passwords: DPAPI on Windows, the system
-  keyring on Linux; not stored at all in portable mode by default. Many
-  sites show posts only to someone signed in.
+- **Cookies for resolvers**: picture posts are often shown only to someone
+  signed in. Cookie import for yt-dlp is done (`cookies.rs`, DPAPI on
+  Windows); resolvers would use the same jar. On Linux the jar is a file
+  only the user can read; the system keyring (Secret Service) would be
+  better where one runs.
 - The resolvers that find such posts live on the private branch, as all
   site resolvers do.
 

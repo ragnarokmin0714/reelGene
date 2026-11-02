@@ -26,6 +26,8 @@ pub(crate) enum Field {
     YtDlpKey,
     /// The tools folder.
     Tools,
+    /// A cookies.txt to import at once, never kept in the form.
+    Cookies,
 }
 
 /// Choosing episodes from a series: the multiselect from the design.
@@ -264,7 +266,7 @@ impl SettingsForm {
             Field::Tools => self.tools = text,
             Field::YtDlp => self.yt_dlp = text,
             Field::YtDlpKey => self.yt_dlp_key = text,
-            Field::PickFolder => {}
+            Field::PickFolder | Field::Cookies => {}
         }
     }
 
@@ -315,6 +317,7 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
         places: g.desktop.places.clone(),
         yt: g.desktop.yt_state(),
         yt_key: g.desktop.yt_dlp.config().key.map(|k| k.fingerprint()),
+        cookies: g.desktop.cookie_state(),
     };
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
@@ -497,6 +500,7 @@ pub(crate) struct Tools {
     pub yt: super::desktop::YtState,
     /// The fingerprint of the key yt-dlp is checked with, or why it is unusable.
     pub yt_key: Result<String, String>,
+    pub cookies: super::desktop::CookieState,
 }
 
 fn settings_ui(
@@ -1071,6 +1075,64 @@ fn yt_dlp_page(
         p.weak
     };
     note(ui, t.yt_unofficial_help, color);
+    ui.add_space(14.0);
+    cookies_page(t, tools, p, ui, actions);
+}
+
+/// Imported cookies: what is there, importing, replacing and removing them,
+/// and how to export them safely.
+fn cookies_page(
+    t: &super::text::Text,
+    tools: &Tools,
+    p: &super::theme::Palette,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    let note = |ui: &mut egui::Ui, text: &str, color| {
+        ui.add(egui::Label::new(RichText::new(text).color(color).size(13.0)).wrap());
+    };
+    ui.heading(t.cookies_heading);
+    note(ui, t.cookies_about, p.weak);
+    ui.add_space(8.0);
+    let have = match &tools.cookies.summary {
+        None => {
+            ui.spinner();
+            false
+        }
+        Some(None) => {
+            note(ui, t.cookies_none, p.weak);
+            false
+        }
+        Some(Some(Ok(s))) => {
+            let date = reelgene_app::format::date(s.imported);
+            note(ui, &(t.cookies_have)(s, &date), p.success);
+            note(ui, t.cookies_kept, p.weak);
+            true
+        }
+        Some(Some(Err(e))) => {
+            note(ui, e, ui.visuals().error_fg_color);
+            true
+        }
+    };
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let import = if have {
+            t.cookies_replace
+        } else {
+            t.cookies_import
+        };
+        let kind = if have { Kind::Secondary } else { Kind::Primary };
+        if widgets::button(ui, kind, None, import).clicked() {
+            actions.push(Action::Browse(Field::Cookies));
+        }
+        if have && widgets::button(ui, Kind::Secondary, None, t.cookies_remove).clicked() {
+            actions.push(Action::RemoveCookies);
+        }
+    });
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new(t.cookies_how)
+        .id_salt("cookies-how")
+        .show(ui, |ui| note(ui, t.cookies_steps, p.weak));
 }
 
 /// Clock hours, 0:00 to 23:00.

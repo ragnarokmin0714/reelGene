@@ -28,6 +28,35 @@ pub fn duration(d: Duration) -> String {
     }
 }
 
+/// `2026-11-02`, in local time, for Unix seconds.
+pub fn date(unix: u64) -> String {
+    i64::try_from(unix)
+        .ok()
+        .and_then(|s| jiff::Timestamp::from_second(s).ok())
+        .map(|t| {
+            t.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// "12 cookies for a.example, b.example", for what was imported; long
+/// lists end in "+N more".
+pub fn cookie_sites(cookies: usize, sites: &[String]) -> String {
+    const SHOWN: usize = 4;
+    let mut names = sites
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if sites.len() > SHOWN {
+        names.push_str(&format!(" +{} more", sites.len() - SHOWN));
+    }
+    format!("{cookies} cookies for {names}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,5 +72,27 @@ mod tests {
         assert_eq!(duration(Duration::from_secs(300)), "5m");
         assert_eq!(duration(Duration::from_secs(5400)), "1h 30m");
         assert_eq!(duration(Duration::from_secs(7200)), "2h");
+    }
+
+    #[test]
+    fn imported_cookies_name_their_first_sites() {
+        let sites: Vec<String> = [
+            "a.example",
+            "b.example",
+            "c.example",
+            "d.example",
+            "e.example",
+            "f.example",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            cookie_sites(3, &sites[..2]),
+            "3 cookies for a.example, b.example"
+        );
+        assert_eq!(
+            cookie_sites(9, &sites),
+            "9 cookies for a.example, b.example, c.example, d.example +2 more"
+        );
     }
 }

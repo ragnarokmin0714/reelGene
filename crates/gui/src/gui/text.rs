@@ -3,6 +3,7 @@
 //! One struct per language: a string missing from either is a compile error,
 //! not a blank button found later.
 
+use reelgene_core::cookies::Summary;
 use reelgene_core::engine::{Notice, Status};
 
 pub struct Text {
@@ -134,6 +135,19 @@ pub struct Text {
     pub yt_key_help: &'static str,
     pub yt_unofficial: &'static str,
     pub yt_unofficial_help: &'static str,
+    pub cookies_heading: &'static str,
+    pub cookies_about: &'static str,
+    pub cookies_none: &'static str,
+    /// What was imported, with the date it was.
+    pub cookies_have: fn(&Summary, &str) -> String,
+    pub cookies_kept: &'static str,
+    pub cookies_import: &'static str,
+    pub cookies_replace: &'static str,
+    pub cookies_remove: &'static str,
+    pub cookies_imported: &'static str,
+    pub cookies_removed: &'static str,
+    pub cookies_how: &'static str,
+    pub cookies_steps: &'static str,
     pub speed_limit: &'static str,
     pub no_limit: &'static str,
     pub proxy_hint: &'static str,
@@ -324,6 +338,42 @@ pub static EN: Text = Text {
     yt_key_help: "Only if yt-dlp changes its key: use the public.key from yt-dlp's own repository, and compare its fingerprint with the one yt-dlp announces. A key from anyone else lets their builds through.",
     yt_unofficial: "Run unofficial builds without checking them",
     yt_unofficial_help: "For a yt-dlp from pip or a distribution package. It then runs unchecked, so a changed copy would run too.",
+    cookies_heading: "Cookies for signing in",
+    cookies_about: "For videos a site shows only to someone signed in, such as age-restricted or members-only ones. yt-dlp gets the cookies only after it says a video needs signing in, for that one run; they go nowhere else.",
+    cookies_none: "No cookies imported.",
+    cookies_have: |s, date| {
+        let mut sites = s
+            .sites
+            .iter()
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if s.sites.len() > 4 {
+            sites.push_str(&format!(" +{} more", s.sites.len() - 4));
+        }
+        let expired = if s.expired > 0 {
+            format!(", {} expired", s.expired)
+        } else {
+            String::new()
+        };
+        format!(
+            "{} cookies for {sites} (imported {date}{expired})",
+            s.cookies
+        )
+    },
+    cookies_kept: if cfg!(windows) {
+        "Kept encrypted for your Windows account: another account or computer cannot read them."
+    } else {
+        "Kept in a file only your account can read."
+    },
+    cookies_import: "Import cookies.txt…",
+    cookies_replace: "Import again…",
+    cookies_remove: "Remove cookies",
+    cookies_imported: "Cookies imported. Delete the file you exported now: reelgene keeps its own copy.",
+    cookies_removed: "Cookies removed",
+    cookies_how: "How to export them safely",
+    cookies_steps: "1. Make a separate account for this, not your main one (for age-restricted videos, an adult one). Downloading with cookies can break a site's terms, and the account may be locked.\n2. Open a private window and sign in with that account. Allow your cookie export add-on in private windows.\n3. Export that site's cookies as cookies.txt (the Netscape format).\n4. Close the private window at once and do not browse with it again: sites renew cookies as you browse, and the exported ones would stop working.\n5. Import the file here, then delete it.\n\nWhen videos ask to sign in again, export and import anew. Remove the cookies when you no longer need them.",
     speed_limit: "Speed limit",
     no_limit: "No limit",
     proxy_hint: "system · none · socks5h://host:port",
@@ -511,6 +561,39 @@ pub static ZH_TW: Text = Text {
     yt_key_help: "只有在 yt-dlp 更換金鑰時才需要：請使用 yt-dlp 官方 repo 裡的 public.key，並和 yt-dlp 公布的指紋核對。用了其他人給的金鑰，等於放行他們做的版本。",
     yt_unofficial: "不驗證，直接執行非官方版本",
     yt_unofficial_help: "給用 pip 或系統套件安裝的 yt-dlp 用。這種 yt-dlp 不會被驗證，被竄改過的版本也會照樣執行。",
+    cookies_heading: "登入用的 Cookie",
+    cookies_about: "用在網站只給登入者看的影片，例如年齡限制或會員限定的影片。只有 yt-dlp 回報影片需要登入時，cookie 才會交給它，而且只用那一次，不會送到其他地方。",
+    cookies_none: "尚未匯入 cookie。",
+    cookies_have: |s, date| {
+        let mut sites = s
+            .sites
+            .iter()
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("、");
+        if s.sites.len() > 4 {
+            sites.push_str(&format!(" 等 {} 個網站", s.sites.len()));
+        }
+        let expired = if s.expired > 0 {
+            format!("，{} 個已過期", s.expired)
+        } else {
+            String::new()
+        };
+        format!("{sites} 的 {} 個 cookie（{date} 匯入{expired}）", s.cookies)
+    },
+    cookies_kept: if cfg!(windows) {
+        "已用你的 Windows 帳號加密保存：其他帳號或其他電腦都讀不到。"
+    } else {
+        "保存在只有你的帳號能讀取的檔案裡。"
+    },
+    cookies_import: "匯入 cookies.txt…",
+    cookies_replace: "重新匯入…",
+    cookies_remove: "移除 cookie",
+    cookies_imported: "已匯入 cookie。請刪除你匯出的檔案：reelgene 已保存自己的一份。",
+    cookies_removed: "已移除 cookie",
+    cookies_how: "如何安全地匯出",
+    cookies_steps: "1. 另外開一個帳號專門給這裡用，不要用主帳號（年齡限制的影片要用已成年的帳號）。用 cookie 下載可能違反網站的使用條款，帳號有被鎖的風險。\n2. 開一個無痕視窗，登入那個帳號。匯出 cookie 的擴充套件要允許在無痕視窗執行。\n3. 把那個網站的 cookie 匯出成 cookies.txt（Netscape 格式）。\n4. 匯出後馬上關掉無痕視窗，不要再用它瀏覽：網站會在你瀏覽時更換 cookie，剛匯出的就會失效。\n5. 在這裡匯入那個檔案，然後把它刪掉。\n\n影片又開始要求登入時，照同樣步驟重新匯出、再匯入。不再需要時，按「移除 cookie」。",
     speed_limit: "限速",
     no_limit: "不限速",
     proxy_hint: "留空用系統 · none · socks5h://主機:埠",

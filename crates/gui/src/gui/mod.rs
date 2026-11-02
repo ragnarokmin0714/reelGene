@@ -62,6 +62,8 @@ pub(crate) enum Msg {
     FfmpegFetched(Result<String, String>),
     /// yt-dlp fetched or checked: its release date, or why not.
     YtDlp(desktop::YtTask, Result<String, String>),
+    /// Cookies imported (`true`) or removed, or why not.
+    Cookies(Result<bool, String>),
 }
 
 pub(crate) struct Grabbed {
@@ -111,6 +113,7 @@ pub(crate) enum Action {
     /// The settings window, on this page.
     OpenSettings(dialogs::Tab),
     YtDlp(desktop::YtTask),
+    RemoveCookies,
 }
 
 pub struct Gui {
@@ -315,6 +318,19 @@ impl Gui {
                 }
                 Err(e) => self.toast(e, true),
             },
+            Msg::Cookies(result) => match result {
+                Ok(imported) => {
+                    let t = self.t;
+                    let done = if imported {
+                        t.cookies_imported
+                    } else {
+                        t.cookies_removed
+                    };
+                    self.toast(done.to_owned(), false);
+                }
+                Err(e) => self.toast(e, true),
+            },
+            Msg::Picked(dialogs::Field::Cookies, path) => self.desktop.cookies(Some(&path)),
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
                 (Some(Dialog::Settings(form)), field) => form.set(field, &path),
@@ -369,7 +385,13 @@ impl Gui {
             }
             Action::DismissAll => self.grabbed.retain(|g| g.busy),
             Action::Reveal(path) => reelgene_app::platform::reveal(&path),
-            Action::Open(dialog) => self.dialog = Some(dialog),
+            Action::Open(dialog) => {
+                if matches!(dialog, Dialog::Settings(_)) {
+                    // Imported or removed from the command line meanwhile.
+                    self.desktop.refresh_cookies();
+                }
+                self.dialog = Some(dialog);
+            }
             Action::Close => {
                 self.dialog = None;
                 self.next_pick();
@@ -396,9 +418,11 @@ impl Gui {
             Action::OpenSettings(tab) => {
                 let mut form = dialogs::SettingsForm::new(&self.settings, &self.default_folder());
                 form.tab = tab;
+                self.desktop.refresh_cookies();
                 self.dialog = Some(Dialog::Settings(Box::new(form)));
             }
             Action::YtDlp(task) => self.desktop.yt_dlp_task(task),
+            Action::RemoveCookies => self.desktop.cookies(None),
         }
     }
 
@@ -410,9 +434,10 @@ impl Gui {
         std::thread::spawn(move || {
             let dialog = rfd::FileDialog::new().set_directory(&start);
             let picked = match field {
-                dialogs::Field::Ffmpeg | dialogs::Field::YtDlp | dialogs::Field::YtDlpKey => {
-                    dialog.pick_file()
-                }
+                dialogs::Field::Ffmpeg
+                | dialogs::Field::YtDlp
+                | dialogs::Field::YtDlpKey
+                | dialogs::Field::Cookies => dialog.pick_file(),
                 dialogs::Field::PickFolder | dialogs::Field::Folder | dialogs::Field::Tools => {
                     dialog.pick_folder()
                 }

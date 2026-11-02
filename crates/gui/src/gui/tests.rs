@@ -597,6 +597,63 @@ fn the_yt_dlp_page_says_what_is_missing_and_what_may_run() {
 }
 
 #[test]
+fn cookies_are_imported_replaced_and_removed_from_the_tools_page() {
+    let env = env("cookies");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    until(&mut h, "cookies looked for", |h| {
+        h.query_by_label(EN.cookies_none).is_some()
+    });
+    h.get_by_label(EN.cookies_import).scroll_to_me();
+    settle(&mut h);
+    assert!(
+        h.query_by_label(EN.cookies_remove).is_none(),
+        "nothing to remove"
+    );
+    let _ = h.get_by_label(EN.cookies_how);
+
+    // What the system dialog sends back once a file is chosen.
+    let exported = env.dir.join("cookies.txt");
+    std::fs::write(
+        &exported,
+        "# Netscape HTTP Cookie File\n.site.example\tTRUE\t/\tTRUE\t0\tSID\tsecret\n",
+    )
+    .unwrap();
+    let _ = h
+        .state_mut()
+        .desktop
+        .tx
+        .send(Msg::Picked(Field::Cookies, exported.clone()));
+    until(&mut h, "cookies imported", |h| {
+        h.query_by_label_contains("1 cookies for site.example (imported ")
+            .is_some()
+    });
+    let said = |h: &mut Harness<'static, State>, text: &str| {
+        h.state_mut()
+            .gui()
+            .toasts
+            .iter()
+            .any(|t| t.text == text && !t.error)
+    };
+    assert!(
+        said(&mut h, EN.cookies_imported),
+        "and says to delete the export"
+    );
+    let _ = h.get_by_label(EN.cookies_replace);
+    let jar = h.state().desktop.yt_dlp.config().cookies.unwrap();
+    assert!(jar.has(), "kept at once, without Save");
+
+    h.get_by_label(EN.cookies_remove).click();
+    until(&mut h, "cookies removed", |h| {
+        h.query_by_label(EN.cookies_none).is_some()
+    });
+    assert!(!jar.has());
+    assert!(said(&mut h, EN.cookies_removed));
+}
+
+#[test]
 fn ffmpeg_not_found_leads_to_where_it_is_fetched() {
     let env = env("ffmpeg-badge");
     let mut h = window(&env, english());
@@ -962,6 +1019,18 @@ mod screens {
         language: &str,
         setup: impl FnOnce(&mut Gui),
     ) {
+        shoot_then(name, size, theme, language, setup, |_| {});
+    }
+
+    /// `then` acts on the window before the picture: scrolls, clicks.
+    fn shoot_then(
+        name: &str,
+        size: [f32; 2],
+        theme: egui::Theme,
+        language: &str,
+        setup: impl FnOnce(&mut Gui),
+        then: impl FnOnce(&mut Harness<'static, State>),
+    ) {
         let env = env(name);
         // The window applies its own theme setting, over the harness's.
         let named = match theme {
@@ -980,6 +1049,8 @@ mod screens {
         let mut h = open_with(builder, desktop(&env, settings, false));
         with_cjk(&h.ctx);
         setup(h.state_mut().gui());
+        h.run_steps(8);
+        then(&mut h);
         h.run_steps(8);
         h.render()
             .expect("render")
@@ -1057,6 +1128,43 @@ mod screens {
                 form.tab = tab;
                 g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
             });
+        }
+        // The cookies part of the tools page: imported, the steps open.
+        for (name, theme, lang) in [
+            ("settings-cookies", Dark, "zh-TW"),
+            ("settings-cookies-light", Light, "en"),
+        ] {
+            let t = super::super::text::pick(Some(lang));
+            shoot_then(
+                name,
+                [900.0, 640.0],
+                theme,
+                lang,
+                |g| {
+                    let file = g.desktop.places.data_dir.join("exported.txt");
+                    std::fs::write(
+                        &file,
+                        "# Netscape HTTP Cookie File\n\
+                         .site.example\tTRUE\t/\tTRUE\t0\tSID\ta\n\
+                         .accounts.site.example\tTRUE\t/\tTRUE\t0\tHSID\tb\n",
+                    )
+                    .unwrap();
+                    let jar = g.desktop.yt_dlp.config().cookies.unwrap();
+                    jar.import(&file, reelgene_core::cookies::now()).unwrap();
+                    g.desktop.load_cookies();
+                    let mut form =
+                        super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+                    form.tab = Tab::Tools;
+                    g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+                },
+                move |h| {
+                    h.get_by_label(t.cookies_how).scroll_to_me();
+                    h.run_steps(4);
+                    h.get_by_label(t.cookies_how).click();
+                    h.run_steps(4);
+                    h.get_by_label(t.cookies_remove).scroll_to_me();
+                },
+            );
         }
     }
 }

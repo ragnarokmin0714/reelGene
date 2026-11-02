@@ -20,4 +20,5 @@ pub mod places;
 pub mod platform;
 pub mod report;
 pub mod schedule;
+pub mod seal;
 pub mod settings;

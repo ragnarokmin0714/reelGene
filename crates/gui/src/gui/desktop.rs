@@ -18,13 +18,14 @@ use reelgene_app::handoff::{self, Reply, Valid};
 use reelgene_app::places::Places;
 use reelgene_app::schedule::Schedule;
 use reelgene_app::settings::Settings;
+use reelgene_core::cookies::{self, Summary};
 use reelgene_core::detect::Link;
 use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, QualityOption, Status};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use reelgene_core::tools::{self, YtDlpTool};
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak, mpsc};
 use tokio::sync::broadcast::error::RecvError;
@@ -53,6 +54,13 @@ pub(crate) struct FfState {
     pub warning: Option<String>,
 }
 
+/// What the settings window shows about imported cookies: `None` until
+/// looked at, then what `CookieJar::summary` said.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CookieState {
+    pub summary: Option<Option<Result<Summary, String>>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum YtTask {
     Fetching,
@@ -78,6 +86,7 @@ pub(crate) struct Desktop {
     /// Shared with the engine's resolver: settings reach both.
     pub yt_dlp: YtDlpTool,
     yt_state: Mutex<YtState>,
+    cookie_state: Mutex<CookieState>,
     /// Write settings to `places.settings_file()` when they change.
     pub save_settings: bool,
     pub reduced_motion: bool,
@@ -139,6 +148,7 @@ impl Desktop {
             }),
             yt_dlp,
             yt_state: Mutex::default(),
+            cookie_state: Mutex::default(),
             save_settings,
             reduced_motion: desktop && reelgene_app::platform::reduced_motion(),
             settings: Mutex::new(settings),
@@ -162,6 +172,7 @@ impl Desktop {
         });
         listen(&me);
         me.refresh_yt_dlp();
+        me.refresh_cookies();
         let weak = Arc::downgrade(&me);
         let schedule = Schedule::follow(&me.rt, &me.engine, move || {
             weak.upgrade().and_then(|d| d.settings().schedule)
@@ -313,6 +324,45 @@ impl Desktop {
                 result.map(|(_, v)| v.date()).map_err(|e| e.to_string()),
             ));
             me.wake();
+        });
+    }
+
+    pub fn cookie_state(&self) -> CookieState {
+        lock(&self.cookie_state).clone()
+    }
+
+    /// Read what was imported, off the window's thread (unsealing it).
+    pub fn refresh_cookies(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        self.rt.spawn_blocking(move || me.load_cookies());
+    }
+
+    pub(crate) fn load_cookies(&self) {
+        let summary = self
+            .yt_dlp
+            .config()
+            .cookies
+            .and_then(|jar| jar.summary(cookies::now()))
+            .map(|s| s.map_err(|e| e.to_string()));
+        lock(&self.cookie_state).summary = Some(summary);
+        self.wake();
+    }
+
+    /// Import a cookies.txt (`Some`) or remove the imported one; the window
+    /// hears the outcome.
+    pub fn cookies(self: &Arc<Self>, import: Option<&Path>) {
+        let me = Arc::clone(self);
+        let file = import.map(Path::to_path_buf);
+        self.rt.spawn_blocking(move || {
+            let Some(jar) = me.yt_dlp.config().cookies else {
+                return;
+            };
+            let result = match &file {
+                Some(file) => jar.import(file, cookies::now()).map(|_| true),
+                None => jar.remove().map(|()| false),
+            };
+            let _ = me.tx.send(Msg::Cookies(result.map_err(|e| e.to_string())));
+            me.refresh_cookies();
         });
     }
 
