@@ -521,6 +521,14 @@ fn quality_list(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui) {
     ui.separator();
     ui.label(RichText::new(t.quality).font(super::theme::strong(14.0)));
     ui.label(RichText::new(t.qualities_hint).color(p.weak).size(12.0));
+    // One box for all of them: ticked when every one is, and ticking it
+    // takes them all, unticking it none.
+    let mut all = pick.qualities.iter().all(|(_, on)| *on);
+    if ui.checkbox(&mut all, t.all_qualities).changed() {
+        for (_, on) in &mut pick.qualities {
+            *on = all;
+        }
+    }
     for (q, on) in &mut pick.qualities {
         let size = q.size.map(|b| reelgene_app::format::bytes(b as f64));
         let text = (t.quality_option)(q.height, q.bitrate as f64 / 1e6, size.as_deref());

@@ -844,6 +844,34 @@ fn a_tools_folder_among_downloads_cannot_be_saved() {
 }
 
 #[test]
+fn all_qualities_are_ticked_and_unticked_with_one_box() {
+    let env = env("all-qualities");
+    let mut h = window(&env, english());
+    type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
+    until(&mut h, "the qualities", |h| {
+        h.query_by_label(EN.all_qualities).is_some()
+    });
+    // The checkbox among the labels that name it (the file preview may too).
+    let checked = |h: &Harness<'static, State>, label: &str| {
+        h.get_all_by_label_contains(label)
+            .filter_map(|n| egui_kittest::kittest::NodeT::accesskit_node(&n).toggled())
+            .any(|t| t == egui::accesskit::Toggled::True)
+    };
+    assert!(!checked(&h, EN.all_qualities), "only the default is ticked");
+    h.get_by_label(EN.all_qualities).click();
+    settle(&mut h);
+    assert!(checked(&h, "1080p") && checked(&h, "360p"));
+    let _ = h.get_by_label(&(EN.add_n)(2));
+    assert!(checked(&h, EN.all_qualities));
+    h.get_by_label(EN.all_qualities).click();
+    settle(&mut h);
+    assert!(
+        !checked(&h, "1080p") && !checked(&h, "360p"),
+        "and none again"
+    );
+}
+
+#[test]
 fn a_video_in_several_qualities_asks_which_and_can_take_two() {
     let env = env("qualities");
     let mut h = window(&env, english());
