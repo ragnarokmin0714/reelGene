@@ -24,8 +24,9 @@ for later is in `ROADMAP.md`.
 - **The window has never been seen.** The development machine has no
   display; layout, CJK rendering through the system font fallback, the tray
   and sounds need a look on a real desktop.
-- The ffmpeg remux path is tested for its arguments, not against a real
-  ffmpeg.
+- The ffmpeg remux path runs against a real ffmpeg only when
+  `REELGENE_TEST_FFMPEG` names one (`mux::tests::a_real_ffmpeg_…`); CI has
+  none, so there it is tested for its arguments.
 
 ## Commands
 
@@ -249,8 +250,28 @@ and hands it to the engine (`Engine::set_ffmpeg`) without a restart.
 `convert_mp4` off keeps TS even with ffmpeg present. It only ever gets
 absolute local paths with a `file:` prefix, `-protocol_whitelist file`
 before every input, `-c copy`, `-nostdin`, a timeout, and is killed on
-cancel. Without it, TS stays TS and separate audio is saved beside the video.
-A real ffmpeg 9.0 joined a 720p VP9 video with AAC sound on 2026-10-24.
+cancel. `-format_whitelist` (`mux::INPUT_FORMATS`: mpegts, mov, matroska,
+bare audio) is there because on ffmpeg 9.0 a ".ts" that was really an
+ffconcat script read another local file into the MP4; no codec whitelist,
+since stream probing opens decoders and a missed codec would break real
+downloads. Without ffmpeg, TS stays TS and separate audio is saved beside the
+video. A real ffmpeg 9.0 joined a 720p VP9 video with AAC sound on
+2026-10-24. "Import ffmpeg…" / `reelgene ffmpeg --from` takes a build's
+zip or tar.xz (only `bin/ffmpeg`, read to the end so a `-shared` build is
+refused by its `avcodec` libraries; .7z is not read) or the program; the
+old one is set aside as `.old` and put back unless the new one probes as
+ffmpeg. A dated snapshot build (`Ffmpeg::built`, BtbN's `-20261023`
+suffix) over 183 days old gets a warning (`app::ffmpeg_age_warning`);
+undated release and distribution builds are not judged, as distributions
+patch their own.
+
+**Getting yt-dlp other ways.** "Import yt-dlp…" / `reelgene yt-dlp --from`
+checks a downloaded file against the latest signed list, as a fetch does,
+and it must fit this system (`fits_this_system`: its own release file, any
+.exe on Windows, the Python `yt-dlp` elsewhere); the copy is hashed again
+before the rename. `yt_dlp_source` replaces GitHub with a mirror folder
+(`app::yt_dlp_source`: http(s), no query, a trailing slash added): safe
+because the signature and the no-going-back rule still decide.
 
 **The tools folder** (`app::tools_dirs`) is `tools` beside a portable
 program (before rc.6 it was the program's own folder, still searched, never
@@ -259,7 +280,15 @@ refuses one inside the download folder or the system's Downloads folder
 (`Places::user_downloads`): downloaded files must never land beside the
 programs, as Windows loads a program's DLLs from its own folder first. A
 refused folder in settings falls back to the default with a warning; the
-window will not save one.
+window will not save one. The window shows folders in use in their fields
+(not as grey hints, which cannot be edited) and saves one equal to the
+default as `None`, so a portable copy keeps following its own folder; a
+relative or file path cannot be saved (it used to be dropped silently).
+Changing the tools folder moves ffmpeg and yt-dlp along unless unticked
+(`app::move_tools`, copy-and-remove across disks, never over a file
+already there); their records go by checksum, so they still pass, and
+program paths in settings that pointed into the old folder follow
+(`app::moved_path`).
 
 **How it looks.** When stability, performance and compatibility are close,
 appearance decides (Roger, 2026-10-19). All colours, spacing and type live in

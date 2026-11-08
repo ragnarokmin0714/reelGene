@@ -18,7 +18,10 @@ switch; the version shown in the window; a tools folder for ffmpeg, with
 directions in Settings and no restart needed; yt-dlp fetched and checked
 against the signature on its official release, before every run; ffmpeg
 fetched and checked against its build's checksum, and watched for changes;
-a tools folder of its own, never among downloads.
+a tools folder of its own, never among downloads, that takes its tools
+along when moved; ffmpeg and yt-dlp imported from files downloaded by hand,
+yt-dlp from a mirror, always checked; cookies for videos that need signing
+in; ffmpeg limited to media formats, and a reminder when it gets old.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:

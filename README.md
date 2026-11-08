@@ -107,8 +107,8 @@ reelgene resume [JOB]                                      # queue failed or pau
 reelgene pause [JOB]
 reelgene rm JOB [--delete-files]
 reelgene doctor                                            # where things are, ffmpeg, resolvers
-reelgene ffmpeg [--accept]                                 # fetch ffmpeg, checked
-reelgene yt-dlp [--check]                                  # fetch the official yt-dlp, checked
+reelgene ffmpeg [--accept | --from FILE]                   # fetch ffmpeg, checked, or import one
+reelgene yt-dlp [--check | --from FILE]                    # fetch the official yt-dlp, or import one
 reelgene cookies [import FILE | remove]                    # cookies for videos that need signing in
 reelgene report                                            # a problem report, in this folder
 reelgene licenses                                          # reelgene's and its fonts' licences
@@ -145,31 +145,50 @@ needed. The "ffmpeg not found" badge in the status bar leads there.
   checksum published with it. That proves the download is intact, not who
   made it: weaker than yt-dlp's signature, and enough for a program that here
   only copies streams between local files reelgene wrote.
-- Or put your own `ffmpeg.exe` (Windows) or `ffmpeg` in the tools folder and
-  press **Check again**. Cloning ffmpeg's GitHub repository or taking its
-  "Download ZIP" gives source code, with no `ffmpeg.exe` in it: take a build
-  instead, such as BtbN's `ffmpeg-nX.Y-latest-win64-lgpl-X.Y.zip`, and copy
-  only `bin\ffmpeg.exe`. Avoid zips with `-shared` in the name: their
-  `ffmpeg.exe` does not start without the DLLs beside it. reelgene also finds ffmpeg at the path set in
-  Settings, or on `PATH` (never in the current folder); on Linux your
-  distribution's package is a good choice.
+- Or download a build yourself and press **Import ffmpeg…** (`reelgene
+  ffmpeg --from FILE`): pick the build's `.zip` or `.tar.xz` as it came, and
+  reelgene takes out only `bin/ffmpeg`, or pick `ffmpeg.exe` itself. It must
+  run as ffmpeg, or the one there before stays. Cloning ffmpeg's GitHub
+  repository or taking its "Download ZIP" gives source code, with no
+  `ffmpeg.exe` in it: take a build instead, such as BtbN's
+  `ffmpeg-nX.Y-latest-win64-lgpl-X.Y.zip`. Builds with `-shared` in the name
+  are refused: their `ffmpeg.exe` does not start without the DLLs beside it.
+  `.7z` archives are not read; unpack them and pick the `ffmpeg.exe`.
+- Putting `ffmpeg.exe` (Windows) or `ffmpeg` in the tools folder yourself
+  and pressing **Check again** works too. reelgene also finds ffmpeg at the
+  path set in Settings, or on `PATH` (never in the current folder); on Linux
+  your distribution's package is a good choice.
 - The ffmpeg in the tools folder has its checksum recorded the first time it
   is used. If the file changes afterwards it is not run until you press
   **Check again** (`reelgene ffmpeg --accept`), or fetch it again.
+- A snapshot build that says when it was built (BtbN's do) gets a reminder
+  once it is over half a year old: **Update ffmpeg** brings its security
+  fixes. Release and distribution builds carry no date and are left alone.
 
 **Convert to MP4** can be switched off to keep downloads as they came.
 ffmpeg is only ever given local files: reelgene does all the networking
-itself.
+itself. It may read them only as the media formats a download can be (TS,
+MP4, WebM, bare audio), so a "segment" that is really a playlist or a script
+cannot make it read other files on your disk.
 
 ## The tools folder
 
 ffmpeg and yt-dlp are fetched to, and looked for first in, the tools folder:
 `tools` beside the program in portable mode, else `tools` in reelgene's data
-folder (`reelgene doctor` prints it). Settings → Tools can name another one,
-but not one inside the download folder or your Downloads folder: downloaded
+folder (`reelgene doctor` prints it). Settings → Tools shows the folder in
+use and can name another one (the round arrow puts the default back), but
+not one inside the download folder or your Downloads folder: downloaded
 files must never land beside the programs (Windows loads a program's DLLs
-from its own folder first). Portable installs from before `tools` existed
-kept these beside the program, and they are still found there.
+from its own folder first). When you change it, **Move ffmpeg and yt-dlp
+here** (on unless you untick it) takes them along, so nothing is fetched
+again; one already in the new folder is kept. Portable installs from before
+`tools` existed kept these beside the program, and they are still found
+there.
+
+The download folder in Settings → Downloads works the same way: the folder
+in use is in the field, ready to edit, and a folder that does not exist yet
+is made with the first download. A path that is not a full one, or is a
+file, cannot be saved.
 
 ## Pages without a resolver
 
@@ -204,6 +223,14 @@ never runs.
   latest official build into the tools folder, checked before it is put
   there. Press it again to update; yt-dlp needs updating often, as sites
   change.
+- **Import yt-dlp…** (`reelgene yt-dlp --from FILE`) takes one you
+  downloaded yourself, checked the same way: it must be the latest official
+  build, and one for this system.
+- **Download source** (`yt_dlp_source`) fetches from a mirror of yt-dlp's
+  releases instead of GitHub: the folder address holding `SHA2-256SUMS` and
+  the release files. Any mirror is safe, since what comes from it must still
+  carry yt-dlp's signature, and an older release than the one checked before
+  is refused.
 - A yt-dlp of your own is found like ffmpeg (`yt_dlp` in `settings.json`, the
   tools folder, or `PATH`) and checked the same way, so it must be the latest
   official release. One from pip or a distribution package cannot be
