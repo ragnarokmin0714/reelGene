@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 /// ffmpeg older than this still works for `-c copy`, but has had demuxer bugs
 /// fixed since; worth a warning, not a refusal.
 const FFMPEG_MIN_MAJOR: u32 = 5;
+/// A dated snapshot build older than this has missed security fixes that
+/// "Update ffmpeg" would bring. Release builds carry no date, and
+/// distributions patch theirs, so only dated builds are judged.
+const FFMPEG_STALE_DAYS: i64 = 183;
 
 pub struct App {
     pub places: Places,
@@ -338,9 +342,7 @@ pub async fn find_ffmpeg(
     }
     match Ffmpeg::probe(&path).await {
         Ok(ff) => {
-            let warning = ff.major().filter(|m| *m < FFMPEG_MIN_MAJOR).map(|m| {
-                format!("ffmpeg {m} is old; version {FFMPEG_MIN_MAJOR} or newer is recommended")
-            });
+            let warning = ffmpeg_age_warning(ff.major(), ff.built(), reelgene_core::cookies::now());
             (Some(ff), warning)
         }
         Err(e) => (
@@ -348,6 +350,32 @@ pub async fn find_ffmpeg(
             Some(format!("{} does not work as ffmpeg: {e}", path.display())),
         ),
     }
+}
+
+/// Why the ffmpeg found should be updated, if it should: from its major
+/// version and the day it was built (`Ffmpeg::built`).
+fn ffmpeg_age_warning(major: Option<u32>, built: Option<i64>, now: u64) -> Option<String> {
+    if let Some(m) = major.filter(|m| *m < FFMPEG_MIN_MAJOR) {
+        return Some(format!(
+            "ffmpeg {m} is old; version {FFMPEG_MIN_MAJOR} or newer is recommended"
+        ));
+    }
+    let built = built?;
+    let today = i64::try_from(now / 86_400).ok()?;
+    (today - built > FFMPEG_STALE_DAYS).then(|| {
+        // A calendar day, not an instant: no time zone may shift it.
+        let day = jiff::Timestamp::from_second(built * 86_400)
+            .map(|t| {
+                t.to_zoned(jiff::tz::TimeZone::UTC)
+                    .strftime("%Y-%m-%d")
+                    .to_string()
+            })
+            .unwrap_or_default();
+        format!(
+            "this ffmpeg was built on {day}, over half a year ago: Update ffmpeg \
+             (Settings → Tools, or `reelgene ffmpeg`) for its security fixes"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -372,6 +400,31 @@ mod tests {
             exe_dir: Some(a("/opt/reelgene")),
             user_downloads: Some(a("/home/u/Downloads")),
         }
+    }
+
+    #[test]
+    fn an_old_ffmpeg_is_worth_a_word_and_an_undated_new_one_is_not() {
+        let day = |y, m, d| mux::days_from_civil(y, m, d);
+        let now = (day(2026, 11, 8) * 86_400) as u64;
+        assert!(
+            ffmpeg_age_warning(Some(4), None, now)
+                .unwrap()
+                .contains("ffmpeg 4 is old")
+        );
+        assert_eq!(
+            ffmpeg_age_warning(Some(9), Some(day(2026, 10, 23)), now),
+            None
+        );
+        let stale = ffmpeg_age_warning(Some(8), Some(day(2026, 3, 1)), now).unwrap();
+        assert!(
+            stale.contains("2026-03-01") && stale.contains("Update ffmpeg"),
+            "{stale}"
+        );
+        assert_eq!(
+            ffmpeg_age_warning(Some(6), None, now),
+            None,
+            "a distribution's build is patched by it"
+        );
     }
 
     #[test]

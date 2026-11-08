@@ -10,6 +10,9 @@
 //!
 //! * it only ever sees local files — reelgene did all the networking — and
 //!   `-protocol_whitelist file` enforces that even if a file says otherwise;
+//! * it reads them only as the media formats a download can be
+//!   (`-format_whitelist`): a "segment" that is really a playlist or a concat
+//!   script would otherwise make it read other local files into the MP4;
 //! * `-c copy` only: no decoders, so the attack surface is the demuxers;
 //! * absolute paths with a `file:` prefix, so no name can be read as an option
 //!   or a protocol; an argument array, never a shell;
@@ -266,6 +269,21 @@ impl Ffmpeg {
         v.split(['.', '-']).next()?.parse().ok()
     }
 
+    /// The day it was built, as days since 1970, when the version says:
+    /// snapshot builds end in `-20261023` or start with `2026-10-23`.
+    pub fn built(&self) -> Option<i64> {
+        let parts: Vec<&str> = self.version.split('-').collect();
+        let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+        let (y, m, d) = match parts[..] {
+            [.., last] if digits(last, 8) => (&last[..4], &last[4..6], &last[6..]),
+            [y, m, d, ..] if digits(y, 4) && digits(m, 2) && digits(d, 2) => (y, m, d),
+            _ => return None,
+        };
+        let (y, m, d): (i64, u32, u32) = (y.parse().ok()?, m.parse().ok()?, d.parse().ok()?);
+        ((2000..=2200).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d))
+            .then(|| days_from_civil(y, m, d))
+    }
+
     /// Stream-copy `video` (plus `audio`, if the rendition was separate) into
     /// an MP4 at `out`. No re-encoding: lossless and I/O-bound.
     pub async fn remux(
@@ -306,6 +324,13 @@ impl Ffmpeg {
             return Ok(());
         }
         let log = String::from_utf8_lossy(&log);
+        if log.contains("not on whitelist") {
+            return Err(Error::Unsupported(
+                "ffmpeg was refused a part that is not audio or video (a playlist or script \
+                 in its place?)"
+                    .into(),
+            ));
+        }
         let last = log
             .lines()
             .rev()
@@ -343,6 +368,21 @@ fn local_file(path: &Path) -> Result<OsString> {
     Ok(arg)
 }
 
+/// Days since 1970-01-01 of a date (H. Hinnant's algorithm).
+pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = i64::from((m + 9) % 12);
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// What a downloaded part can be: TS, (f)MP4, Matroska/WebM, or bare
+/// audio. Demuxer names; `mov` covers MP4 and M4A, `matroska` WebM.
+const INPUT_FORMATS: &str = "mpegts,mov,matroska,aac,mp3,ac3,eac3,ogg,flac,wav";
+
 fn remux_args(video: &Path, audio: Option<&Path>, out: &Path) -> Result<Vec<OsString>> {
     let mut args: Vec<OsString> = ["-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
         .into_iter()
@@ -350,7 +390,16 @@ fn remux_args(video: &Path, audio: Option<&Path>, out: &Path) -> Result<Vec<OsSt
         .collect();
     let input = |args: &mut Vec<OsString>, p: &Path| -> Result<()> {
         // Per-input options: they must precede each -i.
-        args.extend(["-protocol_whitelist", "file", "-i"].map(OsString::from));
+        args.extend(
+            [
+                "-protocol_whitelist",
+                "file",
+                "-format_whitelist",
+                INPUT_FORMATS,
+                "-i",
+            ]
+            .map(OsString::from),
+        );
         args.push(local_file(p)?);
         Ok(())
     };
@@ -469,6 +518,79 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_builds_date_is_read_from_its_version() {
+        let ff = |v: &str| Ffmpeg {
+            path: PathBuf::from("/ffmpeg"),
+            version: v.into(),
+        };
+        let day = days_from_civil(2026, 10, 23);
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        assert_eq!(ff("n9.0.2-35-g9a9b70bb8c-20261023").built(), Some(day));
+        assert_eq!(
+            ff("2026-10-23-git-1234abcd-essentials_build").built(),
+            Some(day)
+        );
+        assert_eq!(ff("8.0-essentials_build-www.gyan.dev").built(), None);
+        assert_eq!(ff("6.1.1-3ubuntu5").built(), None);
+        assert_eq!(ff("n9.0-12345678").built(), None, "not a date");
+    }
+
+    /// With `REELGENE_TEST_FFMPEG` naming a real ffmpeg: it joins what
+    /// downloads are, and refuses a "segment" that is a concat script.
+    #[tokio::test]
+    async fn a_real_ffmpeg_joins_media_and_refuses_a_disguised_script() {
+        let Some(path) = std::env::var_os("REELGENE_TEST_FFMPEG").map(PathBuf::from) else {
+            return;
+        };
+        let ff = Ffmpeg::probe(&path).await.unwrap();
+        let dir = scratch("real");
+        let make = |args: &[&str]| {
+            let ok = std::process::Command::new(&path)
+                .args(["-v", "error", "-y"])
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "{args:?}");
+        };
+        make(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=d=2:s=160x120",
+            "-c:v",
+            "mpeg2video",
+            "-f",
+            "mpegts",
+            "v.ts",
+        ]);
+        make(&[
+            "-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", "-f", "adts", "a.aac",
+        ]);
+        make(&[
+            "-f", "lavfi", "-i", "sine=d=2", "-c:a", "aac", "-f", "mp4", "a.m4a",
+        ]);
+        let cancel = CancellationToken::new();
+        for audio in [None, Some("a.aac"), Some("a.m4a")] {
+            let out = dir.join("out.mp4");
+            let audio = audio.map(|a| dir.join(a));
+            ff.remux(&dir.join("v.ts"), audio.as_deref(), &out, &cancel)
+                .await
+                .unwrap();
+            assert!(std::fs::metadata(&out).unwrap().len() > 1000);
+        }
+        std::fs::write(dir.join("evil.ts"), "ffconcat version 1.0\nfile v.ts\n").unwrap();
+        let e = ff
+            .remux(&dir.join("evil.ts"), None, &dir.join("evil.mp4"), &cancel)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("not audio or video"), "{e}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn ffmpeg_gets_only_absolute_local_files_and_copy_mode() {
         let root = if cfg!(windows) { "C:\\d" } else { "/d" };
         let p = |n: &str| Path::new(root).join(n);
@@ -479,7 +601,13 @@ mod tests {
             .collect();
         let joined = args.join(" ");
         assert!(joined.starts_with("-nostdin "));
-        assert!(joined.contains("-protocol_whitelist file -i file:"));
+        assert!(joined.contains(&format!(
+            "-protocol_whitelist file -format_whitelist {INPUT_FORMATS} -i file:"
+        )));
+        assert!(
+            !INPUT_FORMATS.contains("hls") && !INPUT_FORMATS.contains("concat"),
+            "nothing that reads other files"
+        );
         assert!(joined.contains("-c copy"));
         assert!(
             args.iter().all(|a| !a.starts_with("-evil")),
