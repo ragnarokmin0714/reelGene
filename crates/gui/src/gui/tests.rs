@@ -682,6 +682,32 @@ fn an_ffmpeg_picked_from_a_file_is_imported_and_used() {
 }
 
 #[test]
+fn a_yt_dlp_mirror_is_checked_as_typed_and_used_once_saved() {
+    let env = env("yt-source");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, EN.yt_source)
+        .scroll_to_me();
+    settle(&mut h);
+    retype(&mut h, EN.yt_source, "mirror.example");
+    let _ = h.get_by_label(EN.yt_source_bad);
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled());
+    retype(&mut h, EN.yt_source, "https://mirror.example/yt-dlp");
+    assert!(h.query_by_label(EN.yt_source_bad).is_none());
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    let source = h.state().desktop.yt_dlp.config().source;
+    assert_eq!(
+        source.as_str(),
+        "https://mirror.example/yt-dlp/",
+        "used at once"
+    );
+}
+
+#[test]
 fn ffmpeg_not_found_leads_to_where_it_is_fetched() {
     let env = env("ffmpeg-badge");
     let mut h = window(&env, english());
@@ -1253,6 +1279,28 @@ mod screens {
                 form.tab = tab;
                 g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
             });
+        }
+        // The yt-dlp part of the tools page, in both languages.
+        for (name, theme, lang) in [
+            ("settings-yt-dlp", Dark, "zh-TW"),
+            ("settings-yt-dlp-light", Light, "en"),
+        ] {
+            let t = super::super::text::pick(Some(lang));
+            shoot_then(
+                name,
+                [900.0, 640.0],
+                theme,
+                lang,
+                |g| {
+                    let mut form = g.settings_form();
+                    form.tab = Tab::Tools;
+                    g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+                },
+                move |h| {
+                    h.get_by_role_and_label(egui::accesskit::Role::TextInput, t.yt_source)
+                        .scroll_to_me();
+                },
+            );
         }
         // The cookies part of the tools page: imported, the steps open.
         for (name, theme, lang) in [

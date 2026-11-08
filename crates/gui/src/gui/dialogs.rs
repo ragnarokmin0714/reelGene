@@ -236,6 +236,8 @@ pub(crate) struct SettingsForm {
     pub(crate) move_tools: bool,
     yt_dlp: String,
     yt_dlp_key: String,
+    /// Blank: yt-dlp's own releases.
+    yt_source: String,
     /// Blank stands for `system`.
     proxy: String,
     /// MB/s, as speeds are shown; stored in KB/s.
@@ -276,6 +278,7 @@ impl SettingsForm {
             move_tools: true,
             yt_dlp: text(&settings.yt_dlp),
             yt_dlp_key: text(&settings.yt_dlp_key),
+            yt_source: settings.yt_dlp_source.clone().unwrap_or_default(),
             limit_mb: settings.speed_limit as f64 / 1000.0,
             proxy: Some(settings.proxy.clone())
                 .filter(|p| p != "system")
@@ -329,6 +332,11 @@ impl SettingsForm {
         })
     }
 
+    fn yt_source_ok(&self) -> bool {
+        let typed = self.yt_source.trim();
+        typed.is_empty() || reelgene_app::app::yt_dlp_source(typed).is_ok()
+    }
+
     fn proxy_ok(&self) -> bool {
         self.proxy.parse::<reelgene_core::http::Proxy>().is_ok()
     }
@@ -345,6 +353,7 @@ impl SettingsForm {
             tools_dir: unless(&self.tools, &self.default_tools),
             yt_dlp: path(&self.yt_dlp),
             yt_dlp_key: path(&self.yt_dlp_key),
+            yt_dlp_source: Some(self.yt_source.trim().to_owned()).filter(|s| !s.is_empty()),
             speed_limit: (self.limit_mb * 1000.0).round() as u64,
             proxy: match self.proxy.trim() {
                 "" => "system".to_owned(),
@@ -792,6 +801,7 @@ fn settings_ui(
     ui.horizontal(|ui| {
         // Saving an unusable proxy would stop every download at the next start.
         let ok = form.proxy_ok()
+            && form.yt_source_ok()
             && form.tools_problem(&tools.places).is_none()
             && form.folder_problem().is_none()
             && folder_problem(&form.tools).is_none();
@@ -1123,6 +1133,21 @@ fn yt_dlp_page(
                 .on_hover_text(t.yt_path_hint);
                 if ui.button(t.browse).on_hover_text("yt-dlp").clicked() {
                     actions.push(Action::Browse(Field::YtDlp));
+                }
+            });
+            ui.end_row();
+            let label = ui.label(t.yt_source).id;
+            ui.vertical(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.yt_source)
+                        .hint_text(t.yt_source_hint)
+                        .desired_width(310.0),
+                )
+                .labelled_by(label)
+                .on_hover_text(t.yt_source_help);
+                if !form.yt_source_ok() {
+                    let bad = RichText::new(t.yt_source_bad).size(12.0);
+                    ui.label(bad.color(ui.visuals().error_fg_color));
                 }
             });
             ui.end_row();

@@ -193,6 +193,14 @@ pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<
         .map(|p| format!("the yt-dlp set in settings ({}) was not found", p.display()))
         .into_iter()
         .collect();
+    if let Some(source) = settings.yt_dlp_source.as_deref() {
+        match yt_dlp_source(source) {
+            Ok(url) => config.source = url,
+            Err(e) => warnings.push(format!(
+                "the yt-dlp download source in settings ({source}) {e}; using yt-dlp's own"
+            )),
+        }
+    }
     if let Some(file) = &settings.yt_dlp_key {
         config.key = std::fs::read(file)
             .map_err(|e| format!("cannot read {}: {e}", file.display()))
@@ -204,6 +212,23 @@ pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<
         }
     }
     (config, warnings)
+}
+
+/// A yt-dlp download source as typed: an http(s) folder URL. A trailing
+/// slash is added, so the release files resolve inside it.
+pub fn yt_dlp_source(typed: &str) -> Result<url::Url, String> {
+    let mut url = url::Url::parse(typed.trim()).map_err(|_| "is not a web address".to_owned())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("is not an http(s) address".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("must be a plain folder address".into());
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url)
 }
 
 /// Why a folder is no place for the programs reelgene runs.
@@ -456,6 +481,34 @@ mod tests {
             exe_dir: Some(a("/opt/reelgene")),
             user_downloads: Some(a("/home/u/Downloads")),
         }
+    }
+
+    #[test]
+    fn a_yt_dlp_mirror_is_a_folder_address_and_a_bad_one_falls_back() {
+        let u = yt_dlp_source(" https://mirror.example/yt-dlp/latest ").unwrap();
+        assert_eq!(u.as_str(), "https://mirror.example/yt-dlp/latest/");
+        assert_eq!(
+            u.join("SHA2-256SUMS").unwrap().path(),
+            "/yt-dlp/latest/SHA2-256SUMS"
+        );
+        assert!(
+            yt_dlp_source("http://192.168.1.2/yt/").is_ok(),
+            "a NAS of one's own"
+        );
+        assert!(yt_dlp_source("ftp://mirror.example/").is_err());
+        assert!(yt_dlp_source("mirror.example").is_err());
+        assert!(yt_dlp_source("https://mirror.example/?token=1").is_err());
+
+        let settings = Settings {
+            yt_dlp_source: Some("not a url".into()),
+            ..Settings::default()
+        };
+        let (config, warnings) = yt_dlp_config(&settings, &places());
+        assert_eq!(config.source.as_str(), tools::YT_DLP_RELEASES);
+        assert!(
+            warnings.iter().any(|w| w.contains("download source")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

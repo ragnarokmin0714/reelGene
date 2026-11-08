@@ -46,6 +46,11 @@ pub struct Settings {
     /// Run a yt-dlp that is not an official build (pip, a distribution
     /// package): it is then not checked at all.
     pub yt_dlp_unofficial: bool,
+    /// Where yt-dlp's releases are fetched from: a folder URL holding
+    /// `SHA2-256SUMS`, its `.sig` and the release files, as a mirror of
+    /// yt-dlp's `releases/latest/download/` does. `None`: yt-dlp's own.
+    /// Whatever the source, what comes must carry yt-dlp's signature.
+    pub yt_dlp_source: Option<String>,
     /// Continue the queue as soon as reelgene starts.
     pub autostart: bool,
     /// Watch the clipboard for links.
@@ -99,6 +104,7 @@ impl Default for Settings {
             yt_dlp: None,
             yt_dlp_key: None,
             yt_dlp_unofficial: false,
+            yt_dlp_source: None,
             autostart: true,
             clipboard: true,
             animations: None,

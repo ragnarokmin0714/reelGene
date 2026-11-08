@@ -804,6 +804,10 @@ async fn doctor() -> Result<ExitCode, String> {
         ),
     }
     println!("yt-dlp key {key}");
+    if settings.yt_dlp_source.is_some() {
+        let source = app::yt_dlp_config(&settings, &places).0.source;
+        println!("yt-dlp from {source} (checked against the key all the same)");
+    }
     let jar = reelgene_app::seal::cookie_jar(&places.data_dir);
     println!(
         "cookies    {}",
