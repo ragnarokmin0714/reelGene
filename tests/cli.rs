@@ -379,3 +379,22 @@ fn cookies_are_imported_shown_and_removed() {
     assert!(out.status.success(), "{}", text(&out));
     assert!(text(&home.run(&["cookies"])).contains("none imported"));
 }
+
+#[cfg(unix)]
+#[test]
+fn ffmpeg_is_imported_from_a_file_and_used() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new("ffmpeg-from");
+    let program = home.path().join("downloaded-ffmpeg");
+    std::fs::write(&program, "#!/bin/sh\necho 'ffmpeg version 9.0'\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = home.run(&["ffmpeg", "--from", program.to_str().unwrap()]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(text(&out).contains("ffmpeg 9.0 in use"), "{}", text(&out));
+    assert!(home.path().join("tools/ffmpeg").exists());
+
+    let out = home.run(&["ffmpeg", "--from", "/no/such/ffmpeg.zip"]);
+    assert!(!out.status.success());
+    let out = home.run(&["ffmpeg", "--from", "x.7z"]);
+    assert!(text(&out).contains(".zip and .tar.xz"), "{}", text(&out));
+}

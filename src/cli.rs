@@ -74,16 +74,23 @@ pub enum Cmd {
     Ffmpeg {
         /// Accept the ffmpeg in the tools folder as it is now, after you
         /// replaced it yourself, instead of fetching one.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "from")]
         accept: bool,
+        /// Import an ffmpeg you downloaded instead: a build's .zip or
+        /// .tar.xz (only its bin/ffmpeg is taken), or the program itself.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
     },
     /// Fetch the latest yt-dlp into the tools folder, checked against the
     /// signature on its official release before it is put there.
     #[command(name = "yt-dlp")]
     YtDlp {
         /// Only check the yt-dlp reelgene would use, fetching nothing.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "from")]
         check: bool,
+        /// Import a yt-dlp you downloaded instead, checked the same way.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
     },
     /// Cookies for videos that need signing in (age-restricted, members-only):
     /// show what was imported, import a cookies.txt, or remove it. yt-dlp
@@ -162,12 +169,12 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         // No lock: it must work while the window is open.
         return doctor().await;
     }
-    if let Cmd::YtDlp { check } = cmd {
+    if let Cmd::YtDlp { check, from } = cmd {
         // No lock either: it touches the tools folder, not the queue.
-        return yt_dlp(check).await;
+        return yt_dlp(check, from).await;
     }
-    if let Cmd::Ffmpeg { accept } = cmd {
-        return ffmpeg(accept).await;
+    if let Cmd::Ffmpeg { accept, from } = cmd {
+        return ffmpeg(accept, from).await;
     }
     if let Cmd::Cookies { action } = cmd {
         return cookies(action);
@@ -815,7 +822,7 @@ async fn doctor() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn ffmpeg(accept: bool) -> Result<ExitCode, String> {
+async fn ffmpeg(accept: bool, from: Option<PathBuf>) -> Result<ExitCode, String> {
     let places = Places::detect()?;
     let (settings, warning) = Settings::load(&places.settings_file());
     for w in warning
@@ -824,7 +831,13 @@ async fn ffmpeg(accept: bool) -> Result<ExitCode, String> {
     {
         eprintln!("warning: {w}");
     }
-    if !accept {
+    if let Some(file) = &from {
+        let (path, version) = app::ffmpeg_fetch(&settings, &places)
+            .import(file)
+            .await
+            .map_err(|e| e.to_string())?;
+        eprintln!("{} is ffmpeg {version}, imported", path.display());
+    } else if !accept {
         let http = Http::new(app::http_config(&settings)?).map_err(|e| e.to_string())?;
         eprintln!("fetching ffmpeg (about 120-170 MB)…");
         let (path, version) = app::ffmpeg_fetch(&settings, &places)
@@ -846,7 +859,7 @@ async fn ffmpeg(accept: bool) -> Result<ExitCode, String> {
     }
 }
 
-async fn yt_dlp(check: bool) -> Result<ExitCode, String> {
+async fn yt_dlp(check: bool, from: Option<PathBuf>) -> Result<ExitCode, String> {
     let places = Places::detect()?;
     let (settings, warning) = Settings::load(&places.settings_file());
     let (config, warnings) = app::yt_dlp_config(&settings, &places);
@@ -856,7 +869,9 @@ async fn yt_dlp(check: bool) -> Result<ExitCode, String> {
     let http = Http::new(app::http_config(&settings)?).map_err(|e| e.to_string())?;
     let tool = YtDlpTool::new(config);
     let cancel = CancellationToken::new();
-    let (path, v) = if check {
+    let (path, v) = if let Some(file) = &from {
+        tool.import(file, &http, &cancel).await
+    } else if check {
         tool.check(&http, &cancel).await
     } else {
         eprintln!("fetching the latest yt-dlp…");

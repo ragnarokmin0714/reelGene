@@ -1118,6 +1118,50 @@ async fn cookies_go_to_yt_dlp_only_when_it_asks_to_sign_in_and_renewals_are_kept
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_yt_dlp_downloaded_by_hand_is_imported_only_if_official_and_for_here() {
+    use reelgene_core::http::Http;
+    use reelgene_core::tools::Status;
+    let cdn = FakeCdn::start().await;
+    let dir = scratch("ytdlp-import");
+    let key = TestKey::new();
+    publish(
+        &cdn,
+        &key,
+        &[
+            ("yt-dlp", b"official, runs with python".to_vec()),
+            ("yt-dlp_macos", b"official, for macOS".to_vec()),
+        ],
+        1_000,
+    );
+    let tool = release_tool(&cdn, &key, &dir, None);
+    let http = Http::new(Default::default()).unwrap();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let put = |name: &str, body: &[u8]| {
+        let p = dir.join("downloads").join(name);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+        p
+    };
+
+    let changed = put("yt-dlp", b"someone changed this");
+    let e = tool.import(&changed, &http, &cancel).await.unwrap_err();
+    assert!(e.to_string().contains("not the latest official"), "{e}");
+    assert!(!dir.join("tools").exists(), "nothing was put anywhere");
+
+    let mac = put("yt-dlp_macos", b"official, for macOS");
+    let e = tool.import(&mac, &http, &cancel).await.unwrap_err();
+    assert!(e.to_string().contains("for another system"), "{e}");
+
+    let good = put("yt-dlp (1)", b"official, runs with python");
+    let (path, v) = tool.import(&good, &http, &cancel).await.unwrap();
+    assert_eq!(path, dir.join("tools").join("yt-dlp"));
+    assert_eq!(v.file, "yt-dlp");
+    assert!(matches!(tool.status(), Status::Official { .. }));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_yt_dlp_not_in_the_signed_release_never_runs_unless_allowed() {

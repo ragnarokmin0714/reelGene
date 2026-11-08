@@ -47,6 +47,17 @@ pub fn release_file() -> Option<&'static str> {
     })
 }
 
+/// Whether a release file runs here: this system's own, or (on Windows) any
+/// `.exe`, or the plain `yt-dlp`, which runs wherever Python does.
+fn fits_this_system(file: &str) -> bool {
+    Some(file) == release_file()
+        || if cfg!(windows) {
+            file.ends_with(".exe")
+        } else {
+            file == "yt-dlp"
+        }
+}
+
 #[derive(Debug, Clone)]
 pub struct YtDlpConfig {
     /// A yt-dlp the user named; `None` looks in `tools_dir`, then on PATH.
@@ -277,6 +288,71 @@ impl YtDlpTool {
         let v = Verified {
             sha256: want,
             file: file.to_owned(),
+            signed,
+        };
+        self.remember(&v);
+        Ok((dest, v))
+    }
+
+    /// Put a yt-dlp the user downloaded in the tools folder, if it is the
+    /// latest official build for this system: the same check as a fetched
+    /// one, only the file came another way.
+    pub async fn import(
+        &self,
+        src: &Path,
+        http: &Http,
+        cancel: &CancellationToken,
+    ) -> Result<(PathBuf, Verified)> {
+        let config = self.config();
+        if let Some(own) = &config.configured {
+            return Err(Error::Invalid(format!(
+                "settings name a yt-dlp of their own ({}); clear that to import one",
+                own.display()
+            )));
+        }
+        let sha = hash(src).await?;
+        let (sums, signed) = self.signed_sums(http, cancel).await?;
+        let Some((_, file)) = sums.into_iter().find(|(s, _)| *s == sha) else {
+            return Err(Error::Untrusted(format!(
+                "{} is not the latest official yt-dlp; nothing was imported",
+                src.display()
+            )));
+        };
+        if !fits_this_system(&file) {
+            return Err(Error::Invalid(format!(
+                "{} is yt-dlp's {file}, for another system; this one takes {}",
+                src.display(),
+                release_file().unwrap_or("none")
+            )));
+        }
+        let exe = if cfg!(windows) {
+            "yt-dlp.exe"
+        } else {
+            "yt-dlp"
+        };
+        let dir = &config.tools_dir;
+        std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+        let part = dir.join(format!("{exe}.part"));
+        std::fs::copy(src, &part).map_err(|e| Error::io(&part, e))?;
+        // The copy is what runs: it must be the file that was checked.
+        if hash(&part).await.ok() != Some(sha.clone()) {
+            let _ = std::fs::remove_file(&part);
+            return Err(Error::Untrusted(format!(
+                "{} changed while it was imported; nothing was imported",
+                src.display()
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| Error::io(&part, e))?;
+        }
+        let dest = dir.join(exe);
+        std::fs::rename(&part, &dest).map_err(|e| Error::io(&dest, e))?;
+        let v = Verified {
+            sha256: sha,
+            file,
             signed,
         };
         self.remember(&v);

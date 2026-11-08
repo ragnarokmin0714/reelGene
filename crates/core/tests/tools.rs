@@ -157,3 +157,47 @@ async fn an_archive_without_ffmpeg_is_refused() {
     assert_eq!(std::fs::read_dir(dir.join("tools")).unwrap().count(), 0);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_ffmpeg_downloaded_by_hand_is_imported_from_its_archive_or_as_is() {
+    let dir = scratch("import");
+    let tools = dir.join("tools");
+    let fetch = FfmpegFetch::new(tools.clone(), dir.join("ffmpeg-checked.json"));
+    for (ext, name) in [("zip", "build.zip"), ("tar.xz", "build.tar.xz")] {
+        let file = dir.join(name);
+        std::fs::write(&file, archive(ext, "build", "ffmpeg", PROGRAM)).unwrap();
+        let (path, version) = fetch.import(&file).await.unwrap();
+        assert_eq!(
+            (path.clone(), version.as_str()),
+            (tools.join("ffmpeg"), "9.0")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), PROGRAM);
+        assert!(file.exists(), "the download is the user's to delete");
+    }
+    assert!(matches!(
+        tools::ffmpeg_seen(&tools.join("ffmpeg"), &dir.join("ffmpeg-checked.json")).unwrap(),
+        Seen::Same(_)
+    ));
+
+    // A program that is not ffmpeg: refused, and the one before stays.
+    let other = dir.join("not-ffmpeg");
+    std::fs::write(&other, "#!/bin/sh\necho hello\n").unwrap();
+    let e = fetch.import(&other).await.unwrap_err().to_string();
+    assert!(e.contains("was not imported"), "{e}");
+    assert_eq!(std::fs::read(tools.join("ffmpeg")).unwrap(), PROGRAM);
+    let left: Vec<_> = std::fs::read_dir(&tools)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["ffmpeg"], "no .part or .old left behind");
+
+    // The program itself, as a user may pick it from an unpacked build.
+    let plain = dir.join("ffmpeg-unpacked");
+    std::fs::write(&plain, PROGRAM).unwrap();
+    std::fs::remove_file(tools.join("ffmpeg")).unwrap();
+    let (path, _) = fetch.import(&plain).await.unwrap();
+    assert_eq!(path, tools.join("ffmpeg"));
+    std::fs::remove_dir_all(&dir).ok();
+}

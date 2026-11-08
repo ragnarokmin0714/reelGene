@@ -653,6 +653,34 @@ fn cookies_are_imported_replaced_and_removed_from_the_tools_page() {
     assert!(said(&mut h, EN.cookies_removed));
 }
 
+#[cfg(unix)]
+#[test]
+fn an_ffmpeg_picked_from_a_file_is_imported_and_used() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = env("ffmpeg-import");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    let _ = h.get_by_label(EN.ff_import);
+    let _ = h.get_by_label(EN.yt_import);
+    let program = env.dir.join("downloaded").join("ffmpeg");
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    std::fs::write(&program, "#!/bin/sh\necho 'ffmpeg version 7.1'\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = h
+        .state_mut()
+        .desktop
+        .tx
+        .send(Msg::Picked(Field::FfmpegFile, program));
+    until(&mut h, "imported and in use", |h| {
+        h.query_by_label_contains("Uses ffmpeg 7.1").is_some()
+    });
+    let tools = h.state_mut().gui().tools_dir();
+    assert!(tools.join("ffmpeg").exists());
+}
+
 #[test]
 fn ffmpeg_not_found_leads_to_where_it_is_fetched() {
     let env = env("ffmpeg-badge");

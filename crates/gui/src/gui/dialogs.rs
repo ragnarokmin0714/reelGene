@@ -28,6 +28,10 @@ pub(crate) enum Field {
     Tools,
     /// A cookies.txt to import at once, never kept in the form.
     Cookies,
+    /// An ffmpeg (or a build's archive) to import at once.
+    FfmpegFile,
+    /// A downloaded yt-dlp to check and import at once.
+    YtDlpFile,
 }
 
 /// Choosing episodes from a series: the multiselect from the design.
@@ -297,7 +301,7 @@ impl SettingsForm {
             Field::Tools => self.tools = text,
             Field::YtDlp => self.yt_dlp = text,
             Field::YtDlpKey => self.yt_dlp_key = text,
-            Field::PickFolder | Field::Cookies => {}
+            Field::PickFolder | Field::Cookies | Field::FfmpegFile | Field::YtDlpFile => {}
         }
     }
 
@@ -969,6 +973,10 @@ fn tools_page(
         }
         note(ui, &status, color);
     });
+    // In use, but worth updating (too old): said beside what is in use.
+    if let (Some(_), Some(why), false) = (&tools.ffmpeg, &tools.ff.warning, tools.ff.fetching) {
+        note(ui, why, p.warning);
+    }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(!tools.ff.fetching, |ui| {
@@ -989,6 +997,17 @@ fn tools_page(
             .clicked()
             {
                 actions.push(Action::RecheckFfmpeg);
+            }
+            if widgets::button(
+                ui,
+                Kind::Secondary,
+                Some(widgets::Icon::Folder),
+                t.ff_import,
+            )
+            .on_hover_text(t.ff_import_help)
+            .clicked()
+            {
+                actions.push(Action::Browse(Field::FfmpegFile));
             }
         });
     });
@@ -1035,7 +1054,7 @@ fn yt_dlp_page(
     let yt = &tools.yt;
     let (status, color) = match (&yt.busy, &yt.status) {
         (Some(YtTask::Fetching), _) => (t.yt_fetching.to_owned(), p.weak),
-        (Some(YtTask::Checking), _) => (t.yt_checking.to_owned(), p.weak),
+        (Some(YtTask::Checking | YtTask::Importing), _) => (t.yt_checking.to_owned(), p.weak),
         (None, None) => (t.yt_looking.to_owned(), p.weak),
         (None, Some(Status::Missing)) => (t.yt_missing.to_owned(), p.warning),
         (None, Some(Status::Official { verified, .. })) => {
@@ -1074,6 +1093,17 @@ fn yt_dlp_page(
                     .clicked()
             {
                 actions.push(Action::YtDlp(YtTask::Checking));
+            }
+            if widgets::button(
+                ui,
+                Kind::Secondary,
+                Some(widgets::Icon::Folder),
+                t.yt_import,
+            )
+            .on_hover_text(t.yt_import_help)
+            .clicked()
+            {
+                actions.push(Action::Browse(Field::YtDlpFile));
             }
         });
     });

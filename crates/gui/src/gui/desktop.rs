@@ -65,6 +65,8 @@ pub(crate) struct CookieState {
 pub(crate) enum YtTask {
     Fetching,
     Checking,
+    /// A file the user picked, checked like a fetched one.
+    Importing,
 }
 
 /// A window's unfinished business, kept while no window is open.
@@ -246,8 +248,9 @@ impl Desktop {
         }
     }
 
-    /// Fetch ffmpeg into the tools folder, then use it.
-    pub fn fetch_ffmpeg(self: &Arc<Self>) {
+    /// Fetch ffmpeg into the tools folder, or import it from a file the
+    /// user downloaded (`from`), then use it.
+    pub fn fetch_ffmpeg(self: &Arc<Self>, from: Option<PathBuf>) {
         {
             let mut state = lock(&self.ff_state);
             if state.fetching {
@@ -259,10 +262,15 @@ impl Desktop {
         let me = Arc::clone(self);
         self.rt.spawn(async move {
             let fetch = reelgene_app::app::ffmpeg_fetch(&me.settings(), &me.places);
-            let fetched = fetch
-                .install(me.engine.http(), &CancellationToken::new())
-                .await
-                .map_err(|e| e.to_string());
+            let fetched = match &from {
+                Some(file) => fetch.import(file).await,
+                None => {
+                    fetch
+                        .install(me.engine.http(), &CancellationToken::new())
+                        .await
+                }
+            }
+            .map_err(|e| e.to_string());
             let result = match fetched {
                 Ok(_) => me.find_ffmpeg(false).await,
                 Err(e) => {
@@ -293,6 +301,15 @@ impl Desktop {
     /// Fetch the latest yt-dlp (`fetch`) or check the one there against its
     /// signed release; the window hears the outcome.
     pub fn yt_dlp_task(self: &Arc<Self>, task: YtTask) {
+        self.yt_dlp_run(task, None);
+    }
+
+    /// Import a yt-dlp the user downloaded, checked against the release.
+    pub fn yt_dlp_import(self: &Arc<Self>, file: PathBuf) {
+        self.yt_dlp_run(YtTask::Importing, Some(file));
+    }
+
+    fn yt_dlp_run(self: &Arc<Self>, task: YtTask, file: Option<PathBuf>) {
         {
             let mut state = lock(&self.yt_state);
             if state.busy.is_some() {
@@ -305,9 +322,10 @@ impl Desktop {
         self.rt.spawn(async move {
             let cancel = CancellationToken::new();
             let http = me.engine.http();
-            let result = match task {
-                YtTask::Fetching => me.yt_dlp.install(http, &cancel).await,
-                YtTask::Checking => me.yt_dlp.check(http, &cancel).await,
+            let result = match (task, &file) {
+                (YtTask::Importing, Some(file)) => me.yt_dlp.import(file, http, &cancel).await,
+                (YtTask::Fetching | YtTask::Importing, _) => me.yt_dlp.install(http, &cancel).await,
+                (YtTask::Checking, _) => me.yt_dlp.check(http, &cancel).await,
             };
             let tool = me.yt_dlp.clone();
             let status = tokio::task::spawn_blocking(move || tool.status())

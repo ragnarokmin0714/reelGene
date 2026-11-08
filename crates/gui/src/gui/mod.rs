@@ -315,7 +315,7 @@ impl Gui {
             Msg::YtDlp(task, result) => match result {
                 Ok(date) => {
                     let done = match task {
-                        desktop::YtTask::Fetching => self.t.yt_fetched,
+                        desktop::YtTask::Fetching | desktop::YtTask::Importing => self.t.yt_fetched,
                         desktop::YtTask::Checking => self.t.yt_checked,
                     };
                     self.toast(done(&date), false);
@@ -339,6 +339,8 @@ impl Gui {
                 Err(e) => self.toast(e, true),
             },
             Msg::Picked(dialogs::Field::Cookies, path) => self.desktop.cookies(Some(&path)),
+            Msg::Picked(dialogs::Field::FfmpegFile, path) => self.desktop.fetch_ffmpeg(Some(path)),
+            Msg::Picked(dialogs::Field::YtDlpFile, path) => self.desktop.yt_dlp_import(path),
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
                 (Some(Dialog::Settings(form)), field) => form.set(field, &path),
@@ -422,7 +424,7 @@ impl Gui {
                 reelgene_app::platform::reveal(&dir);
             }
             Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(true),
-            Action::FetchFfmpeg => self.desktop.fetch_ffmpeg(),
+            Action::FetchFfmpeg => self.desktop.fetch_ffmpeg(None),
             Action::OpenSettings(tab) => {
                 let mut form = self.settings_form();
                 form.tab = tab;
@@ -445,7 +447,9 @@ impl Gui {
                 dialogs::Field::Ffmpeg
                 | dialogs::Field::YtDlp
                 | dialogs::Field::YtDlpKey
-                | dialogs::Field::Cookies => dialog.pick_file(),
+                | dialogs::Field::Cookies
+                | dialogs::Field::FfmpegFile
+                | dialogs::Field::YtDlpFile => dialog.pick_file(),
                 dialogs::Field::PickFolder | dialogs::Field::Folder | dialogs::Field::Tools => {
                     dialog.pick_folder()
                 }

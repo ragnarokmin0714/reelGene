@@ -8,9 +8,10 @@
 //! streams between local files reelgene wrote, never touching the network
 //! (`mux.rs`).
 //!
-//! The ffmpeg in the tools folder — fetched, or put there by hand — has its
-//! checksum recorded the first time it is used. A file that changes after
-//! that is not run until the user accepts it again.
+//! The ffmpeg in the tools folder — fetched, imported from a file the user
+//! downloaded, or put there by hand — has its checksum recorded the first
+//! time it is used. A file that changes after that is not run until the user
+//! accepts it again.
 
 use super::{hash, join, parse_sums, read_record, sha256_file, write_record};
 use crate::error::{Error, Result};
@@ -172,26 +173,17 @@ impl FfmpegFetch {
     }
 
     async fn unpack(&self, archive: &Path, build: &str) -> Result<PathBuf> {
-        let exe = if cfg!(windows) {
-            "ffmpeg.exe"
-        } else {
-            "ffmpeg"
-        };
+        let exe = exe_name();
         let part = self.dir.join(format!("{exe}.part"));
         let (from, to) = (archive.to_path_buf(), part.clone());
-        let unpacked = tokio::task::spawn_blocking(move || extract(&from, &to, exe))
+        let unpacked = tokio::task::spawn_blocking(move || extract(&from, &to, exe, false))
             .await
             .map_err(|e| Error::Invalid(format!("unpacking stopped: {e}")))?;
         if let Err(e) = unpacked {
             let _ = std::fs::remove_file(&part);
             return Err(e);
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| Error::io(&part, e))?;
-        }
+        executable(&part)?;
         let dest = self.dir.join(exe);
         std::fs::rename(&part, &dest).map_err(|e| Error::io(&dest, e))?;
         let accepted = Accepted {
@@ -201,47 +193,186 @@ impl FfmpegFetch {
         write_record(&self.record, &accepted);
         Ok(dest)
     }
+
+    /// Put an ffmpeg the user downloaded in place: from a build's zip or
+    /// tar.xz (only its `bin/ffmpeg` comes out), or the program itself. It
+    /// must run as ffmpeg, or the one there before is put back. Returns
+    /// where, and its version.
+    pub async fn import(&self, src: &Path) -> Result<(PathBuf, String)> {
+        let exe = exe_name();
+        let dir = &self.dir;
+        std::fs::create_dir_all(dir).map_err(|e| Error::io(dir, e))?;
+        let part = dir.join(format!("{exe}.part"));
+        let (from, to) = (src.to_path_buf(), part.clone());
+        let copied = tokio::task::spawn_blocking(move || match Packed::of(&from)? {
+            Packed::Archive => extract(&from, &to, exe, true),
+            Packed::Program => copy_capped(&mut open(&from)?, &to),
+        })
+        .await
+        .map_err(|e| Error::Invalid(format!("importing stopped: {e}")))?;
+        if let Err(e) = copied.and_then(|()| executable(&part)) {
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
+        let dest = dir.join(exe);
+        let old = dir.join(format!("{exe}.old"));
+        let had = dest.exists();
+        if had {
+            std::fs::rename(&dest, &old).map_err(|e| Error::io(&dest, e))?;
+        }
+        std::fs::rename(&part, &dest).map_err(|e| Error::io(&dest, e))?;
+        match crate::mux::Ffmpeg::probe(&dest).await {
+            Ok(ff) => {
+                let _ = std::fs::remove_file(&old);
+                write_record(
+                    &self.record,
+                    &Accepted {
+                        sha256: hash(&dest).await?,
+                        build: None,
+                    },
+                );
+                Ok((dest, ff.version().to_owned()))
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&dest);
+                if had {
+                    let _ = std::fs::rename(&old, &dest);
+                }
+                Err(Error::Invalid(format!(
+                    "{} was not imported: {e}",
+                    src.display()
+                )))
+            }
+        }
+    }
+}
+
+fn exe_name() -> &'static str {
+    if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }
+}
+
+/// What a file the user picked holds, by its name.
+enum Packed {
+    Archive,
+    Program,
+}
+
+impl Packed {
+    fn of(path: &Path) -> Result<Self> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if name.ends_with(".zip") || name.ends_with(".tar.xz") || name.ends_with(".txz") {
+            Ok(Self::Archive)
+        } else if name.ends_with(".7z") || name.ends_with(".rar") || name.ends_with(".tar.gz") {
+            Err(Error::Unsupported(
+                "reelgene reads .zip and .tar.xz archives: take the build in one of those, \
+                 or unpack it and pick its ffmpeg"
+                    .into(),
+            ))
+        } else {
+            Ok(Self::Program)
+        }
+    }
+}
+
+fn open(path: &Path) -> Result<std::fs::File> {
+    std::fs::File::open(path).map_err(|e| Error::io(path, e))
+}
+
+/// Copy at most `MAX_PROGRAM` bytes into a new file at `out`.
+fn copy_capped(from: &mut dyn Read, out: &Path) -> Result<()> {
+    let mut dest = std::fs::File::create(out).map_err(|e| Error::io(out, e))?;
+    let n =
+        std::io::copy(&mut from.take(MAX_PROGRAM + 1), &mut dest).map_err(|e| Error::io(out, e))?;
+    if n > MAX_PROGRAM {
+        return Err(Error::TooLarge("the ffmpeg in the archive".into()));
+    }
+    dest.flush().map_err(|e| Error::io(out, e))
+}
+
+fn executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| Error::io(path, e))?;
+    }
+    let _ = path;
+    Ok(())
+}
+
+/// A "shared" build's libraries, which its ffmpeg cannot start without.
+fn is_shared_library(name: &str) -> bool {
+    let file = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .to_lowercase();
+    file.starts_with("avcodec") && file.ends_with(".dll")
+        || file.starts_with("libavcodec") && file.contains(".so")
 }
 
 /// Copy the one file `…/bin/<exe>` out of a zip or tar.xz archive to `out`;
-/// nothing else in it is written anywhere.
-fn extract(archive: &Path, out: &Path, exe: &str) -> Result<()> {
+/// nothing else in it is written anywhere. `whole`: read the archive to its
+/// end, to refuse a "shared" build, whose ffmpeg needs the libraries beside
+/// it (builds reelgene fetches itself are static).
+fn extract(archive: &Path, out: &Path, exe: &str, whole: bool) -> Result<()> {
     let bad = |e: &dyn std::fmt::Display| Error::Invalid(format!("the ffmpeg archive: {e}"));
     let wanted = |name: &str| name.replace('\\', "/").ends_with(&format!("/bin/{exe}"));
-    let file = std::fs::File::open(archive).map_err(|e| Error::io(archive, e))?;
-    let mut dest = std::fs::File::create(out).map_err(|e| Error::io(out, e))?;
-    let copy = |from: &mut dyn Read, dest: &mut std::fs::File| -> Result<()> {
-        let n =
-            std::io::copy(&mut from.take(MAX_PROGRAM + 1), dest).map_err(|e| Error::io(out, e))?;
-        if n > MAX_PROGRAM {
-            return Err(Error::TooLarge("the ffmpeg in the archive".into()));
-        }
-        dest.flush().map_err(|e| Error::io(out, e))
+    let shared = || {
+        Error::Unsupported(
+            "this is a \"shared\" build: its ffmpeg cannot start without the libraries \
+             beside it. Take the build without \"-shared\" in its name"
+                .into(),
+        )
     };
-    if archive.extension().is_some_and(|e| e == "zip") {
+    let file = open(archive)?;
+    let name = archive.to_string_lossy().to_lowercase();
+    let mut found = false;
+    if name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(file).map_err(|e| bad(&e))?;
+        if whole && zip.file_names().flatten().any(|n| is_shared_library(&n)) {
+            return Err(shared());
+        }
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| bad(&e))?;
             if entry.is_file() && wanted(&entry.name().map_err(|e| bad(&e))?) {
-                return copy(&mut entry, &mut dest);
+                return copy_capped(&mut entry, out);
             }
         }
-        return Err(bad(&format!("no bin/{exe} in it")));
-    }
-    let xz = lzma_rust2::XzReader::new(BufReader::new(file), true);
-    let mut tar = tar::Archive::new(xz);
-    for entry in tar.entries().map_err(|e| bad(&e))? {
-        let mut entry = entry.map_err(|e| bad(&e))?;
-        let name = entry
-            .path()
-            .map_err(|e| bad(&e))?
-            .to_string_lossy()
-            .into_owned();
-        if entry.header().entry_type().is_file() && wanted(&name) {
-            return copy(&mut entry, &mut dest);
+    } else {
+        let xz = lzma_rust2::XzReader::new(BufReader::new(file), true);
+        let mut tar = tar::Archive::new(xz);
+        for entry in tar.entries().map_err(|e| bad(&e))? {
+            let mut entry = entry.map_err(|e| bad(&e))?;
+            let name = entry
+                .path()
+                .map_err(|e| bad(&e))?
+                .to_string_lossy()
+                .into_owned();
+            if whole && is_shared_library(&name) {
+                return Err(shared());
+            }
+            if !found && entry.header().entry_type().is_file() && wanted(&name) {
+                copy_capped(&mut entry, out)?;
+                found = true;
+                if !whole {
+                    return Ok(());
+                }
+            }
         }
     }
-    Err(bad(&format!("no bin/{exe} in it")))
+    if found {
+        Ok(())
+    } else {
+        Err(bad(&format!("no bin/{exe} in it")))
+    }
 }
 
 #[cfg(test)]
@@ -293,9 +424,42 @@ mod tests {
         let archive = dir.join("b.zip");
         std::fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
         let out = dir.join("ffmpeg.exe.part");
-        extract(&archive, &out, "ffmpeg.exe").unwrap();
+        extract(&archive, &out, "ffmpeg.exe", false).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"yes");
-        assert!(extract(&archive, &out, "ffplay.exe").is_err());
+        assert!(extract(&archive, &out, "ffplay.exe", false).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_shared_build_is_refused_on_import_by_its_libraries() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("reelgene-ffshared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for name in ["b-shared/bin/ffmpeg.exe", "b-shared/bin/avcodec-62.dll"] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(b"x").unwrap();
+        }
+        let archive = dir.join("ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip");
+        std::fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
+        let out = dir.join("ffmpeg.exe.part");
+        let e = extract(&archive, &out, "ffmpeg.exe", true).unwrap_err();
+        assert!(e.to_string().contains("shared"), "{e}");
+        assert!(is_shared_library("x/lib/libavcodec.so.62.1.100"));
+        assert!(!is_shared_library("x/bin/ffmpeg.exe"));
+        assert!(matches!(
+            Packed::of(Path::new("/d/ffmpeg.7z")),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            Packed::of(Path::new("/d/B.TAR.XZ")),
+            Ok(Packed::Archive)
+        ));
+        assert!(matches!(
+            Packed::of(Path::new("/d/ffmpeg.exe")),
+            Ok(Packed::Program)
+        ));
         std::fs::remove_dir_all(&dir).ok();
     }
 
