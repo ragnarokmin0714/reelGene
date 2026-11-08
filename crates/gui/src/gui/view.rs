@@ -109,7 +109,7 @@ fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if widgets::icon_button(ui, Icon::Gear, t.settings, None).clicked() {
-                        let form = dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+                        let form = g.settings_form();
                         actions.push(Action::Open(Dialog::Settings(Box::new(form))));
                     }
                     // The other theme at once; Settings can go back to the system's.
@@ -122,13 +122,13 @@ fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>
                     if widgets::icon_button(ui, icon, tip, None).clicked() {
                         let mut s = g.settings.clone();
                         s.theme = next.to_owned();
-                        actions.push(Action::SaveSettings(Box::new(s)));
+                        actions.push(Action::SaveSettings(Box::new(s), false));
                     }
                     let mut watch = g.settings.clipboard;
                     if ui.checkbox(&mut watch, t.watch_clipboard).changed() {
                         let mut s = g.settings.clone();
                         s.clipboard = watch;
-                        actions.push(Action::SaveSettings(Box::new(s)));
+                        actions.push(Action::SaveSettings(Box::new(s), false));
                     }
                 });
             });

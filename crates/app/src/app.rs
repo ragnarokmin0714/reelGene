@@ -289,6 +289,62 @@ pub fn tools_dirs(settings: &Settings, places: &Places) -> ToolsDirs {
     ToolsDirs { dir, also, warning }
 }
 
+/// The programs reelgene keeps in a tools folder, as they are named there.
+fn tool_names() -> [&'static str; 2] {
+    if cfg!(windows) {
+        ["ffmpeg.exe", "yt-dlp.exe"]
+    } else {
+        ["ffmpeg", "yt-dlp"]
+    }
+}
+
+/// ffmpeg and yt-dlp in `dir`, those that are there.
+pub fn tools_in(dir: &Path) -> Vec<PathBuf> {
+    tool_names()
+        .iter()
+        .map(|n| dir.join(n))
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// Move ffmpeg and yt-dlp from `from` to `to`, for a tools folder that
+/// changed. One already in `to` stays and the old one is left where it
+/// was. Their check records go by checksum, so they still pass there.
+/// Returns what was moved.
+pub fn move_tools(from: &Path, to: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut moved = Vec::new();
+    for src in tools_in(from) {
+        let dst = to.join(src.file_name().unwrap_or_default());
+        if dst.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+        // Across disks a rename fails: copy (permissions too), then remove.
+        if std::fs::rename(&src, &dst).is_err() {
+            let part = dst.with_extension("part");
+            std::fs::copy(&src, &part)
+                .and_then(|_| std::fs::rename(&part, &dst))
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&part);
+                    format!("{}: {e}", dst.display())
+                })?;
+            let _ = std::fs::remove_file(&src);
+        }
+        moved.push(dst);
+    }
+    Ok(moved)
+}
+
+/// A program path in settings that pointed into the old tools folder,
+/// pointed at the new one.
+pub fn moved_path(path: &Option<PathBuf>, from: &Path, to: &Path) -> Option<PathBuf> {
+    let p = path.as_ref()?;
+    match (p.parent(), p.file_name()) {
+        (Some(dir), Some(name)) if dir == from => Some(to.join(name)),
+        _ => Some(p.clone()),
+    }
+}
+
 /// Fetching ffmpeg into the tools folder.
 pub fn ffmpeg_fetch(settings: &Settings, places: &Places) -> FfmpegFetch {
     FfmpegFetch::new(tools_dirs(settings, places).dir, ffmpeg_record(places))
@@ -400,6 +456,40 @@ mod tests {
             exe_dir: Some(a("/opt/reelgene")),
             user_downloads: Some(a("/home/u/Downloads")),
         }
+    }
+
+    #[test]
+    fn tools_move_with_their_folder_and_never_over_one_there() {
+        let root = std::env::temp_dir().join(format!("reelgene-move-tools-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, to) = (root.join("old"), root.join("new/tools"));
+        std::fs::create_dir_all(&from).unwrap();
+        let [ff, yt] = tool_names();
+        std::fs::write(from.join(ff), "ffmpeg").unwrap();
+        std::fs::write(from.join(yt), "old yt-dlp").unwrap();
+        std::fs::write(from.join("notes.txt"), "mine").unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(to.join(yt), "new yt-dlp").unwrap();
+
+        assert_eq!(tools_in(&from).len(), 2);
+        let moved = move_tools(&from, &to).unwrap();
+        assert_eq!(moved, [to.join(ff)]);
+        assert_eq!(std::fs::read_to_string(to.join(ff)).unwrap(), "ffmpeg");
+        assert!(!from.join(ff).exists());
+        assert_eq!(
+            std::fs::read_to_string(to.join(yt)).unwrap(),
+            "new yt-dlp",
+            "the one there stays"
+        );
+        assert!(from.join(yt).exists() && from.join("notes.txt").exists());
+        assert!(!to.join("notes.txt").exists(), "only the tools move");
+
+        let set = Some(from.join(ff));
+        assert_eq!(moved_path(&set, &from, &to), Some(to.join(ff)));
+        let elsewhere = Some(root.join("bin").join(ff));
+        assert_eq!(moved_path(&elsewhere, &from, &to), elsewhere);
+        assert_eq!(moved_path(&None, &from, &to), None);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

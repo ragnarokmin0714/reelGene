@@ -664,6 +664,107 @@ fn ffmpeg_not_found_leads_to_where_it_is_fetched() {
     let _ = h.get_by_label(EN.get_ffmpeg);
 }
 
+/// What a text field holds.
+fn field_value(h: &Harness<'static, State>, label: &str) -> String {
+    let node = h.get_by_role_and_label(egui::accesskit::Role::TextInput, label);
+    egui_kittest::kittest::NodeT::accesskit_node(&node)
+        .value()
+        .unwrap_or_default()
+}
+
+/// Replace what a text field holds, as a person would: select all, type.
+fn retype(h: &mut Harness<'static, State>, label: &str, text: &str) {
+    let field = h.get_by_role_and_label(egui::accesskit::Role::TextInput, label);
+    field.focus();
+    h.run_steps(2);
+    h.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, label)
+        .type_text(text);
+    settle(h);
+}
+
+#[test]
+fn the_tools_folder_shows_where_it_is_and_takes_ffmpeg_along() {
+    let env = env("tools-move");
+    let mut h = window(&env, english());
+    let old = h.state_mut().gui().tools_dir();
+    std::fs::create_dir_all(&old).unwrap();
+    let exe = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    std::fs::write(old.join(exe), "a stand-in ffmpeg").unwrap();
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    assert_eq!(field_value(&h, EN.tools_folder), old.display().to_string());
+    assert!(
+        h.query_by_label(EN.reset_default).is_none(),
+        "nothing to reset while it is the default"
+    );
+
+    let new = env.dir.join("my tools");
+    retype(&mut h, EN.tools_folder, &new.display().to_string());
+    let _ = h.get_by_label(EN.tools_made_on_fetch);
+    let _ = h.get_by_label(EN.reset_default);
+    let carry = (EN.tools_move)(&old.display().to_string());
+    let _ = h.get_by_label(&carry);
+    h.get_by_label(EN.save).click();
+    until(&mut h, "ffmpeg moved", |_| new.join(exe).exists());
+    assert!(!old.join(exe).exists());
+    until(&mut h, "and said so", |h| {
+        let said = (EN.tools_moved)(&new.display().to_string());
+        let toasts = &h.state().gui.as_ref().unwrap().toasts;
+        toasts.iter().any(|t| t.text == said)
+    });
+    let saved = Settings::load(&env.dir.join("settings.json")).0;
+    assert_eq!(saved.tools_dir, Some(new.clone()));
+
+    // Back to the default: saved as no setting at all.
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    h.get_by_label(EN.reset_default).click();
+    settle(&mut h);
+    h.get_by_label(EN.save).click();
+    until(&mut h, "moved back", |_| old.join(exe).exists());
+    let saved = Settings::load(&env.dir.join("settings.json")).0;
+    assert_eq!(saved.tools_dir, None);
+}
+
+#[test]
+fn a_typed_download_folder_that_cannot_be_one_is_not_saved() {
+    let env = env("folder-typed");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    assert_eq!(
+        field_value(&h, EN.folder),
+        env.dir.join("downloads").display().to_string(),
+        "the folder in use, editable"
+    );
+    retype(&mut h, EN.folder, "videos");
+    let _ = h.get_by_label(EN.tools_not_absolute);
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled(),
+        "a relative folder is not silently dropped"
+    );
+    let file = env.dir.join("a file.txt");
+    std::fs::write(&file, "not a folder").unwrap();
+    retype(&mut h, EN.folder, &file.display().to_string());
+    let _ = h.get_by_label(EN.folder_is_a_file);
+    let videos = env.dir.join("videos");
+    retype(&mut h, EN.folder, &videos.display().to_string());
+    let _ = h.get_by_label(EN.folder_made_on_download);
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    assert_eq!(h.state_mut().gui().settings.download_dir, Some(videos));
+}
+
 #[test]
 fn a_tools_folder_among_downloads_cannot_be_saved() {
     let env = env("tools-folder");
@@ -673,10 +774,7 @@ fn a_tools_folder_among_downloads_cannot_be_saved() {
     h.get_by_label(EN.section_tools).click();
     settle(&mut h);
     let downloads = env.dir.join("downloads").join("tools");
-    let field = h.get_by_role_and_label(egui::accesskit::Role::TextInput, EN.tools_folder);
-    field.focus();
-    field.type_text(&downloads.display().to_string());
-    settle(&mut h);
+    retype(&mut h, EN.tools_folder, &downloads.display().to_string());
     let _ = h.get_by_label(EN.tools_in_download_folder);
     assert!(
         egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled(),
@@ -1076,7 +1174,7 @@ mod screens {
             g.toast("已加入：霸道總裁的契約新娘".into(), false);
         });
         shoot_sized("settings", [900.0, 820.0], Dark, "zh-TW", |g| {
-            let form = super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+            let form = g.settings_form();
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
         });
         shoot_sized("narrow", [560.0, 460.0], Dark, "zh-TW", demo);
@@ -1111,7 +1209,7 @@ mod screens {
             g.dialog = Some(super::super::Dialog::Pick(Box::new(pick)));
         });
         shoot("settings-light", Light, "en", |g| {
-            let form = super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+            let form = g.settings_form();
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
         });
         use super::super::dialogs::Tab;
@@ -1123,8 +1221,7 @@ mod screens {
             ("settings-tools-light", Light, "en", Tab::Tools),
         ] {
             shoot(name, theme, lang, move |g| {
-                let mut form =
-                    super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+                let mut form = g.settings_form();
                 form.tab = tab;
                 g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
             });
@@ -1152,8 +1249,7 @@ mod screens {
                     let jar = g.desktop.yt_dlp.config().cookies.unwrap();
                     jar.import(&file, reelgene_core::cookies::now()).unwrap();
                     g.desktop.load_cookies();
-                    let mut form =
-                        super::super::dialogs::SettingsForm::new(&g.settings, &g.default_folder());
+                    let mut form = g.settings_form();
                     form.tab = Tab::Tools;
                     g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
                 },

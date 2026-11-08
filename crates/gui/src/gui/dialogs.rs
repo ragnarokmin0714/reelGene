@@ -196,14 +196,40 @@ fn parse_range(text: &str) -> Vec<std::ops::RangeInclusive<i64>> {
         .collect()
 }
 
+/// Why a typed folder cannot be used; a missing one is fine, it is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FolderProblem {
+    NotAbsolute,
+    NotAFolder,
+}
+
+fn folder_problem(typed: &str) -> Option<FolderProblem> {
+    let typed = typed.trim();
+    let path = Path::new(typed);
+    if typed.is_empty() {
+        None
+    } else if !path.is_absolute() {
+        Some(FolderProblem::NotAbsolute)
+    } else if path.exists() && !path.is_dir() {
+        Some(FolderProblem::NotAFolder)
+    } else {
+        None
+    }
+}
+
 /// The settings being edited, with text fields for the optional values.
 pub(crate) struct SettingsForm {
     s: Settings,
+    /// Filled with the folder in use, default or not, so part of it can be
+    /// changed; the default is saved as no setting, so a portable copy keeps
+    /// following its own folder.
     folder: String,
-    /// Shown in the empty folder field: where downloads go by default.
     default_folder: String,
     ffmpeg: String,
     tools: String,
+    default_tools: String,
+    /// Take ffmpeg and yt-dlp along when the tools folder changes.
+    pub(crate) move_tools: bool,
     yt_dlp: String,
     yt_dlp_key: String,
     /// Blank stands for `system`.
@@ -228,17 +254,22 @@ pub(crate) enum Tab {
 }
 
 impl SettingsForm {
-    pub(crate) fn new(settings: &Settings, default_folder: &Path) -> Self {
+    pub(crate) fn new(settings: &Settings, default_folder: &Path, default_tools: &Path) -> Self {
         let text = |p: &Option<PathBuf>| {
             p.as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
         };
+        let or = |p: &Option<PathBuf>, default: &Path| {
+            p.as_deref().unwrap_or(default).display().to_string()
+        };
         Self {
             default_folder: default_folder.display().to_string(),
-            folder: text(&settings.download_dir),
+            folder: or(&settings.download_dir, default_folder),
             ffmpeg: text(&settings.ffmpeg),
-            tools: text(&settings.tools_dir),
+            tools: or(&settings.tools_dir, default_tools),
+            default_tools: default_tools.display().to_string(),
+            move_tools: true,
             yt_dlp: text(&settings.yt_dlp),
             yt_dlp_key: text(&settings.yt_dlp_key),
             limit_mb: settings.speed_limit as f64 / 1000.0,
@@ -279,6 +310,21 @@ impl SettingsForm {
         reelgene_app::app::tools_dir_problem(Path::new(typed), &self.finish(), places)
     }
 
+    /// The download folder typed, unless it cannot be one.
+    fn folder_problem(&self) -> Option<FolderProblem> {
+        folder_problem(&self.folder)
+    }
+
+    /// The tools folder the form would save, default or not.
+    pub(crate) fn tools_dir(&self) -> PathBuf {
+        let typed = self.tools.trim();
+        PathBuf::from(if typed.is_empty() {
+            &self.default_tools
+        } else {
+            typed
+        })
+    }
+
     fn proxy_ok(&self) -> bool {
         self.proxy.parse::<reelgene_core::http::Proxy>().is_ok()
     }
@@ -288,10 +334,11 @@ impl SettingsForm {
             let p = PathBuf::from(s.trim());
             (!s.trim().is_empty() && p.is_absolute()).then_some(p)
         };
+        let unless = |s: &str, default: &str| path(s).filter(|p| *p != Path::new(default));
         Settings {
-            download_dir: path(&self.folder),
+            download_dir: unless(&self.folder, &self.default_folder),
             ffmpeg: path(&self.ffmpeg),
-            tools_dir: path(&self.tools),
+            tools_dir: unless(&self.tools, &self.default_tools),
             yt_dlp: path(&self.yt_dlp),
             yt_dlp_key: path(&self.yt_dlp_key),
             speed_limit: (self.limit_mb * 1000.0).round() as u64,
@@ -556,16 +603,20 @@ fn settings_ui(
             if form.tab == Tab::Downloads {
                 grid("settings-downloads").show(ui, |ui| {
                     ui.label(t.folder);
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut form.folder)
-                                .hint_text(&form.default_folder)
-                                .desired_width(240.0),
-                        )
-                        .on_hover_text(t.folder);
-                        if ui.button(t.browse).clicked() {
-                            actions.push(Action::Browse(Field::Folder));
-                        }
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut form.folder)
+                                    .hint_text(&form.default_folder)
+                                    .desired_width(240.0),
+                            )
+                            .on_hover_text(t.folder);
+                            if ui.button(t.browse).clicked() {
+                                actions.push(Action::Browse(Field::Folder));
+                            }
+                            reset_button(t, ui, &mut form.folder, &form.default_folder);
+                        });
+                        folder_note(t, &form.folder, ui, &p, t.folder_made_on_download);
                     });
                     ui.end_row();
                     ui.label(t.naming);
@@ -736,13 +787,17 @@ fn settings_ui(
     ui.add_space(18.0);
     ui.horizontal(|ui| {
         // Saving an unusable proxy would stop every download at the next start.
-        let ok = form.proxy_ok() && form.tools_problem(&tools.places).is_none();
+        let ok = form.proxy_ok()
+            && form.tools_problem(&tools.places).is_none()
+            && form.folder_problem().is_none()
+            && folder_problem(&form.tools).is_none();
         if ui
             .add_enabled_ui(ok, |ui| widgets::button(ui, Kind::Primary, None, t.save))
             .inner
             .clicked()
         {
-            actions.push(Action::SaveSettings(Box::new(form.finish())));
+            let carry = form.move_tools && carries_tools(&tools.dir, &form.tools_dir());
+            actions.push(Action::SaveSettings(Box::new(form.finish()), carry));
         }
         if widgets::button(ui, Kind::Secondary, None, t.cancel).clicked() {
             actions.push(Action::Close);
@@ -861,9 +916,18 @@ fn tools_page(
             if ui.button(t.browse).on_hover_text(t.tools_folder).clicked() {
                 actions.push(Action::Browse(Field::Tools));
             }
+            let default = form.default_tools.clone();
+            reset_button(t, ui, &mut form.tools, &default);
         });
         ui.end_row();
     });
+    folder_note(t, &form.tools, ui, p, t.tools_made_on_fetch);
+    if carries_tools(&tools.dir, &form.tools_dir()) {
+        ui.checkbox(
+            &mut form.move_tools,
+            (t.tools_move)(&tools.dir.display().to_string()),
+        );
+    }
     if let Some(problem) = form.tools_problem(&tools.places) {
         let why = match problem {
             ToolsDirProblem::NotAbsolute => t.tools_not_absolute,
@@ -1135,6 +1199,40 @@ fn cookies_page(
         .show(ui, |ui| note(ui, t.cookies_steps, p.weak));
 }
 
+/// Put the default back in a path field; shown only when it differs.
+fn reset_button(t: &super::text::Text, ui: &mut egui::Ui, text: &mut String, default: &str) {
+    if text.trim() != default
+        && widgets::icon_button(ui, widgets::Icon::Retry, t.reset_default, None)
+            .on_hover_text(format!("{} ({default})", t.reset_default))
+            .clicked()
+    {
+        *text = default.to_owned();
+    }
+}
+
+/// What is wrong with a typed folder, or that it will be made.
+fn folder_note(
+    t: &super::text::Text,
+    typed: &str,
+    ui: &mut egui::Ui,
+    p: &super::theme::Palette,
+    made: &str,
+) {
+    let (text, color) = match folder_problem(typed) {
+        Some(FolderProblem::NotAbsolute) => (t.tools_not_absolute, ui.visuals().error_fg_color),
+        Some(FolderProblem::NotAFolder) => (t.folder_is_a_file, ui.visuals().error_fg_color),
+        None if !typed.trim().is_empty() && !Path::new(typed.trim()).exists() => (made, p.weak),
+        None => return,
+    };
+    ui.label(RichText::new(text).color(color).size(12.0));
+}
+
+/// Whether saving `to` as the tools folder would leave ffmpeg or yt-dlp
+/// behind in `from`, the one in use.
+fn carries_tools(from: &Path, to: &Path) -> bool {
+    to.is_absolute() && from != to && !reelgene_app::app::tools_in(from).is_empty()
+}
+
 /// Clock hours, 0:00 to 23:00.
 const HOURS: (u8, &str) = (23, ":00");
 /// Seconds, up to two minutes.
@@ -1200,7 +1298,7 @@ mod tests {
     #[test]
     fn pacing_is_off_until_switched_on_and_then_keeps_its_span() {
         let settings = Settings::default();
-        let mut form = SettingsForm::new(&settings, Path::new("/downloads"));
+        let mut form = SettingsForm::new(&settings, Path::new("/downloads"), Path::new("/tools"));
         assert_eq!(form.finish().pace, None, "off by default");
         form.paced = true;
         assert_eq!(
@@ -1215,6 +1313,44 @@ mod tests {
             form.finish().pace,
             None,
             "switched off, the span is not saved"
+        );
+    }
+
+    #[test]
+    fn folders_show_the_one_in_use_and_save_the_default_as_none() {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let at = |p: &str| PathBuf::from(format!("{root}{p}"));
+        let (downloads, tools) = (at("downloads"), at("tools"));
+        let mut form = SettingsForm::new(&Settings::default(), &downloads, &tools);
+        assert_eq!(
+            form.folder,
+            downloads.display().to_string(),
+            "editable, not a hint"
+        );
+        assert_eq!(form.tools, tools.display().to_string());
+        let s = form.finish();
+        assert_eq!(
+            (s.download_dir, s.tools_dir),
+            (None, None),
+            "the default stays unset"
+        );
+
+        form.folder = at("videos").display().to_string();
+        form.tools = at("apps/reelgene").display().to_string();
+        let s = form.finish();
+        assert_eq!(s.download_dir, Some(at("videos")));
+        assert_eq!(s.tools_dir, Some(at("apps/reelgene")));
+        assert_eq!(form.tools_dir(), at("apps/reelgene"));
+
+        form.folder = "videos".into();
+        assert_eq!(form.folder_problem(), Some(FolderProblem::NotAbsolute));
+        form.folder.clear();
+        assert_eq!(form.folder_problem(), None, "blank is the default");
+        assert_eq!(form.finish().download_dir, None);
+        let file = std::env::current_exe().unwrap();
+        assert_eq!(
+            folder_problem(&file.display().to_string()),
+            Some(FolderProblem::NotAFolder)
         );
     }
 

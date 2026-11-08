@@ -327,6 +327,23 @@ impl Desktop {
         });
     }
 
+    /// Move ffmpeg and yt-dlp to the tools folder chosen, then look for
+    /// them again; the window hears the outcome.
+    pub fn move_tools(self: &Arc<Self>, from: PathBuf, to: PathBuf) {
+        let me = Arc::clone(self);
+        self.rt.spawn(async move {
+            let (a, b) = (from.clone(), to.clone());
+            let moved = tokio::task::spawn_blocking(move || reelgene_app::app::move_tools(&a, &b))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            let _ = me.find_ffmpeg(false).await;
+            me.refresh_yt_dlp();
+            let result = moved.map(|_| to.display().to_string());
+            let _ = me.tx.send(Msg::ToolsMoved(result));
+            me.wake();
+        });
+    }
+
     pub fn cookie_state(&self) -> CookieState {
         lock(&self.cookie_state).clone()
     }

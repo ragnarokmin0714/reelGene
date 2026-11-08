@@ -64,6 +64,8 @@ pub(crate) enum Msg {
     YtDlp(desktop::YtTask, Result<String, String>),
     /// Cookies imported (`true`) or removed, or why not.
     Cookies(Result<bool, String>),
+    /// ffmpeg and yt-dlp moved to a new tools folder (its path), or why not.
+    ToolsMoved(Result<String, String>),
 }
 
 pub(crate) struct Grabbed {
@@ -101,7 +103,9 @@ pub(crate) enum Action {
     Open(Dialog),
     Close,
     Add(NewJob),
-    SaveSettings(Box<Settings>),
+    /// The settings, and whether ffmpeg and yt-dlp go along to a new tools
+    /// folder.
+    SaveSettings(Box<Settings>, bool),
     /// Open the system's folder or file dialog for a field.
     Browse(dialogs::Field),
     Report,
@@ -318,6 +322,10 @@ impl Gui {
                 }
                 Err(e) => self.toast(e, true),
             },
+            Msg::ToolsMoved(result) => match result {
+                Ok(to) => self.toast((self.t.tools_moved)(&to), false),
+                Err(e) => self.toast(e, true),
+            },
             Msg::Cookies(result) => match result {
                 Ok(imported) => {
                     let t = self.t;
@@ -400,8 +408,8 @@ impl Gui {
                 self.desktop.add(job);
                 self.act(Action::Close);
             }
-            Action::SaveSettings(new) => {
-                self.save_settings(*new);
+            Action::SaveSettings(new, carry) => {
+                self.save_settings(*new, carry);
                 self.act(Action::Close);
             }
             Action::Browse(field) => self.browse(field),
@@ -416,7 +424,7 @@ impl Gui {
             Action::RecheckFfmpeg => self.desktop.recheck_ffmpeg(true),
             Action::FetchFfmpeg => self.desktop.fetch_ffmpeg(),
             Action::OpenSettings(tab) => {
-                let mut form = dialogs::SettingsForm::new(&self.settings, &self.default_folder());
+                let mut form = self.settings_form();
                 form.tab = tab;
                 self.desktop.refresh_cookies();
                 self.dialog = Some(Dialog::Settings(Box::new(form)));
@@ -465,16 +473,30 @@ impl Gui {
         }
     }
 
-    /// Where downloads go when settings name no folder.
-    pub(crate) fn default_folder(&self) -> PathBuf {
-        self.desktop.places.downloads.clone()
-    }
-
     pub(crate) fn download_dir(&self) -> PathBuf {
         desktop::download_dir(&self.settings, &self.desktop.places)
     }
 
-    fn save_settings(&mut self, new: Settings) {
+    /// The settings window's form for the settings in use.
+    pub(crate) fn settings_form(&self) -> dialogs::SettingsForm {
+        let places = &self.desktop.places;
+        dialogs::SettingsForm::new(&self.settings, &places.downloads, &places.tools_dir())
+    }
+
+    /// `carry`: take ffmpeg and yt-dlp along if the tools folder changed.
+    fn save_settings(&mut self, mut new: Settings, carry: bool) {
+        let places = &self.desktop.places;
+        let (from, to) = (
+            reelgene_app::app::tools_dirs(&self.settings, places).dir,
+            reelgene_app::app::tools_dirs(&new, places).dir,
+        );
+        let carry = carry && from != to;
+        if carry {
+            // Where they will be once moved; the move itself runs off the
+            // window's thread and looks for them again when done.
+            new.ffmpeg = reelgene_app::app::moved_path(&new.ffmpeg, &from, &to);
+            new.yt_dlp = reelgene_app::app::moved_path(&new.yt_dlp, &from, &to);
+        }
         let old = std::mem::replace(&mut self.settings, new);
         if let Some(path) = self.settings_path.clone()
             && let Err(e) = self.settings.save(&path)
@@ -513,6 +535,9 @@ impl Gui {
         self.t = text::pick(s.language.as_deref());
         self.ctx.set_theme(theme::preference(&s.theme));
         self.apply_motion();
+        if carry {
+            self.desktop.move_tools(from, to);
+        }
     }
 
     fn apply_motion(&mut self) {
