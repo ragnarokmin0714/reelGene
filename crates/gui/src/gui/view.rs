@@ -46,6 +46,33 @@ pub(super) fn draw(g: &mut Gui, ui: &mut egui::Ui) {
     }
 }
 
+/// The link field's right-click menu: what Ctrl+V, Ctrl+A and clearing do,
+/// for those who reach for the mouse.
+fn input_menu(t: &Text, field: &egui::Response, text: &str, actions: &mut Vec<Action>) {
+    field.context_menu(|ui| {
+        if ui.button(t.paste).clicked() {
+            actions.push(Action::Paste { read: false });
+            ui.close();
+        }
+        ui.add_enabled_ui(!text.is_empty(), |ui| {
+            if ui.button(t.select_all).clicked() {
+                let ctx = ui.ctx().clone();
+                if let Some(mut state) = TextEdit::load_state(&ctx, field.id) {
+                    let all = egui::text_selection::CCursorRange::select_all_str(text);
+                    state.cursor.set_char_range(Some(all));
+                    state.store(&ctx, field.id);
+                }
+                field.request_focus();
+                ui.close();
+            }
+            if ui.button(t.clear_input).clicked() {
+                actions.push(Action::ClearInput);
+                ui.close();
+            }
+        });
+    });
+}
+
 fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
     let t = g.t;
     let frame = Frame::new().fill(p.bg).inner_margin(Margin {
@@ -59,12 +86,19 @@ fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>
         .show_separator_line(false)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let width = (ui.available_width() - 96.0).max(160.0);
+                let width = (ui.available_width() - 214.0).max(160.0);
                 let edit = TextEdit::singleline(&mut g.input)
                     .hint_text(t.input_hint)
                     .desired_width(width)
                     .margin(Margin::symmetric(12, 7));
                 let response = ui.add(edit).on_hover_text(t.input_hint);
+                input_menu(t, &response, &g.input, actions);
+                if widgets::button(ui, Kind::Secondary, Some(Icon::Paste), t.paste_button)
+                    .on_hover_text(t.paste_link)
+                    .clicked()
+                {
+                    actions.push(Action::Paste { read: true });
+                }
                 let entered =
                     response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = widgets::button(ui, Kind::Primary, Some(Icon::Plus), t.add).clicked();

@@ -22,7 +22,7 @@ use model::{Effect, Model};
 use reelgene_app::app::{App, OpenError};
 use reelgene_app::handoff::{self, Reply, Request};
 use reelgene_app::settings::Settings;
-use reelgene_core::detect::Link;
+use reelgene_core::detect::{self, Link};
 use reelgene_core::engine::{Command, Discovery, Event, QualityOption, Target};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
@@ -118,6 +118,12 @@ pub(crate) enum Action {
     OpenSettings(dialogs::Tab),
     YtDlp(desktop::YtTask),
     RemoveCookies,
+    /// The clipboard's text into the link field (`read`: and read the
+    /// links in it at once, as the paste button does).
+    Paste {
+        read: bool,
+    },
+    ClearInput,
 }
 
 pub struct Gui {
@@ -139,6 +145,8 @@ pub struct Gui {
     pub(crate) animate: bool,
     quitting: bool,
     pub(crate) restart_note: bool,
+    /// Where pasting reads from: the system clipboard; tests set their own.
+    pub(crate) read_clipboard: fn() -> Result<String, String>,
 }
 
 impl Gui {
@@ -177,6 +185,7 @@ impl Gui {
             animate: true,
             quitting: false,
             restart_note: false,
+            read_clipboard: crate::clipboard::read_text,
         };
         gui.apply_motion();
         for w in stash.warnings {
@@ -433,6 +442,8 @@ impl Gui {
             }
             Action::YtDlp(task) => self.desktop.yt_dlp_task(task),
             Action::RemoveCookies => self.desktop.cookies(None),
+            Action::Paste { read } => self.paste(read),
+            Action::ClearInput => self.input.clear(),
         }
     }
 
@@ -479,6 +490,31 @@ impl Gui {
 
     pub(crate) fn download_dir(&self) -> PathBuf {
         desktop::download_dir(&self.settings, &self.desktop.places)
+    }
+
+    /// Paste what the clipboard holds: with `read`, links in it are read at
+    /// once and anything else lands in the field to look at; without, it is
+    /// added to what the field holds.
+    fn paste(&mut self, read: bool) {
+        let text = match (self.read_clipboard)() {
+            Ok(text) if !text.trim().is_empty() => text,
+            Ok(_) => return self.toast(self.t.clipboard_empty.to_owned(), true),
+            Err(e) => return self.toast(e, true),
+        };
+        if !read {
+            self.input.push_str(text.trim());
+            return;
+        }
+        let links = detect::find_links(&text);
+        if links.is_empty() {
+            self.input = text.trim().to_owned();
+            self.toast(format!("{}?", self.input), true);
+            return;
+        }
+        // Pasted by the user: local-network links are theirs to read.
+        for link in links {
+            self.act(Action::Read(link.url));
+        }
     }
 
     /// The settings window's form for the settings in use.

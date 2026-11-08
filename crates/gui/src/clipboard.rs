@@ -74,6 +74,16 @@ fn run(enabled: &AtomicBool, stop: &AtomicBool, found: impl Fn(Vec<Link>)) {
     }
 }
 
+/// The clipboard's text now, for the paste button and menu.
+pub(crate) fn read_text() -> Result<String, String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    match cb.get_text() {
+        Ok(text) => Ok(text),
+        Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Remembers what was already looked at, by hash only.
 #[derive(Default)]
 struct Seen {

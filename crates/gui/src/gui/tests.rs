@@ -291,6 +291,75 @@ fn an_empty_queue_says_how_to_start() {
     let _ = h.get_by_label(EN.no_ffmpeg);
 }
 
+thread_local! {
+    /// What the test's clipboard holds; the window reads it on its thread.
+    static CLIPBOARD: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+fn test_clipboard() -> Result<String, String> {
+    Ok(CLIPBOARD.with(|c| c.borrow().clone()))
+}
+
+fn copy(text: &str) {
+    CLIPBOARD.with(|c| *c.borrow_mut() = text.to_owned());
+}
+
+#[test]
+fn the_paste_button_reads_the_copied_link_at_once() {
+    let env = env("paste-button");
+    let mut h = window(&env, english());
+    h.state_mut().gui().read_clipboard = test_clipboard;
+    copy(&format!("look: {}/show/ep01/index.m3u8 !", env.base));
+    h.get_by_label(EN.paste_button).click();
+    until(&mut h, "the job row", |h| {
+        h.query_all_by_label("ep01").next().is_some()
+    });
+    assert!(
+        h.state_mut().gui().input.is_empty(),
+        "nothing left to clear"
+    );
+
+    copy("not a link at all");
+    h.get_by_label(EN.paste_button).click();
+    settle(&mut h);
+    assert_eq!(
+        h.state_mut().gui().input,
+        "not a link at all",
+        "left to look at"
+    );
+    let _ = h.get_by_label("not a link at all?");
+
+    copy("   ");
+    h.get_by_label(EN.paste_button).click();
+    settle(&mut h);
+    let _ = h.get_by_label(EN.clipboard_empty);
+}
+
+#[test]
+fn the_link_field_has_a_menu_to_paste_and_clear() {
+    let env = env("paste-menu");
+    let mut h = window(&env, english());
+    h.state_mut().gui().read_clipboard = test_clipboard;
+    copy("https://example.com/a.m3u8");
+    h.get_by_role(egui::accesskit::Role::TextInput)
+        .click_secondary();
+    settle(&mut h);
+    h.get_by_label(EN.paste).click();
+    settle(&mut h);
+    assert_eq!(
+        h.state_mut().gui().input,
+        "https://example.com/a.m3u8",
+        "pasted, not read yet"
+    );
+    h.get_by_role(egui::accesskit::Role::TextInput)
+        .click_secondary();
+    settle(&mut h);
+    let _ = h.get_by_label(EN.select_all);
+    h.get_by_label(EN.clear_input).click();
+    settle(&mut h);
+    assert!(h.state_mut().gui().input.is_empty());
+}
+
 #[test]
 fn a_pasted_playlist_is_read_queued_and_downloaded() {
     let env = env("paste");
@@ -1308,6 +1377,18 @@ mod screens {
                 g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
             });
         }
+        // The link field's menu, open.
+        shoot_then(
+            "input-menu",
+            [900.0, 420.0],
+            Dark,
+            "zh-TW",
+            |g| g.input = "https://example.com/show/index.m3u8".into(),
+            |h| {
+                h.get_by_role(egui::accesskit::Role::TextInput)
+                    .click_secondary()
+            },
+        );
         // The yt-dlp part of the tools page, in both languages.
         for (name, theme, lang) in [
             ("settings-yt-dlp", Dark, "zh-TW"),

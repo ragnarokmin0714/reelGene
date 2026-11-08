@@ -28,6 +28,7 @@ pub enum Icon {
     Download,
     Sun,
     Moon,
+    Paste,
 }
 
 /// Draw `icon` filling `rect` (square is best).
@@ -125,6 +126,22 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 angle(tip(from)),
             ));
             painter.add(Shape::closed_line(pts, stroke));
+        }
+        Icon::Paste => {
+            // A clipboard: the board, and the clip on its top edge.
+            painter.rect_stroke(
+                Rect::from_min_max(p(0.24, 0.22), p(0.76, 0.86)),
+                CornerRadius::same(2),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            painter.rect_filled(
+                Rect::from_min_max(p(0.38, 0.14), p(0.62, 0.30)),
+                CornerRadius::same(2),
+                color,
+            );
+            line(&[p(0.36, 0.50), p(0.64, 0.50)]);
+            line(&[p(0.36, 0.66), p(0.58, 0.66)]);
         }
         Icon::Plus => {
             line(&[p(0.5, 0.20), p(0.5, 0.80)]);
