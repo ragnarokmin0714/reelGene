@@ -78,9 +78,10 @@ Without a tray, closing the window quits. Sounds play through `pw-play`,
 
 ## The window
 
-Run `reelgene` with no arguments. Paste a link in the box at the top (or just
-copy one anywhere), and it is read and queued; a series opens the episode
-picker first. **Start** and **Stop** run or hold the whole queue; each series
+Run `reelgene` with no arguments. Paste a link in the box at the top — Ctrl+V,
+the **Paste link** button (which reads it at once), or the box's right-click
+menu — or just copy one anywhere, and it is read and queued; a series opens
+the episode picker first. **Start** and **Stop** run or hold the whole queue; each series
 and episode has its own pause, resume, retry, remove and open-folder buttons.
 **Settings** covers the download folder, file names, quality, how much runs
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
@@ -88,7 +89,7 @@ export a problem report; it is split into pages (downloads, connections,
 look and sounds, behaviour), and the theme can follow the system or stay
 light or dark — the sun/moon button switches at once. When a video comes in
 several qualities, reelgene lists them with their estimated sizes; tick one,
-or several to get each. The window shows its version in the title bar and
+or several to get each (**All qualities** ticks them all). The window shows its version in the title bar and
 remembers its size and place. Starting
 reelgene again while it runs brings the window back instead of opening a
 second one. When a batch ends while the window is closed or in the
