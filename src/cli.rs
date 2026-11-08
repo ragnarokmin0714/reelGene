@@ -451,7 +451,13 @@ async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", net::redact(&url)))?;
         let total = found.found.episodes.len();
         let resolver = found.resolver.clone();
+        // Which quality the download gets, and how big, to say so.
+        let options = engine.qualities(&url, &found).await.unwrap_or_default();
+        let note = reelgene_core::engine::choose(&options, quality)
+            .map(|q| q.note())
+            .unwrap_or_default();
         let mut job = found.into_job(url.clone(), out.clone());
+        job.note = note;
         if let Some(t) = &args.title {
             job.title.clone_from(t);
         }
@@ -476,8 +482,11 @@ async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
         }
         let (count, title) = (job.episodes.len(), job.title.clone());
         let id = engine.add(job).await.map_err(|e| e.to_string())?;
+        let told = told(note, total > 1)
+            .map(|t| format!(" ({t})"))
+            .unwrap_or_default();
         println!(
-            "queued [{}] {title}: {count} of {total} episode{}  →  {}",
+            "queued [{}] {title}: {count} of {total} episode{}{told}  →  {}",
             id.0,
             if total == 1 { "" } else { "s" },
             out.display()
@@ -703,6 +712,18 @@ fn describe(notice: &Notice) -> String {
     }
 }
 
+/// "1080p, about 63 MB an episode": what a job was told about its quality.
+fn told(note: reelgene_core::store::QualityNote, series: bool) -> Option<String> {
+    let each = if series { " an episode" } else { "" };
+    let size = note.size.map(|b| format::bytes(b as f64));
+    match (note.height, size) {
+        (Some(h), Some(s)) => Some(format!("{h}p, about {s}{each}")),
+        (Some(h), None) => Some(format!("{h}p")),
+        (None, Some(s)) => Some(format!("about {s}{each}")),
+        (None, None) => None,
+    }
+}
+
 fn list(jobs: &[JobView]) {
     if jobs.is_empty() {
         println!("the queue is empty; download with:  reelgene get <URL>");
@@ -719,6 +740,9 @@ fn list(jobs: &[JobView]) {
         }
         if paused > 0 {
             extra.push_str(&format!(", {paused} paused"));
+        }
+        if let Some(t) = told(job.note, job.episodes.len() > 1) {
+            extra.push_str(&format!(", {t}"));
         }
         println!(
             "[{}] {}  {done}/{} done{extra}  →  {}",

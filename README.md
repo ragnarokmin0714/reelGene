@@ -87,9 +87,14 @@ and episode has its own pause, resume, retry, remove and open-folder buttons.
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
 export a problem report; it is split into pages (downloads, connections,
 look and sounds, behaviour), and the theme can follow the system or stay
-light or dark — the sun/moon button switches at once. When a video comes in
-several qualities, reelgene lists them with their estimated sizes; tick one,
-or several to get each (**All qualities** ticks them all). The window shows its version in the title bar and
+light or dark — the sun/moon button switches at once. reelgene takes the
+quality set in Settings → Downloads (the best, by default) from those the
+video comes in, and says which it got and about how big: in the message when
+it is added, in the episode picker, and beside the series in the queue
+(`reelgene add` and `list` say it too). To choose yourself each time, turn on
+**Ask which quality when a video comes in several** (Settings → Behaviour):
+reelgene then lists them with their estimated sizes; tick one, or several to
+get each (**All qualities** ticks them all). The window shows its version in the title bar and
 remembers its size and place. Starting
 reelgene again while it runs brings the window back instead of opening a
 second one. When a batch ends while the window is closed or in the

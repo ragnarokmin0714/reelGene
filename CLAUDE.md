@@ -118,14 +118,22 @@ jar was not replaced or removed meanwhile. Crash leftovers are swept in
 queue, logs or the report; summaries show counts and domains only. Import
 and removal act at once, not on Save.
 
-**Choosing qualities.** `Engine::qualities` resolves the first episode and
-lists its master playlist's variants, one per height (the richest, which is
-what `Quality::Height` then picks), sized from `AVERAGE-BANDWIDTH` (else
-`BANDWIDTH`) times the length of one variant's playlist. A link the user adds
-that offers two or more opens the picker even for one episode
-(`Settings::ask_quality`); one job per quality ticked, and with several the
-template gains ` [720p]` so the files stay apart. Links queued by themselves
-never ask.
+**Telling, and choosing, qualities.** `Engine::qualities` resolves the first
+episode and lists its master playlist's variants, one per height (the
+richest, which is what `Quality::Height` then picks), sized from
+`AVERAGE-BANDWIDTH` (else `BANDWIDTH`) times the length of one variant's
+playlist. Every link read is looked up this way, and `engine::choose` (the
+same choice the download makes) picks the one the settings' quality gets;
+its height and size are stored with the job (`QualityNote`, schema 2:
+`job.height`, `job.size`) only to be told — the toast, the picker, a badge
+beside the series (dropped when the row is too narrow; the title's tooltip
+keeps it), `reelgene add`/`list`. Asking is off by default since settings
+version 2 (Roger, 2026-11-09: choosing felt redundant, being told did not);
+a version-1 file's `ask_quality: true` was the old written-out default and is
+turned off on load (`Settings::upgraded`). With it on, a link the user adds
+that offers two or more opens the picker even for one episode; one job per
+quality ticked, and with several the template gains ` [720p]` so the files
+stay apart. Links queued by themselves never ask.
 
 **Resume granularity.** Series per episode (scheduler), playlist per segment,
 single file per byte (`Range` + `If-Range` with the stored ETag or

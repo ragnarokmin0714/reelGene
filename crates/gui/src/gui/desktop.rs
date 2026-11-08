@@ -540,13 +540,18 @@ impl Desktop {
         self.rt.spawn(async move {
             let msg = match me.engine.discover(&url, None).await {
                 Ok(d) => {
-                    // A failed look at the qualities is no reason to stop.
-                    let qualities = match ask && settings.ask_quality {
-                        true => me.engine.qualities(&url, &d).await.unwrap_or_default(),
-                        false => Vec::new(),
-                    };
-                    if d.found.episodes.len() == 1 && qualities.len() < 2 {
-                        let job = job(&settings, &me.places, url.clone(), d);
+                    // Looked up either way, to tell which quality it gets and
+                    // how big; a failed look is no reason to stop.
+                    let mut qualities = me.engine.qualities(&url, &d).await.unwrap_or_default();
+                    let choose = ask && settings.ask_quality && qualities.len() > 1;
+                    if !choose {
+                        // Only the one the settings get: told, not asked.
+                        let chosen = reelgene_core::engine::choose(&qualities, settings.quality());
+                        qualities = chosen.cloned().into_iter().collect();
+                    }
+                    if d.found.episodes.len() == 1 && !choose {
+                        let mut job = job(&settings, &me.places, url.clone(), d);
+                        job.note = qualities.first().map(|q| q.note()).unwrap_or_default();
                         me.added(url, job).await
                     } else {
                         Msg::Discovered {
@@ -577,12 +582,12 @@ impl Desktop {
     }
 
     async fn added(&self, url: Url, job: NewJob) -> Msg {
-        let title = job.title.clone();
+        let told = (job.title.clone(), job.note);
         let result = self
             .engine
             .add(job)
             .await
-            .map(|_| title)
+            .map(|_| told)
             .map_err(|e| e.to_string());
         Msg::Added { url, result }
     }

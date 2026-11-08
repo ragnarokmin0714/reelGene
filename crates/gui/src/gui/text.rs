@@ -81,6 +81,14 @@ pub struct Text {
     pub delete_files: &'static str,
 
     pub added: fn(&str) -> String,
+    /// A title and what it was told about its quality.
+    pub added_told: fn(&str, &str) -> String,
+    /// A quality's height and size (per episode for a series), as much as
+    /// is known.
+    pub quality_note: fn(Option<u32>, Option<&str>, bool) -> Option<String>,
+    pub quality_unknown: &'static str,
+    /// The size of the episodes ticked, all together.
+    pub episodes_total: fn(&str, usize) -> String,
     pub batch_done: fn(usize, usize) -> String,
 
     pub naming: &'static str,
@@ -287,6 +295,18 @@ pub static EN: Text = Text {
     remove_title: "Remove from the queue?",
     delete_files: "Also delete the finished files",
     added: |t| format!("Added: {t}"),
+    added_told: |t, told| format!("Added: {t} ({told})"),
+    quality_note: |height, size, series| {
+        let each = if series { " an episode" } else { "" };
+        match (height, size) {
+            (Some(h), Some(s)) => Some(format!("{h}p · about {s}{each}")),
+            (Some(h), None) => Some(format!("{h}p")),
+            (None, Some(s)) => Some(format!("about {s}{each}")),
+            (None, None) => None,
+        }
+    },
+    quality_unknown: "The site does not say",
+    episodes_total: |size, n| format!("about {size} for the {n} chosen"),
     batch_done: |done, failed| {
         if failed == 0 {
             format!("All done: {done} finished")
@@ -535,6 +555,18 @@ pub static ZH_TW: Text = Text {
     remove_title: "要從佇列移除嗎？",
     delete_files: "一併刪除已完成的檔案",
     added: |t| format!("已加入：{t}"),
+    added_told: |t, told| format!("已加入：{t}（{told}）"),
+    quality_note: |height, size, series| {
+        let each = if series { "每集" } else { "" };
+        match (height, size) {
+            (Some(h), Some(s)) => Some(format!("{h}p · {each}約 {s}")),
+            (Some(h), None) => Some(format!("{h}p")),
+            (None, Some(s)) => Some(format!("{each}約 {s}")),
+            (None, None) => None,
+        }
+    },
+    quality_unknown: "網站沒有提供畫質資訊",
+    episodes_total: |size, n| format!("所選 {n} 集共約 {size}"),
     batch_done: |done, failed| {
         if failed == 0 {
             format!("全部完成：{done} 集")

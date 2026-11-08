@@ -263,7 +263,13 @@ fn a_running_queue_takes_links_handed_to_it() {
     // The first one stays until the handed link is downloaded too.
     let out = first.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", text(&out));
-    assert!(text(&out).contains("handed   queued [2]"), "{}", text(&out));
+    // Its number depends on which was queued first: the first one looks up
+    // its quality before it queues.
+    assert!(
+        text(&out).contains("handed   queued [") && text(&out).contains("] b"),
+        "{}",
+        text(&out)
+    );
     assert!(
         text(&out).contains("finished: 2 done, 0 failed"),
         "{}",
@@ -397,4 +403,37 @@ fn ffmpeg_is_imported_from_a_file_and_used() {
     assert!(!out.status.success());
     let out = home.run(&["ffmpeg", "--from", "x.7z"]);
     assert!(text(&out).contains(".zip and .tar.xz"), "{}", text(&out));
+}
+
+#[test]
+fn adding_says_which_quality_it_gets_and_how_big() {
+    let base = serve(HashMap::from([
+        (
+            "/multi/master.m3u8",
+            b"#EXTM3U\n\
+              #EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080\nv1080.m3u8\n\
+              #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\nv360.m3u8\n"
+                .to_vec(),
+        ),
+        ("/multi/v1080.m3u8", playlist()),
+        ("/multi/v360.m3u8", playlist()),
+    ]));
+    let home = Home::new("told");
+    let url = format!("{base}/multi/master.m3u8");
+    let out = home.run(&["add", &url, "--title", "Multi"]);
+    assert!(out.status.success(), "{}", text(&out));
+    // 8 Mbit/s for the playlist's 8 seconds: 8 MB.
+    assert!(
+        text(&out).contains("(1080p, about 8.0 MB)"),
+        "{}",
+        text(&out)
+    );
+    let out = home.run(&["add", &url, "--title", "Small", "--quality", "480"]);
+    assert!(text(&out).contains("(360p, about"), "{}", text(&out));
+    let out = home.run(&["list"]);
+    assert!(
+        text(&out).contains("[1] Multi  0/1 done, 1080p, about 8.0 MB"),
+        "{}",
+        text(&out)
+    );
 }

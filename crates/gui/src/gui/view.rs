@@ -297,7 +297,9 @@ fn job_card(
             let c = job.counts();
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    ui.add(
+                    let series = job.episodes.len() > 1;
+                    let told = super::note_text(t, job.note, series);
+                    let title = ui.add(
                         Label::new(
                             RichText::new(&job.title)
                                 .font(theme::strong(15.0))
@@ -305,7 +307,25 @@ fn job_card(
                         )
                         .truncate(),
                     );
+                    if let Some(told) = &told {
+                        title.on_hover_text(told);
+                    }
                     widgets::badge(ui, &(t.job_done)(c.done, c.total), p.weak);
+                    // Only with room to spare: the failed count and the
+                    // buttons on the right come first; the title's tooltip
+                    // still says it.
+                    if let Some(told) = &told {
+                        let failed = if c.failed > 0 {
+                            widgets::badge_width(ui, &(t.job_failed)(c.failed)) + 8.0
+                        } else {
+                            0.0
+                        };
+                        let buttons = 4.0 * 32.0;
+                        if ui.available_width() > widgets::badge_width(ui, told) + failed + buttons
+                        {
+                            widgets::badge(ui, told, p.weak);
+                        }
+                    }
                     if c.failed > 0 {
                         widgets::badge(ui, &(t.job_failed)(c.failed), p.danger);
                     }

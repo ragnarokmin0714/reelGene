@@ -10,6 +10,7 @@ use std::path::PathBuf;
 pub struct JobRow {
     pub id: JobId,
     pub title: String,
+    pub note: reelgene_core::store::QualityNote,
     pub source: String,
     pub out_dir: PathBuf,
     pub episodes: Vec<EpRow>,
@@ -194,6 +195,7 @@ impl JobRow {
 fn row(job: JobView, now: f64) -> JobRow {
     JobRow {
         id: job.id,
+        note: job.note,
         title: job.title,
         source: job.source,
         out_dir: job.out_dir,
@@ -221,6 +223,7 @@ mod tests {
 
     fn job(id: i64, eps: &[i64]) -> JobView {
         JobView {
+            note: Default::default(),
             id: JobId(id),
             title: format!("job{id}"),
             source: format!("https://site.example/{id}"),

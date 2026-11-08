@@ -10,7 +10,8 @@ use reelgene_core::paths::DEFAULT_TEMPLATE;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const VERSION: u32 = 1;
+/// 2: `ask_quality` became off by default (see `upgraded`).
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -81,7 +82,8 @@ pub struct Settings {
     /// Queue detected links by themselves instead of listing them first.
     pub auto_add: bool,
     /// When a video comes in several qualities, ask which (one or more)
-    /// rather than take `quality`. Links queued by themselves never ask.
+    /// rather than take `quality`, which is then only told. Links queued by
+    /// themselves never ask.
     pub ask_quality: bool,
     /// A system notification when a batch ends and the window is not in front.
     pub notify: bool,
@@ -119,7 +121,7 @@ impl Default for Settings {
             language: None,
             close_to_tray: true,
             auto_add: false,
-            ask_quality: true,
+            ask_quality: false,
             notify: true,
         }
     }
@@ -143,7 +145,7 @@ impl Settings {
             }
         };
         match serde_json::from_str::<Self>(&text) {
-            Ok(s) => (s.sanitized(), None),
+            Ok(s) => (s.upgraded().sanitized(), None),
             Err(e) => {
                 let bad = path.with_extension("json.bad");
                 let _ = std::fs::rename(path, &bad);
@@ -168,6 +170,17 @@ impl Settings {
     }
 
     /// Values a hand-edited file can get wrong, pulled back into range.
+    /// A file from an older version, brought to this one. Version 1 wrote
+    /// every option out, so its `ask_quality: true` was the old default, not
+    /// a choice: asking is off now (Roger, 2026-11-09), for those files too.
+    fn upgraded(mut self) -> Self {
+        if self.version < 2 {
+            self.ask_quality = false;
+        }
+        self.version = self.version.max(VERSION);
+        self
+    }
+
     fn sanitized(mut self) -> Self {
         let d = Self::default();
         self.episodes = self.episodes.clamp(1, 8);
@@ -199,6 +212,32 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_first_version_file_stops_asking_for_quality_and_a_choice_since_stays() {
+        let dir = std::env::temp_dir().join(format!("reelgene-settings-v1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"version": 1, "ask_quality": true, "quality": "720"}"#,
+        )
+        .unwrap();
+        let (s, warning) = Settings::load(&path);
+        assert_eq!(warning, None);
+        assert!(!s.ask_quality, "the old default, not a choice");
+        assert_eq!(
+            (s.version, s.quality.as_str()),
+            (VERSION, "720"),
+            "the rest kept"
+        );
+        std::fs::write(&path, r#"{"version": 2, "ask_quality": true}"#).unwrap();
+        assert!(
+            Settings::load(&path).0.ask_quality,
+            "chosen after the change"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let dir =

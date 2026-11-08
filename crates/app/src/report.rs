@@ -145,6 +145,7 @@ mod tests {
         )
         .unwrap();
         let jobs = vec![JobView {
+            note: Default::default(),
             id: JobId(3),
             title: "劇".into(),
             source: "https://site.example/drama/1?…".into(),

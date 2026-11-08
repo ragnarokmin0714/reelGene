@@ -913,9 +913,46 @@ fn a_tools_folder_among_downloads_cannot_be_saved() {
 }
 
 #[test]
+fn a_video_in_several_qualities_is_queued_with_the_quality_told_not_asked() {
+    let env = env("quality-told");
+    let mut h = window(&env, english());
+    type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
+    until(&mut h, "queued, with its quality said", |h| {
+        h.query_by_label_contains("Added: multi (1080p · about")
+            .is_some()
+    });
+    assert!(
+        h.query_by_label(EN.all_qualities).is_none(),
+        "nothing asked"
+    );
+    // And on the job's row, for as long as it is there.
+    until(&mut h, "the row's quality", |h| {
+        h.query_all_by_label_contains("1080p · about").count() >= 2
+    });
+    let jobs = env.rt.block_on(env.engine.snapshot()).unwrap();
+    assert_eq!(jobs[0].note.height, Some(1080), "kept with the job");
+
+    // The settings' quality decides which: told as such.
+    let smaller = Settings {
+        quality: "480".into(),
+        ..english()
+    };
+    let env = super::tests::env("quality-told-480");
+    let mut h = window(&env, smaller);
+    type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
+    until(&mut h, "the smaller one", |h| {
+        h.query_by_label_contains("Added: multi (360p").is_some()
+    });
+}
+
+#[test]
 fn all_qualities_are_ticked_and_unticked_with_one_box() {
     let env = env("all-qualities");
-    let mut h = window(&env, english());
+    let asking = Settings {
+        ask_quality: true,
+        ..english()
+    };
+    let mut h = window(&env, asking);
     type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
     until(&mut h, "the qualities", |h| {
         h.query_by_label(EN.all_qualities).is_some()
@@ -943,7 +980,11 @@ fn all_qualities_are_ticked_and_unticked_with_one_box() {
 #[test]
 fn a_video_in_several_qualities_asks_which_and_can_take_two() {
     let env = env("qualities");
-    let mut h = window(&env, english());
+    let asking = Settings {
+        ask_quality: true,
+        ..english()
+    };
+    let mut h = window(&env, asking);
     type_link(&mut h, &format!("{}/multi/master.m3u8", env.base));
     until(&mut h, "the qualities with their sizes", |h| {
         h.query_by_label_contains("1080p · 5.0 Mbps · about")
@@ -1203,6 +1244,10 @@ mod screens {
     fn demo(gui: &mut Gui) {
         let jobs = vec![
             JobView {
+                note: reelgene_core::store::QualityNote {
+                    height: Some(1080),
+                    size: Some(63_000_000),
+                },
                 id: JobId(1),
                 title: "霸道總裁的契約新娘".into(),
                 source: "https://example.com/drama/123".into(),
@@ -1235,6 +1280,7 @@ mod screens {
                 ],
             },
             JobView {
+                note: Default::default(),
                 id: JobId(2),
                 title: "Weekend trip vlog".into(),
                 source: "https://example.org/v/trip.m3u8".into(),
@@ -1348,6 +1394,37 @@ mod screens {
             };
             let url = Url::parse("https://example.com/drama/123").unwrap();
             let qualities = [(1080, 4_200_000), (720, 2_100_000), (480, 900_000)]
+                .map(|(height, bitrate)| reelgene_core::engine::QualityOption {
+                    quality: reelgene_core::hls::Quality::Height(height),
+                    height,
+                    bitrate,
+                    size: Some(bitrate / 8 * 120),
+                })
+                .to_vec();
+            let pick =
+                super::super::dialogs::Pick::new(url, d, &g.settings, g.download_dir(), qualities);
+            g.dialog = Some(super::super::Dialog::Pick(Box::new(pick)));
+        });
+        shoot_sized("pick-told", [900.0, 700.0], Dark, "zh-TW", |g| {
+            use reelgene_core::resolver::{Discovered, EpisodeRef};
+            let found = Discovered {
+                title: "霸道總裁的契約新娘".into(),
+                spec: json!({}),
+                episodes: (1..=40)
+                    .map(|i| EpisodeRef {
+                        index: i,
+                        title: format!("第{i}集"),
+                        hint: json!({}),
+                    })
+                    .collect(),
+            };
+            let d = reelgene_core::engine::Discovery {
+                resolver: "direct".into(),
+                found,
+            };
+            let url = Url::parse("https://example.com/drama/123").unwrap();
+            // Told, not asked: only the one the settings' quality gets.
+            let qualities = [(1080, 4_200_000)]
                 .map(|(height, bitrate)| reelgene_core::engine::QualityOption {
                     quality: reelgene_core::hls::Quality::Height(height),
                     height,

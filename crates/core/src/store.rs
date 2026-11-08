@@ -80,6 +80,8 @@ impl Track {
 #[derive(Debug, Clone)]
 pub struct JobRecord {
     pub id: JobId,
+    /// What the user was told about the quality when it was added.
+    pub note: QualityNote,
     pub title: String,
     /// The link the user added.
     pub source: Url,
@@ -113,6 +115,9 @@ pub struct EpisodeRecord {
 /// Everything needed to queue a job.
 #[derive(Debug, Clone)]
 pub struct NewJob {
+    /// What the user is told about the quality; kept, shown, never used to
+    /// pick (that is `quality`).
+    pub note: QualityNote,
     pub title: String,
     pub source: Url,
     pub resolver: String,
@@ -125,7 +130,17 @@ pub struct NewJob {
     pub quality: Quality,
 }
 
-const MIGRATIONS: &[&str] = &[r#"
+/// The quality a job's first episode comes in, as found when it was added,
+/// with its estimated size: for telling the user, not for choosing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QualityNote {
+    pub height: Option<u32>,
+    /// Bytes for one episode; an estimate.
+    pub size: Option<u64>,
+}
+
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE job (
         id         INTEGER PRIMARY KEY,
         title      TEXT    NOT NULL,
@@ -159,7 +174,12 @@ const MIGRATIONS: &[&str] = &[r#"
         bytes      INTEGER NOT NULL,
         PRIMARY KEY (episode_id, track, seq)
     );
-"#];
+"#,
+    r#"
+    ALTER TABLE job ADD COLUMN height INTEGER;
+    ALTER TABLE job ADD COLUMN size   INTEGER;
+"#,
+];
 
 type Call = Box<dyn FnOnce(&mut Connection) + Send>;
 
@@ -230,8 +250,9 @@ impl Store {
         self.call(move |conn| {
             let tx = conn.transaction()?;
             tx.execute(
-                "INSERT INTO job (title, source, resolver, spec, out_dir, template, quality, episodes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO job (title, source, resolver, spec, out_dir, template, quality, episodes,
+                                  height, size)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     job.title,
                     job.source.as_str(),
@@ -241,6 +262,8 @@ impl Store {
                     job.template,
                     job.quality.as_string(),
                     job.episode_count.max(job.episodes.len()) as i64,
+                    job.note.height,
+                    job.note.size.and_then(|s| i64::try_from(s).ok()),
                 ],
             )?;
             let id = tx.last_insert_rowid();
@@ -460,7 +483,8 @@ fn json(text: String) -> Value {
 fn load_job(conn: &Connection, id: i64) -> Result<Option<JobRecord>> {
     let row = conn
         .query_row(
-            "SELECT id, title, source, resolver, spec, out_dir, template, quality, episodes
+            "SELECT id, title, source, resolver, spec, out_dir, template, quality, episodes,
+                    height, size
              FROM job WHERE id = ?1",
             params![id],
             |r| {
@@ -474,17 +498,25 @@ fn load_job(conn: &Connection, id: i64) -> Result<Option<JobRecord>> {
                     r.get::<_, String>(6)?,
                     r.get::<_, String>(7)?,
                     r.get::<_, i64>(8)?,
+                    QualityNote {
+                        height: r.get::<_, Option<u32>>(9)?,
+                        size: r
+                            .get::<_, Option<i64>>(10)?
+                            .and_then(|s| u64::try_from(s).ok()),
+                    },
                 ))
             },
         )
         .optional()?;
-    let Some((id, title, source, resolver, spec, out_dir, template, quality, count)) = row else {
+    let Some((id, title, source, resolver, spec, out_dir, template, quality, count, note)) = row
+    else {
         return Ok(None);
     };
     let source = Url::parse(&source)
         .map_err(|_| Error::Store(format!("job {id} has an unreadable source link")))?;
     Ok(Some(JobRecord {
         id: JobId(id),
+        note,
         title,
         source,
         resolver,
@@ -529,8 +561,49 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[tokio::test]
+    async fn a_queue_from_before_quality_notes_keeps_its_jobs_and_notes_new_ones() {
+        let dir = std::env::temp_dir().join(format!("reelgene-store-v1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("queue.db");
+        {
+            // A queue as the first schema wrote it.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO job (title, source, resolver, spec, out_dir, template, quality, episodes)
+                 VALUES ('old', 'https://a.example/', 'direct', '{}', '/d', '{title}', 'best', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let mut job = new_job(1);
+        job.note = QualityNote {
+            height: Some(1080),
+            size: Some(63_000_000),
+        };
+        store.add_job(job).await.unwrap();
+        let jobs = store.load().await.unwrap();
+        let notes: Vec<_> = jobs
+            .iter()
+            .map(|(j, _)| (j.title.as_str(), j.note))
+            .collect();
+        assert_eq!(
+            notes[0],
+            ("old", QualityNote::default()),
+            "kept, with nothing to tell"
+        );
+        assert_eq!(notes[1].1.height, Some(1080));
+        assert_eq!(notes[1].1.size, Some(63_000_000));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     fn new_job(n: i64) -> NewJob {
         NewJob {
+            note: QualityNote::default(),
             title: "劇".into(),
             source: Url::parse("https://site.example/drama/1?token=x").unwrap(),
             resolver: "direct".into(),

@@ -273,6 +273,16 @@ pub fn button(ui: &mut Ui, kind: Kind, icon: Option<Icon>, text: &str) -> Respon
 }
 
 /// A small rounded label in a tone: a status, a count.
+/// How wide `badge` would draw `text`.
+pub fn badge_width(ui: &Ui, text: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(12.0),
+        Color32::WHITE,
+    );
+    galley.size().x + 16.0
+}
+
 pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
     pill(ui, text, color, false)
 }

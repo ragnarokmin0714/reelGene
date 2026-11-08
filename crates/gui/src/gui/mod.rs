@@ -47,10 +47,11 @@ pub(crate) enum Msg {
         url: Url,
         result: Result<Box<(Discovery, Vec<QualityOption>)>, String>,
     },
-    /// A job queued (its title), or why not.
+    /// A job queued (its title, and what it was told about its quality),
+    /// or why not.
     Added {
         url: Url,
-        result: Result<String, String>,
+        result: Result<(String, reelgene_core::store::QualityNote), String>,
     },
     Links(Vec<Link>),
     /// A path chosen in the system's file dialog.
@@ -88,6 +89,17 @@ pub(crate) struct Toast {
     pub text: String,
     pub error: bool,
     pub until: f64,
+}
+
+/// What to tell about a job's quality: "1080p · about 63 MB", per episode
+/// for a series; `None` when nothing is known.
+pub(crate) fn note_text(
+    t: &Text,
+    note: reelgene_core::store::QualityNote,
+    series: bool,
+) -> Option<String> {
+    let size = note.size.map(|b| reelgene_app::format::bytes(b as f64));
+    (t.quality_note)(note.height, size.as_deref(), series)
 }
 
 /// What a click asks for; collected while drawing and carried out after, so
@@ -297,7 +309,13 @@ impl Gui {
             Msg::Added { url, result } => {
                 self.grabbed.retain(|g| g.link.url != url);
                 match result {
-                    Ok(title) => self.toast((self.t.added)(&title), false),
+                    Ok((title, note)) => {
+                        let text = match note_text(self.t, note, false) {
+                            Some(told) => (self.t.added_told)(&title, &told),
+                            None => (self.t.added)(&title),
+                        };
+                        self.toast(text, false);
+                    }
                     Err(e) => self.toast(e, true),
                 }
             }

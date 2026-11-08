@@ -161,6 +161,7 @@ impl Harness {
             "file"
         };
         let job = NewJob {
+            note: Default::default(),
             title: "Test Drama".into(),
             source: source.clone(),
             resolver: "direct".into(),

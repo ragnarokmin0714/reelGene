@@ -96,6 +96,30 @@ pub struct QualityOption {
     pub size: Option<u64>,
 }
 
+/// Which of `options` (best first, as `Engine::qualities` lists them) the
+/// quality `want` gets: the same choice the download makes.
+pub fn choose(options: &[QualityOption], want: crate::hls::Quality) -> Option<&QualityOption> {
+    use crate::hls::Quality;
+    match want {
+        Quality::Best => options.first(),
+        Quality::Worst => options.last(),
+        Quality::Height(h) => options
+            .iter()
+            .find(|q| q.height <= h)
+            .or_else(|| options.last()),
+    }
+}
+
+impl QualityOption {
+    /// What to tell the user about a job that gets this one.
+    pub fn note(&self) -> crate::store::QualityNote {
+        crate::store::QualityNote {
+            height: Some(self.height),
+            size: self.size,
+        }
+    }
+}
+
 /// What a resolver found behind a link, before the user picks episodes.
 #[derive(Debug, Clone)]
 pub struct Discovery {
@@ -108,6 +132,7 @@ impl Discovery {
     /// Filter `episodes` or change the other fields before adding it.
     pub fn into_job(self, source: Url, out_dir: PathBuf) -> NewJob {
         NewJob {
+            note: Default::default(),
             title: self.found.title,
             source,
             resolver: self.resolver,
@@ -237,6 +262,8 @@ pub enum Event {
 pub struct JobView {
     pub id: JobId,
     pub title: String,
+    /// The quality it was added with, and its size, as told to the user.
+    pub note: crate::store::QualityNote,
     /// Redacted: no query string.
     pub source: String,
     pub out_dir: PathBuf,
@@ -1017,6 +1044,7 @@ impl Scheduler {
         Some(JobView {
             id,
             title: job.title.clone(),
+            note: job.note,
             source: net::redact(&job.source),
             out_dir: job.out_dir.clone(),
             episodes: self
@@ -1069,5 +1097,34 @@ fn status_of(slot: &Slot) -> Status {
                 error: slot.rec.error.clone().unwrap_or_default(),
             },
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_quality_chosen_is_the_one_the_download_takes() {
+        use crate::hls::Quality;
+        let options: Vec<QualityOption> = [1080, 720, 360]
+            .map(|height| QualityOption {
+                quality: Quality::Height(height),
+                height,
+                bitrate: 1,
+                size: None,
+            })
+            .to_vec();
+        let pick = |want| choose(&options, want).map(|q| q.height);
+        assert_eq!(pick(Quality::Best), Some(1080));
+        assert_eq!(pick(Quality::Worst), Some(360));
+        assert_eq!(pick(Quality::Height(720)), Some(720));
+        assert_eq!(
+            pick(Quality::Height(800)),
+            Some(720),
+            "the best not above it"
+        );
+        assert_eq!(pick(Quality::Height(240)), Some(360), "else the smallest");
+        assert_eq!(choose(&[], Quality::Best), None);
     }
 }

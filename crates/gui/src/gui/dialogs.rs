@@ -42,8 +42,8 @@ pub(crate) struct Pick {
     checked: Vec<bool>,
     range: String,
     quality: String,
-    /// The qualities on offer, ticked or not; fewer than two: the
-    /// `quality` choice instead.
+    /// The qualities on offer, ticked or not; fewer than two: the one the
+    /// settings' quality gets, if known, only told.
     qualities: Vec<(QualityOption, bool)>,
     folder: String,
     template: String,
@@ -58,15 +58,10 @@ impl Pick {
         qualities: Vec<QualityOption>,
     ) -> Self {
         // Ticked to start with: the one the default quality would pick.
-        let want: reelgene_core::hls::Quality = settings.quality.parse().unwrap_or_default();
-        let start = match want {
-            reelgene_core::hls::Quality::Best => 0,
-            reelgene_core::hls::Quality::Worst => qualities.len().saturating_sub(1),
-            reelgene_core::hls::Quality::Height(h) => qualities
-                .iter()
-                .position(|q| q.height <= h)
-                .unwrap_or(qualities.len().saturating_sub(1)),
-        };
+        let want = settings.quality();
+        let start = reelgene_core::engine::choose(&qualities, want)
+            .and_then(|c| qualities.iter().position(|q| q == c))
+            .unwrap_or(0);
         Self {
             url,
             title: discovery.found.title.clone(),
@@ -123,6 +118,11 @@ impl Pick {
         }
         if !self.choosing_quality() {
             job.quality = self.quality.parse().unwrap_or_default();
+            job.note = self
+                .qualities
+                .first()
+                .map(|(q, _)| q.note())
+                .unwrap_or_default();
             return vec![job];
         }
         let chosen: Vec<&QualityOption> = self
@@ -137,12 +137,26 @@ impl Pick {
             .map(|q| {
                 let mut job = job.clone();
                 job.quality = q.quality;
+                job.note = q.note();
                 if several {
                     job.template = format!("{} [{}p]", job.template, q.height);
                 }
                 job
             })
             .collect()
+    }
+
+    /// The quality the episodes come in and their size, when it is known
+    /// and not for the user to choose: "1080p · about 63 MB an episode".
+    fn told(&self, t: &super::text::Text) -> Option<String> {
+        let (q, _) = self.qualities.first()?;
+        let episodes = self.checked.iter().filter(|c| **c).count();
+        let mut text = super::note_text(t, q.note(), self.discovery.found.episodes.len() > 1)?;
+        if let (Some(each), true) = (q.size, episodes > 1) {
+            let total = reelgene_app::format::bytes((each * episodes as u64) as f64);
+            text = format!("{text} · {}", (t.episodes_total)(&total, episodes));
+        }
+        Some(text)
     }
 
     /// Where the first chosen episode will land, to show before adding.
@@ -426,8 +440,14 @@ fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &
                 .on_hover_text(t.series);
             ui.end_row();
             if !pick.choosing_quality() {
-                let label = ui.label(t.quality).id;
-                quality_combo(t, &mut pick.quality, "pick-quality", label, ui);
+                // Decided by the settings' quality and what the site has:
+                // told, not asked.
+                ui.label(t.quality);
+                let p = super::theme::palette(ui);
+                match pick.told(t) {
+                    Some(text) => ui.label(text),
+                    None => ui.label(RichText::new(t.quality_unknown).color(p.weak)),
+                };
                 ui.end_row();
             }
             ui.label(t.folder);
