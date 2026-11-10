@@ -1,0 +1,18 @@
+{
+  "name": { "message": "reelgene" },
+  "description": { "message": "找出網頁正在播放的影片，交給 reelgene 下載。" },
+  "playlist": { "message": "HLS" },
+  "video": { "message": "影片" },
+  "download": { "message": "下載" },
+  "sending": { "message": "傳送中…" },
+  "added": { "message": "已加入" },
+  "queued": { "message": "已排入" },
+  "queuedNote": { "message": "reelgene 沒有開著：下次開啟時就會下載。" },
+  "empty": { "message": "這個網頁還沒找到影片。先播放影片，再打開看看。" },
+  "open": { "message": "reelgene 已開啟" },
+  "closed": { "message": "reelgene 未開啟" },
+  "notSetUp": { "message": "尚未設定" },
+  "hostError": { "message": "reelgene 沒有回應" },
+  "noReply": { "message": "reelgene 沒有回覆。" },
+  "setUpHelp": { "message": "讓 reelgene 能回應這個瀏覽器：設定 → 瀏覽器 → 設定，或執行「reelgene browser install」。" }
+}

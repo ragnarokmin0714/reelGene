@@ -4,7 +4,7 @@ use crate::term::Line;
 use clap::{Args, Parser, Subcommand};
 use reelgene_app::app::{self, App, OpenError};
 use reelgene_app::format;
-use reelgene_app::handoff::{self, Reply, Request, Valid};
+use reelgene_app::handoff::{self, Given, Reply, Valid};
 use reelgene_app::places::Places;
 use reelgene_app::settings::Settings;
 use reelgene_core::engine::{
@@ -99,6 +99,13 @@ pub enum Cmd {
         #[command(subcommand)]
         action: Option<CookiesCmd>,
     },
+    /// The browser extension that finds the videos pages play: show whether
+    /// it is set up, set it up (write the extension and let Chrome, Edge,
+    /// Brave, Vivaldi and Chromium start reelgene for it), or undo that.
+    Browser {
+        #[command(subcommand)]
+        action: Option<BrowserCmd>,
+    },
     /// Write a problem report (settings, queue, recent log; no links' secrets,
     /// no home folder name) to the current folder.
     Report,
@@ -112,6 +119,14 @@ pub enum CookiesCmd {
     /// Delete the exported file afterwards: reelgene keeps its own.
     Import { file: PathBuf },
     /// Forget the imported cookies.
+    Remove,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BrowserCmd {
+    /// Write the extension's folder and register reelgene with the browsers.
+    Install,
+    /// Unregister reelgene and remove the extension's folder.
     Remove,
 }
 
@@ -179,6 +194,9 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     if let Cmd::Cookies { action } = cmd {
         return cookies(action);
     }
+    if let Cmd::Browser { action } = cmd {
+        return browser(action);
+    }
     if let Cmd::Licenses = cmd {
         println!("reelgene {}: MIT OR Apache-2.0", reelgene_app::VERSION);
         println!(
@@ -211,11 +229,11 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
     let code = match cmd {
         Cmd::Get(get) => {
             limit(&engine, get.limit.as_deref())?;
-            add(&app, &engine, &get.add).await?;
+            add(&app, &engine, &get.add, &mut |l| println!("{l}")).await?;
             drive(&engine, handed).await?
         }
         Cmd::Add(args) => {
-            add(&app, &engine, &args).await?;
+            add(&app, &engine, &args, &mut |l| println!("{l}")).await?;
             println!("start with:  reelgene run");
             ExitCode::SUCCESS
         }
@@ -262,7 +280,8 @@ async fn dispatch(cmd: Cmd) -> Result<ExitCode, String> {
         | Cmd::Licenses
         | Cmd::YtDlp { .. }
         | Cmd::Ffmpeg { .. }
-        | Cmd::Cookies { .. } => {
+        | Cmd::Cookies { .. }
+        | Cmd::Browser { .. } => {
             unreachable!("handled above")
         }
     };
@@ -285,21 +304,32 @@ async fn hand_over(data_dir: &Path, cmd: &Cmd) -> Result<ExitCode, String> {
     };
     if limited
         || args.out.is_some()
-        || args.title.is_some()
         || args.episodes.is_some()
         || args.quality.is_some()
         || args.template.is_some()
         || args.resolver.is_some()
-        || !args.headers.is_empty()
     {
         return Err(format!(
-            "{running}\n(it can take the links, but not the options: drop them, or close it first)"
+            "{running}\n(it can take the links, a --title and headers, but not the other options: drop them, or close it first)"
         ));
     }
     let endpoint = handoff::endpoint(data_dir).ok_or_else(|| running.clone())?;
-    let urls: Vec<String> = args.urls.iter().map(|u| u.trim().to_owned()).collect();
-    let count = urls.len();
-    match handoff::send(&endpoint, &Request::Add { urls }).await {
+    let headers = args
+        .headers
+        .iter()
+        .map(|h| parse_header(h))
+        .collect::<Result<Vec<_>, _>>()?;
+    let links: Vec<Given> = args
+        .urls
+        .iter()
+        .map(|u| Given {
+            url: u.trim().to_owned(),
+            title: args.title.clone(),
+            headers: headers.clone(),
+        })
+        .collect();
+    let count = links.len();
+    match handoff::send(&endpoint, &handoff::request(links)).await {
         Ok(Reply { ok: true, .. }) => {
             println!(
                 "handed {count} link{} to the reelgene that is already running",
@@ -335,18 +365,23 @@ fn take_handed(app: &App, engine: &Engine) -> Option<Handed> {
     );
     let handler: handoff::Handler = Arc::new(move |request| match request {
         Valid::Show => Reply::refused("it runs in a terminal and has no window to show"),
-        Valid::Add(urls) => {
-            for url in urls {
+        Valid::Add(links) => {
+            for link in links {
                 counter.fetch_add(1, Ordering::SeqCst);
                 let (engine, tx, out) = (engine.clone(), tx.clone(), out.clone());
                 let template = template.clone();
                 tokio::spawn(async move {
+                    let url = link.url;
                     let shown = net::redact(&url);
                     let result = async {
-                        let found = engine.discover(&url, None).await?;
+                        let mut found = engine.discover(&url, None).await?;
+                        found.give_headers(&link.headers);
                         let mut job = found.into_job(url, out);
                         job.quality = quality;
                         job.template = template;
+                        if let Some(t) = link.title {
+                            job.title = t;
+                        }
                         let title = job.title.clone();
                         engine
                             .add(job)
@@ -418,7 +453,14 @@ async fn change(engine: &Engine, cmd: Command) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
+/// Queue the links, telling `say` about each one queued: the terminal, or
+/// nobody when the browser started reelgene (stdout is its message pipe).
+pub async fn add(
+    app: &App,
+    engine: &Engine,
+    args: &AddArgs,
+    say: &mut dyn FnMut(String),
+) -> Result<(), String> {
     let out = match &args.out {
         Some(p) => std::path::absolute(p).map_err(|e| format!("{}: {e}", p.display()))?,
         None => app.download_dir(),
@@ -445,12 +487,18 @@ async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
                 "only http and https links can be downloaded: {raw}"
             ));
         }
-        let found = engine
+        let mut found = engine
             .discover(&url, args.resolver.as_deref())
             .await
             .map_err(|e| format!("{}: {e}", net::redact(&url)))?;
         let total = found.found.episodes.len();
-        let resolver = found.resolver.clone();
+        // Before the quality lookup, which fetches the playlist with them.
+        if !found.give_headers(&headers) {
+            eprintln!(
+                "warning: --header only applies to direct links; {} sets its own",
+                found.resolver
+            );
+        }
         // Which quality the download gets, and how big, to say so.
         let options = engine.qualities(&url, &found).await.unwrap_or_default();
         let note = reelgene_core::engine::choose(&options, quality)
@@ -470,27 +518,17 @@ async fn add(app: &App, engine: &Engine, args: &AddArgs) -> Result<(), String> {
         }
         job.quality = quality;
         job.template.clone_from(&template);
-        if !headers.is_empty() {
-            match job.spec.as_object_mut().filter(|_| resolver == "direct") {
-                Some(spec) => {
-                    spec.insert("headers".into(), serde_json::json!(headers));
-                }
-                None => eprintln!(
-                    "warning: --header only applies to direct links; {resolver} sets its own"
-                ),
-            }
-        }
         let (count, title) = (job.episodes.len(), job.title.clone());
         let id = engine.add(job).await.map_err(|e| e.to_string())?;
         let told = told(note, total > 1)
             .map(|t| format!(" ({t})"))
             .unwrap_or_default();
-        println!(
+        say(format!(
             "queued [{}] {title}: {count} of {total} episode{}{told}  →  {}",
             id.0,
             if total == 1 { "" } else { "s" },
             out.display()
-        );
+        ));
     }
     Ok(())
 }
@@ -938,6 +976,54 @@ fn cookies(action: Option<CookiesCmd>) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn browser(action: Option<BrowserCmd>) -> Result<ExitCode, String> {
+    use reelgene_app::browser::{self, Registration};
+    let places = Places::detect()?;
+    let data = &places.data_dir;
+    match action {
+        Some(BrowserCmd::Install) => {
+            let done = browser::install(data).map_err(|e| e.to_string())?;
+            println!("reelgene answers {} now", done.join(", "));
+        }
+        Some(BrowserCmd::Remove) => {
+            let done = browser::remove(data).map_err(|e| e.to_string())?;
+            match done.is_empty() {
+                true => println!("no browser started this reelgene"),
+                false => println!("{} no longer start reelgene", done.join(", ")),
+            }
+            println!("remove the extension in the browser too (its Extensions page)");
+            return Ok(ExitCode::SUCCESS);
+        }
+        None => {}
+    }
+    let status = browser::status(data).map_err(|e| e.to_string())?;
+    for (name, state) in &status.browsers {
+        let said = match state {
+            Registration::NoBrowser => "not found".to_owned(),
+            Registration::Absent => "not set up".to_owned(),
+            Registration::Here => "set up".to_owned(),
+            Registration::Elsewhere(p) if p.exists() => {
+                format!("starts another reelgene: {}", p.display())
+            }
+            Registration::Elsewhere(p) => format!("starts a program that is gone: {}", p.display()),
+        };
+        println!("{name:<9}  {said}");
+    }
+    let dir = status.extension_dir.display();
+    if !status.any_registered() {
+        println!("\nset up with:  reelgene browser install");
+    } else if status.extension_current {
+        println!(
+            "\nextension    {dir}\n\nIn the browser, once: open its Extensions page (chrome://extensions,\n\
+             edge://extensions), turn on Developer mode, choose \"Load unpacked\" and\n\
+             pick the folder above. Play a video, then click reelgene's button."
+        );
+    } else {
+        println!("\nextension    {dir} is out of date: reelgene browser install");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// What `doctor` and `cookies` say about the imported cookies.
 fn cookie_line(jar: &reelgene_core::cookies::CookieJar, now: u64) -> String {
     match jar.summary(now) {
@@ -963,7 +1049,11 @@ fn cookie_line(jar: &reelgene_core::cookies::CookieJar, now: u64) -> String {
 /// `Name: value` or `Name:value`; only the first colon splits.
 fn parse_header(s: &str) -> Result<(String, String), String> {
     match s.split_once(':') {
-        Some((k, v)) if !k.trim().is_empty() => Ok((k.trim().to_owned(), v.trim().to_owned())),
+        Some((k, v)) if !k.trim().is_empty() => {
+            let (k, v) = (k.trim(), v.trim());
+            handoff::check_header(k, v)?;
+            Ok((k.to_owned(), v.to_owned()))
+        }
         _ => Err(format!("a header looks like 'Name: value', not {s:?}")),
     }
 }
@@ -1064,6 +1154,10 @@ mod tests {
         assert_eq!(parse_header("Referer:https://x/").unwrap().1, "https://x/");
         assert!(parse_header(": v").is_err());
         assert!(parse_header("nonsense").is_err());
+        assert!(
+            parse_header("Host: elsewhere.example").is_err(),
+            "reelgene's own"
+        );
     }
 
     #[test]

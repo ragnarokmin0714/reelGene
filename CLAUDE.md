@@ -24,6 +24,11 @@ for later is in `ROADMAP.md`.
 - **The window has never been seen.** The development machine has no
   display; layout, CJK rendering through the system font fallback, the tray
   and sounds need a look on a real desktop.
+- The browser extension ran in a real Chromium 141 (Playwright's arm64
+  build) on 2026-11-10: found an HLS playlist with its Referer, the popup
+  sent it over Native Messaging, and `reelgene run` downloaded it from a CDN
+  that refuses requests without one. Never in Chrome or Edge themselves, nor
+  on Windows (the registry path is type-checked only).
 - The ffmpeg remux path runs against a real ffmpeg only when
   `REELGENE_TEST_FFMPEG` names one (`mux::tests::a_real_ffmpeg_…`); CI has
   none, so there it is tested for its arguments.
@@ -169,8 +174,10 @@ not touched. One process per data folder, enforced by an OS file lock
 
 **Handing over** (`handoff.rs`). A second reelgene that finds the lock taken
 does not just refuse: started bare it asks the running one to show its
-window; `get`/`add URL` pass the links (without options, which would be lost
-on the way, so those refuse). The window and `reelgene get`/`run` listen.
+window; `get`/`add URL` pass the links with their `--title` and `-H`
+headers (`take`; plain links still go as `add`, which older instances
+understand); other options would be lost on the way, so those refuse. The
+window and `reelgene get`/`run` listen.
 One JSON line each way over a Unix socket in a 0700 directory
 (`$XDG_RUNTIME_DIR`, else the data folder; peer uid checked) or a named pipe
 that rejects remote clients; never a localhost port, which any web page can
@@ -180,6 +187,38 @@ A handler answers at once and reads the links in the background, so
 `drive` keeps going while handed links are still being read, and decides it
 is finished from a queue snapshot, not only from `Event::Idle`, which may
 have gone by before the handed job's message arrived.
+
+**The browser extension** (`extension/`, `app/browser.rs`, `src/native.rs`).
+An MV3 extension for Chromium browsers watches `webRequest` for playlists
+(`.m3u8` or an mpegurl type) and video files (by type or extension, 1 MiB
+or more, and only while the tab has no playlist: with one, they are its
+pieces), keeps a list per tab in `storage.session`, and the popup sends one
+over Native Messaging. Never a localhost port. Only the request's `Referer`
+and `Origin` travel with it (read with `extraHeaders`), never cookies or
+`Authorization`: those would be session credentials stored in the queue,
+and replaying a site's sign-in is not reelgene's business. The extension's
+ID is fixed by the public key in its manifest (the private key was thrown
+away; a store version would get its own ID); `allowed_origins` names only
+it and `native::run` checks the origin argument again. The browser starts
+the very executable with that origin as its first argument (`main` checks
+before parsing a command line, and attaches no console: stdout is the
+message pipe, which is why `cli::add` reports through a callback). A
+message is a native-endian u32 length and JSON, capped at 64 KiB; `hello`
+says whether a reelgene runs, `add` hands the links to it (`take`) or, with
+none running, queues them as `reelgene add` would. The extension's files
+are built into the program (`browser::EXTENSION`, `include_bytes!`) and
+written to `<data>/browser-extension` by `install`, so the two are always
+one version; the user loads that folder unpacked once. Host manifests go to
+`~/.config/<browser>/NativeMessagingHosts/` on Linux (only for browsers
+whose folder exists; Chromium really reads `<profile dir>/NativeMessagingHosts`,
+and the default profile is that folder) and on Windows to
+`<data>/<host>.json`, named by a key per browser,
+`HKCU\Software\<vendor>\<browser>\NativeMessagingHosts\<host>`.
+At window start `browser::refresh` rewrites the extension if it differs and
+re-points registrations whose program is gone (a moved portable folder),
+leaving ones that start another existing copy alone. Headers given to a
+direct link are put in its spec by `Discovery::give_headers` before the
+quality lookup, which fetches the playlist with them.
 
 **HTTP policy** (`http.rs`): reqwest's own retry only covers protocol NACKs,
 so reelgene retries transient failures itself (network, 408/425/429/5xx) with
@@ -368,6 +407,9 @@ program is the root package; the three libraries it is built from are under
 ```
 src/                    package `reelgene`: the executable
   main.rs cli.rs term.rs  start-up, the command line
+  native.rs             started by a browser: the extension's native host
+extension/              the browser extension (MV3), built into the program
+  sniff.js              what counts as a video link (node --test: test/)
 tests/cli.rs            the real binary against a local server
 crates/core/            package `reelgene-core`: the engine, no UI
   src/error.rs          one typed error; is_transient / is_expired_url
@@ -388,6 +430,7 @@ crates/app/             package `reelgene-app`: what the front ends share, no UI
   src/app.rs            App::open (places, lock, settings, ffmpeg, log) and the engine
   src/places.rs settings.rs instance.rs handoff.rs logging.rs report.rs format.rs
   src/platform.rs       which, reveal, console attach, locale, reduced motion
+  src/browser.rs        the extension's host: registration, messages
   src/seal.rs           how cookies are kept: DPAPI on Windows
 crates/gui/             package `reelgene-gui`: the window; the only one that knows egui
   src/gui/              mod (Gui, run), desktop, model, view, dialogs, text,

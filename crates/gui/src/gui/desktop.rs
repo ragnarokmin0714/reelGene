@@ -14,6 +14,7 @@ use crate::notify::{self, Note};
 use crate::sound::{Cue, Player};
 use crate::tray::TrayCmd;
 use eframe::egui;
+use reelgene_app::browser;
 use reelgene_app::handoff::{self, Reply, Valid};
 use reelgene_app::places::Places;
 use reelgene_app::schedule::Schedule;
@@ -61,6 +62,14 @@ pub(crate) struct CookieState {
     pub summary: Option<Option<Result<Summary, String>>>,
 }
 
+/// What the settings window shows about the browser extension: `None` until
+/// looked at; `busy` while setting it up or removing it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BrowserState {
+    pub status: Option<Result<browser::Status, String>>,
+    pub busy: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum YtTask {
     Fetching,
@@ -89,6 +98,7 @@ pub(crate) struct Desktop {
     pub yt_dlp: YtDlpTool,
     yt_state: Mutex<YtState>,
     cookie_state: Mutex<CookieState>,
+    browser_state: Mutex<BrowserState>,
     /// Write settings to `places.settings_file()` when they change.
     pub save_settings: bool,
     pub reduced_motion: bool,
@@ -151,6 +161,7 @@ impl Desktop {
             yt_dlp,
             yt_state: Mutex::default(),
             cookie_state: Mutex::default(),
+            browser_state: Mutex::default(),
             save_settings,
             reduced_motion: desktop && reelgene_app::platform::reduced_motion(),
             settings: Mutex::new(settings),
@@ -175,6 +186,16 @@ impl Desktop {
         listen(&me);
         me.refresh_yt_dlp();
         me.refresh_cookies();
+        if desktop {
+            // Once set up, the extension follows this program's version and
+            // a moved portable folder.
+            let data = me.places.data_dir.clone();
+            me.rt.spawn_blocking(move || {
+                if let Err(e) = browser::refresh(&data) {
+                    log::warn!("cannot bring the browser extension up to date: {e}");
+                }
+            });
+        }
         let weak = Arc::downgrade(&me);
         let schedule = Schedule::follow(&me.rt, &me.engine, move || {
             weak.upgrade().and_then(|d| d.settings().schedule)
@@ -383,6 +404,44 @@ impl Desktop {
         self.wake();
     }
 
+    pub fn browser_state(&self) -> BrowserState {
+        lock(&self.browser_state).clone()
+    }
+
+    #[cfg(all(test, feature = "screenshots"))]
+    pub(crate) fn set_browser_state(&self, state: BrowserState) {
+        *lock(&self.browser_state) = state;
+    }
+
+    /// Look at what is registered, off the window's thread.
+    pub fn refresh_browser(self: &Arc<Self>) {
+        let me = Arc::clone(self);
+        self.rt.spawn_blocking(move || me.load_browser());
+    }
+
+    fn load_browser(&self) {
+        let status = browser::status(&self.places.data_dir).map_err(|e| e.to_string());
+        lock(&self.browser_state).status = Some(status);
+        self.wake();
+    }
+
+    /// Set up the extension (`true`: the browsers it was set up for) or undo
+    /// it; the window hears the outcome.
+    pub fn browser(self: &Arc<Self>, install: bool) {
+        lock(&self.browser_state).busy = true;
+        let me = Arc::clone(self);
+        self.rt.spawn_blocking(move || {
+            let data = &me.places.data_dir;
+            let result = match install {
+                true => browser::install(data).map(Some),
+                false => browser::remove(data).map(|_| None),
+            };
+            let _ = me.tx.send(Msg::Browser(result.map_err(|e| e.to_string())));
+            lock(&me.browser_state).busy = false;
+            me.load_browser();
+        });
+    }
+
     /// Import a cookies.txt (`Some`) or remove the imported one; the window
     /// hears the outcome.
     pub fn cookies(self: &Arc<Self>, import: Option<&Path>) {
@@ -467,9 +526,9 @@ impl Desktop {
                 show(TrayCmd::Show);
                 Reply::ok()
             }
-            Valid::Add(urls) => match weak.upgrade() {
+            Valid::Add(links) => match weak.upgrade() {
                 Some(me) => {
-                    urls.into_iter().for_each(|url| me.read(url));
+                    links.into_iter().for_each(|link| me.read_as(link, true));
                     Reply::ok()
                 }
                 None => Reply::refused("it is closing"),
@@ -514,7 +573,7 @@ impl Desktop {
             if auto && !link.private {
                 if !queued.contains(&net::redact(&link.url)) {
                     // Queued by itself: no questions.
-                    self.read_as(link.url, false);
+                    self.read_as(link.url.into(), false);
                 }
             } else {
                 listed.push(link);
@@ -530,16 +589,22 @@ impl Desktop {
     /// queued right away; a series goes to the window for the episode picker.
     /// A link the user added: may ask which episodes, and which qualities.
     pub fn read(self: &Arc<Self>, url: Url) {
-        self.read_as(url, true);
+        self.read_as(url.into(), true);
     }
 
-    fn read_as(self: &Arc<Self>, url: Url, ask: bool) {
+    /// A handed-over link may bring its name and the headers it needs.
+    fn read_as(self: &Arc<Self>, link: handoff::Link, ask: bool) {
         self.reading.fetch_add(1, Ordering::Relaxed);
         let me = Arc::clone(self);
         let settings = self.settings();
         self.rt.spawn(async move {
+            let url = link.url;
             let msg = match me.engine.discover(&url, None).await {
-                Ok(d) => {
+                Ok(mut d) => {
+                    d.give_headers(&link.headers);
+                    if let Some(title) = link.title {
+                        d.found.title = title;
+                    }
                     // Looked up either way, to tell which quality it gets and
                     // how big; a failed look is no reason to stop.
                     let mut qualities = me.engine.qualities(&url, &d).await.unwrap_or_default();

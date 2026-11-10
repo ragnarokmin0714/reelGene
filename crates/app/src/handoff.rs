@@ -16,7 +16,10 @@
 //! made yet.
 //!
 //! The protocol is one JSON line each way. Requests are untrusted input: size
-//! capped, read with a timeout, and only http(s) links get through.
+//! capped, read with a timeout, and only http(s) links get through. Links come
+//! plain (`add`) or with a name and the headers their requests need (`take`,
+//! from `reelgene add --title/-H` and from the browser extension); plain ones
+//! keep the older command, so they still reach an older running reelgene.
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -33,6 +36,9 @@ const VERSION: u32 = 1;
 pub const MAX_REQUEST: usize = 64 * 1024;
 pub const MAX_URLS: usize = 200;
 const MAX_URL_LEN: usize = 4096;
+const MAX_TITLE: usize = 300;
+const MAX_HEADERS: usize = 16;
+const MAX_HEADER_VALUE: usize = 4096;
 /// How long either side waits for the other.
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -44,13 +50,70 @@ pub enum Request {
     Show,
     /// Read these links, as if pasted by hand.
     Add { urls: Vec<String> },
+    /// The same, each link with its own name and headers.
+    Take { links: Vec<Given> },
+}
+
+/// A link as handed over with `take`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Given {
+    pub url: String,
+    /// The series name to use instead of the one discovery finds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Sent with every request for it (a Referer, typically); kept with the job.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
+}
+
+impl Given {
+    pub fn plain(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            title: None,
+            headers: Vec::new(),
+        }
+    }
+}
+
+/// The request that hands these links over: plain ones the older way, which
+/// every running reelgene understands.
+pub fn request(links: Vec<Given>) -> Request {
+    if links
+        .iter()
+        .all(|l| l.title.is_none() && l.headers.is_empty())
+    {
+        Request::Add {
+            urls: links.into_iter().map(|l| l.url).collect(),
+        }
+    } else {
+        Request::Take { links }
+    }
 }
 
 /// A request that passed the checks.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Valid {
     Show,
-    Add(Vec<Url>),
+    Add(Vec<Link>),
+}
+
+/// A link that passed the checks, plain ones with no title and no headers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub url: Url,
+    pub title: Option<String>,
+    pub headers: Vec<(String, String)>,
+}
+
+impl From<Url> for Link {
+    fn from(url: Url) -> Self {
+        Self {
+            url,
+            title: None,
+            headers: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,24 +156,70 @@ pub fn parse(line: &[u8]) -> Result<Valid, String> {
     if envelope.v != VERSION {
         return Err(format!("unsupported request version {}", envelope.v));
     }
-    match envelope.request {
-        Request::Show => Ok(Valid::Show),
-        Request::Add { urls } => {
-            if urls.is_empty() || urls.len() > MAX_URLS {
-                return Err(format!("between 1 and {MAX_URLS} links, please"));
-            }
-            urls.iter()
-                .map(|raw| {
-                    let url = Url::parse(raw)
-                        .ok()
-                        .filter(|_| raw.len() <= MAX_URL_LEN)
-                        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
-                    url.ok_or_else(|| "only http and https links can be handed over".to_owned())
-                })
-                .collect::<Result<_, _>>()
-                .map(Valid::Add)
-        }
+    let links = match envelope.request {
+        Request::Show => return Ok(Valid::Show),
+        Request::Add { urls } => urls.into_iter().map(Given::plain).collect(),
+        Request::Take { links } => links,
+    };
+    if links.is_empty() || links.len() > MAX_URLS {
+        return Err(format!("between 1 and {MAX_URLS} links, please"));
     }
+    links
+        .into_iter()
+        .map(check_link)
+        .collect::<Result<_, _>>()
+        .map(Valid::Add)
+}
+
+/// The checks every handed-over link passes.
+pub fn check_link(given: Given) -> Result<Link, String> {
+    let url = Url::parse(&given.url)
+        .ok()
+        .filter(|_| given.url.len() <= MAX_URL_LEN)
+        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+        .ok_or("only http and https links can be handed over")?;
+    let title = match given.title.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(t) if t.chars().count() > MAX_TITLE || t.chars().any(char::is_control) => {
+            return Err("a title is one line of at most 300 characters".into());
+        }
+        Some(t) => Some(t.to_owned()),
+    };
+    if given.headers.len() > MAX_HEADERS {
+        return Err(format!("at most {MAX_HEADERS} headers a link"));
+    }
+    for (name, value) in &given.headers {
+        check_header(name, value)?;
+    }
+    Ok(Link {
+        url,
+        title,
+        headers: given.headers,
+    })
+}
+
+/// A header someone asks to be sent with a download: a plain name, a value on
+/// one line, and none of the ones the download itself must decide.
+pub fn check_header(name: &str, value: &str) -> Result<(), String> {
+    let token = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if name.is_empty() || name.len() > 64 || !name.chars().all(token) {
+        return Err(format!("{name:?} is not a header name"));
+    }
+    const OURS: [&str; 6] = [
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "range",
+        "accept-encoding",
+    ];
+    if OURS.contains(&name.to_ascii_lowercase().as_str()) {
+        return Err(format!("{name} is set by reelgene itself"));
+    }
+    if value.len() > MAX_HEADER_VALUE || value.chars().any(|c| c.is_control() && c != '\t') {
+        return Err(format!("the {name} header's value is not one line"));
+    }
+    Ok(())
 }
 
 /// Where the running reelgene listens. The same data folder always gives the
@@ -375,7 +484,9 @@ mod tests {
         let add = parse(&line(
             r#"{"v":1,"cmd":"add","urls":["https://cdn.example/a.m3u8"]}"#,
         ));
-        assert!(matches!(add, Ok(Valid::Add(urls)) if urls.len() == 1));
+        assert!(
+            matches!(add, Ok(Valid::Add(links)) if links.len() == 1 && links[0].headers.is_empty())
+        );
         for bad in [
             r#"{"v":1,"cmd":"add","urls":["file:///etc/passwd"]}"#,
             r#"{"v":1,"cmd":"add","urls":["javascript:alert(1)"]}"#,
@@ -395,6 +506,35 @@ mod tests {
         })
         .unwrap();
         assert!(parse(&too_many).is_err());
+    }
+
+    #[test]
+    fn taken_links_bring_their_title_and_headers_checked() {
+        let take = parse(&line(
+            r#"{"v":1,"cmd":"take","links":[{"url":"https://cdn.example/a.m3u8",
+                "title":"  Ep 1 ","headers":[["Referer","https://site.example/"]]}]}"#,
+        ))
+        .unwrap();
+        let Valid::Add(links) = take else {
+            panic!("{take:?}")
+        };
+        assert_eq!(links[0].title.as_deref(), Some("Ep 1"));
+        assert_eq!(links[0].headers[0].0, "Referer");
+        for bad in [
+            r#"{"v":1,"cmd":"take","links":[{"url":"https://x.example/","headers":[["Host","evil"]]}]}"#,
+            r#"{"v":1,"cmd":"take","links":[{"url":"https://x.example/","headers":[["Bad Name","v"]]}]}"#,
+            r#"{"v":1,"cmd":"take","links":[{"url":"https://x.example/","headers":[["X-A","a
+X-B: b"]]}]}"#,
+            r#"{"v":1,"cmd":"take","links":[{"url":"https://x.example/","title":"two
+lines"}]}"#,
+            r#"{"v":1,"cmd":"take","links":[{"url":"ftp://x.example/"}]}"#,
+            r#"{"v":1,"cmd":"take","links":[]}"#,
+        ] {
+            assert!(parse(&line(bad)).is_err(), "{bad}");
+        }
+        // A link with nothing extra goes out the old way, for older instances.
+        let plain = serde_json::to_string(&Given::plain("https://x.example/")).unwrap();
+        assert_eq!(plain, r#"{"url":"https://x.example/"}"#);
     }
 
     #[test]

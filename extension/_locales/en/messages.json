@@ -1,0 +1,18 @@
+{
+  "name": { "message": "reelgene" },
+  "description": { "message": "Finds the videos a page plays and hands them to reelgene to download." },
+  "playlist": { "message": "HLS" },
+  "video": { "message": "VIDEO" },
+  "download": { "message": "Download" },
+  "sending": { "message": "Sending…" },
+  "added": { "message": "Added" },
+  "queued": { "message": "Queued" },
+  "queuedNote": { "message": "reelgene is closed: it downloads this once you open it." },
+  "empty": { "message": "No video found on this page yet. Start playing it, then look again." },
+  "open": { "message": "reelgene is open" },
+  "closed": { "message": "reelgene is closed" },
+  "notSetUp": { "message": "Not set up" },
+  "hostError": { "message": "reelgene did not answer" },
+  "noReply": { "message": "reelgene gave no reply." },
+  "setUpHelp": { "message": "Let reelgene answer this browser: Settings → Browser → Set up, or run “reelgene browser install”." }
+}

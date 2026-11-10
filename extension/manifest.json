@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_name__",
+  "description": "__MSG_description__",
+  "version": "0.1.0",
+  "default_locale": "en",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1ctNCmWKu/iyE4nw3kDEGakbP/TyxLnB1/jDsh1PxvnLpe6bEx8kCGrs9sGRjV9lOUzlRYKrDQqnLaH8XdD6Iglqs+LklbrmRM5YEucaJz1DfZAUZ51WNy7gJW/RVIy3DdoA2enPJPOygUrTWEvcv3khDfKuwHQnzHlLTb/ylhGYRozWaYL6bIfDu6SfB249KRNm48kAw7dXB2pwHYc0tkCrHoOYiWubozwJ/iTA28513x0e8uT9pU3ASN3Fha5xumhHQCnJibNRnkkRpNYF8Ht3qxOVXhLnSK8agcSFkWgfRWI6Gd6QW4KnmKDk9lLFo8gmEJHpuy4lNpiI7LSsMwIDAQAB",
+  "permissions": ["webRequest", "nativeMessaging", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "__MSG_name__",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

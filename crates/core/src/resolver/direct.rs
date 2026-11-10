@@ -14,7 +14,7 @@ use url::Url;
 
 pub struct Direct;
 
-const ID: &str = "direct";
+pub(crate) const ID: &str = "direct";
 
 #[async_trait]
 impl Resolver for Direct {

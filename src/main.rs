@@ -12,16 +12,19 @@
 )]
 
 mod cli;
+mod native;
 mod term;
 
 use clap::Parser;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    if std::env::args_os().len() > 1 {
+    // Started by a browser for the extension: stdin and stdout are its pipes,
+    // so no console and no command line.
+    let caller = native::caller();
+    if caller.is_none() && std::env::args_os().len() > 1 {
         reelgene_app::platform::attach_console();
     }
-    let args = cli::Cli::parse();
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -32,6 +35,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(caller) = caller {
+        return native::run(&rt, &caller);
+    }
+    let args = cli::Cli::parse();
     match args.cmd {
         Some(cmd) => rt.block_on(cli::run(cmd)),
         None => window(rt),

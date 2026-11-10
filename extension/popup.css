@@ -1,0 +1,90 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --card: #f9fafb;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --ok: #059669;
+  --bad: #dc2626;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318;
+    --fg: #e5e7eb;
+    --muted: #9ca3af;
+    --line: #262a33;
+    --card: #181b22;
+    --accent: #3b82f6;
+    --ok: #34d399;
+    --bad: #f87171;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 360px;
+  max-height: 520px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+h1 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; }
+.status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.status::before {
+  content: "";
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted);
+}
+.status.on::before { background: var(--ok); }
+.status.off::before { background: var(--bad); }
+.help {
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-size: 12px;
+}
+.help code { font-size: 11px; }
+ul { list-style: none; margin: 0; padding: 8px; }
+li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+}
+li:hover { background: var(--card); }
+.kind {
+  font-size: 10px; font-weight: 600; letter-spacing: .03em;
+  padding: 2px 6px; border-radius: 4px;
+  color: var(--accent); border: 1px solid currentColor;
+}
+.what { min-width: 0; }
+.name, .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name { font-weight: 500; }
+.where { font-size: 11px; color: var(--muted); }
+button {
+  font: inherit; font-size: 12px; font-weight: 500;
+  padding: 5px 12px;
+  border: 0; border-radius: 6px;
+  background: var(--accent); color: var(--accent-fg);
+  cursor: pointer;
+}
+button:disabled { opacity: .55; cursor: default; }
+button.done { background: transparent; color: var(--ok); padding: 5px 4px; }
+.note { grid-column: 2 / 4; font-size: 11px; color: var(--muted); }
+.note.bad { color: var(--bad); }
+.empty { margin: 0; padding: 28px 20px 30px; text-align: center; color: var(--muted); }

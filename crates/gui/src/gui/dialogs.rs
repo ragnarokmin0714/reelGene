@@ -271,6 +271,7 @@ pub(crate) enum Tab {
     Look,
     Behaviour,
     Tools,
+    Browser,
 }
 
 impl SettingsForm {
@@ -392,6 +393,7 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
         yt: g.desktop.yt_state(),
         yt_key: g.desktop.yt_dlp.config().key.map(|k| k.fingerprint()),
         cookies: g.desktop.cookie_state(),
+        browser: g.desktop.browser_state(),
     };
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
@@ -589,6 +591,7 @@ pub(crate) struct Tools {
     /// The fingerprint of the key yt-dlp is checked with, or why it is unusable.
     pub yt_key: Result<String, String>,
     pub cookies: super::desktop::CookieState,
+    pub browser: super::desktop::BrowserState,
 }
 
 fn settings_ui(
@@ -619,6 +622,7 @@ fn settings_ui(
             (Tab::Look, t.section_look),
             (Tab::Behaviour, t.section_behaviour),
             (Tab::Tools, t.section_tools),
+            (Tab::Browser, t.section_browser),
         ] {
             ui.selectable_value(&mut form.tab, tab, label);
         }
@@ -815,6 +819,9 @@ fn settings_ui(
             }
             if form.tab == Tab::Tools {
                 tools_page(t, form, tools, &p, ui, actions);
+            }
+            if form.tab == Tab::Browser {
+                browser_page(t, tools, &p, ui, actions);
             }
             if form.tab == Tab::Behaviour {
                 ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
@@ -1070,6 +1077,105 @@ fn tools_page(
     ui.add_space(14.0);
     ui.heading("yt-dlp");
     yt_dlp_page(t, form, tools, p, ui, actions);
+}
+
+/// The browser extension: which browsers start reelgene for it, setting it
+/// up, and loading it in the browser.
+fn browser_page(
+    t: &super::text::Text,
+    tools: &Tools,
+    p: &super::theme::Palette,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    use reelgene_app::browser::Registration;
+    let note = |ui: &mut egui::Ui, text: &str, color| {
+        ui.add(egui::Label::new(RichText::new(text).color(color).size(13.0)).wrap());
+    };
+    note(ui, t.browser_about, p.weak);
+    ui.add_space(8.0);
+    let state = &tools.browser;
+    let set_up = match &state.status {
+        None => {
+            ui.spinner();
+            false
+        }
+        Some(Err(e)) => {
+            note(ui, e, ui.visuals().error_fg_color);
+            false
+        }
+        Some(Ok(status)) => {
+            let here: Vec<&str> = status
+                .browsers
+                .iter()
+                .filter(|(_, r)| *r == Registration::Here)
+                .map(|(name, _)| *name)
+                .collect();
+            if here.is_empty() {
+                note(ui, t.browser_none, p.weak);
+            } else {
+                note(ui, &(t.browser_set_up_for)(&here), p.success);
+                if !status.extension_current {
+                    note(ui, t.browser_out_of_date, p.warning);
+                }
+            }
+            for (name, r) in &status.browsers {
+                if let Registration::Elsewhere(path) = r {
+                    note(
+                        ui,
+                        &(t.browser_other)(name, &path.display().to_string()),
+                        p.warning,
+                    );
+                }
+            }
+            if !here.is_empty() {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(status.extension_dir.display().to_string())
+                            .monospace()
+                            .size(12.0),
+                    )
+                    .selectable(true),
+                );
+            }
+            !here.is_empty()
+        }
+    };
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if state.busy {
+            ui.spinner();
+        }
+        ui.add_enabled_ui(!state.busy && state.status.is_some(), |ui| {
+            let (label, kind) = match set_up {
+                true => (t.browser_set_up_again, Kind::Secondary),
+                false => (t.browser_set_up, Kind::Primary),
+            };
+            if widgets::button(ui, kind, None, label).clicked() {
+                actions.push(Action::Browser(true));
+            }
+            if set_up {
+                if widgets::button(
+                    ui,
+                    Kind::Secondary,
+                    Some(widgets::Icon::Folder),
+                    t.browser_open_folder,
+                )
+                .clicked()
+                {
+                    actions.push(Action::OpenExtension);
+                }
+                if widgets::button(ui, Kind::Secondary, None, t.browser_remove).clicked() {
+                    actions.push(Action::Browser(false));
+                }
+            }
+        });
+    });
+    ui.add_space(4.0);
+    egui::CollapsingHeader::new(t.browser_how)
+        .id_salt("browser-how")
+        .default_open(set_up)
+        .show(ui, |ui| note(ui, t.browser_steps, p.weak));
 }
 
 /// yt-dlp: what is there and whether it passed, fetching and checking it,

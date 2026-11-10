@@ -26,6 +26,12 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Console",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# Native messaging hosts are registered under HKEY_CURRENT_USER.
+windows-registry = "0.6.1"
+
+[dev-dependencies]
+# The extension ID check: the key's SHA-256, as the browser computes it.
+aws-lc-rs.workspace = true
 
 [lints.rust]
 # A few Win32 calls (console, locale, reduced motion, DPAPI for cookies);

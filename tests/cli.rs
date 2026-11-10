@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// Serves fixed bodies, one connection per request, until the test ends.
-/// Paths under `/slow/` answer after two seconds.
+/// Paths under `/slow/` answer after two seconds; paths under `/referer/`
+/// only to a request with a Referer, as a CDN guarding against hotlinks does.
 fn serve(routes: HashMap<&'static str, Vec<u8>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -29,14 +30,20 @@ fn answer(mut stream: std::net::TcpStream, routes: &HashMap<&'static str, Vec<u8
         return;
     }
     let mut line = String::new();
+    let mut referer = false;
     while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+        referer |= line
+            .to_ascii_lowercase()
+            .starts_with("referer: https://site.example/");
         line.clear();
     }
     let path = first.split_whitespace().nth(1).unwrap_or("/");
+    let path = path.split('?').next().unwrap_or(path);
     if path.starts_with("/slow/") {
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
-    let _ = match routes.get(path) {
+    let hotlinked = path.starts_with("/referer/") && !referer;
+    let _ = match routes.get(path).filter(|_| !hotlinked) {
         Some(body) => stream
             .write_all(
                 format!(
@@ -227,12 +234,35 @@ fn links_go_to_the_reelgene_already_running() {
     assert!(out.status.success(), "{}", text(&out));
     assert!(text(&out).contains("handed 1 link"), "{}", text(&out));
     let url = url::Url::parse("https://cdn.example/a.m3u8").unwrap();
-    assert_eq!(*seen.lock().unwrap(), vec![Valid::Add(vec![url])]);
+    assert_eq!(*seen.lock().unwrap(), vec![Valid::Add(vec![url.into()])]);
+
+    // A title and headers travel with the links.
+    let out = home.run(&[
+        "add",
+        "https://cdn.example/c.m3u8",
+        "--title",
+        "Named",
+        "-H",
+        "Referer: https://site.example/",
+    ]);
+    assert!(out.status.success(), "{}", text(&out));
+    match &seen.lock().unwrap()[1] {
+        Valid::Add(links) => {
+            assert_eq!(links[0].title.as_deref(), Some("Named"));
+            assert_eq!(links[0].headers[0].1, "https://site.example/");
+        }
+        other => panic!("{other:?}"),
+    }
+    seen.lock().unwrap().pop();
 
     // Options would be silently lost on the way: refused instead.
     let out = home.run(&["get", "--out", "/elsewhere", "https://cdn.example/b.m3u8"]);
     assert!(!out.status.success());
-    assert!(text(&out).contains("not the options"), "{}", text(&out));
+    assert!(
+        text(&out).contains("not the other options"),
+        "{}",
+        text(&out)
+    );
     let out = home.run(&["list"]);
     assert!(text(&out).contains("already running"), "{}", text(&out));
     assert_eq!(seen.lock().unwrap().len(), 1);
@@ -435,5 +465,160 @@ fn adding_says_which_quality_it_gets_and_how_big() {
         text(&out).contains("[1] Multi  0/1 done, 1080p, about 8.0 MB"),
         "{}",
         text(&out)
+    );
+}
+
+/// Talks to the program as a browser does: a 32-bit length, then JSON.
+fn as_browser(
+    home: &Home,
+    origin: &str,
+    messages: &[serde_json::Value],
+) -> (Output, Vec<serde_json::Value>) {
+    use std::io::Read;
+    let mut input = Vec::new();
+    for m in messages {
+        let body = serde_json::to_vec(m).unwrap();
+        input.extend((body.len() as u32).to_ne_bytes());
+        input.extend(body);
+    }
+    let mut child = home
+        .command(&[origin])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&input).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let mut answers = Vec::new();
+    let mut rest = out.stdout.as_slice();
+    while !rest.is_empty() {
+        let mut len = [0u8; 4];
+        rest.read_exact(&mut len).unwrap();
+        let mut body = vec![0; u32::from_ne_bytes(len) as usize];
+        rest.read_exact(&mut body).unwrap();
+        answers.push(serde_json::from_slice(&body).expect("only messages on stdout"));
+    }
+    (out, answers)
+}
+
+const EXTENSION: &str = "chrome-extension://fdhdafcfibgpogbnmablonggapohkggm/";
+
+#[test]
+fn the_extension_queues_links_with_the_referer_they_need() {
+    use serde_json::json;
+    let base = serve(HashMap::from([
+        ("/referer/ep01/index.m3u8", playlist()),
+        ("/referer/ep01/seg000.ts", b"guarded-".to_vec()),
+        ("/referer/ep01/seg001.ts", b"video".to_vec()),
+    ]));
+    let home = Home::new("native");
+    let url = format!("{base}/referer/ep01/index.m3u8?sig=abc");
+    let (out, answers) = as_browser(
+        &home,
+        EXTENSION,
+        &[
+            json!({ "v": 1, "cmd": "hello" }),
+            json!({ "v": 1, "cmd": "add", "links": [{
+                "url": url,
+                "title": "A Page",
+                "referer": "https://site.example/watch",
+                "origin": "https://site.example",
+            }] }),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(answers[0]["ok"], true, "{answers:?}");
+    assert_eq!(answers[0]["running"], false);
+    assert_eq!(
+        answers[1],
+        json!({ "ok": true, "running": false, "queued": 1 })
+    );
+
+    // Queued for the next start, under the page's title; the download only
+    // works because the Referer was kept with the job.
+    let out = home.run(&["run"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let file = home
+        .path()
+        .join("downloads")
+        .join("A Page")
+        .join("01 ep01.ts");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"guarded-video",
+        "{}",
+        text(&out)
+    );
+}
+
+#[test]
+fn only_our_extension_is_answered() {
+    let home = Home::new("native-other");
+    let hello = serde_json::json!({ "v": 1, "cmd": "hello" });
+    let (out, answers) = as_browser(
+        &home,
+        "chrome-extension://abcdefghijklmnopabcdefghijklmnop/",
+        &[hello],
+    );
+    assert!(!out.status.success());
+    assert!(answers.is_empty());
+    assert!(text(&out).contains("not our extension"), "{}", text(&out));
+
+    // Nonsense gets a refusal, not a crash.
+    let (out, answers) = as_browser(
+        &home,
+        EXTENSION,
+        &[serde_json::json!({ "v": 1, "cmd": "rm" })],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(answers[0]["ok"], false);
+}
+
+#[test]
+fn the_extension_hands_links_to_the_reelgene_running() {
+    use reelgene_app::handoff::{self, Handler, Reply, Valid};
+    use std::sync::{Arc, Mutex};
+    let home = Home::new("native-handoff");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _instance = reelgene_app::instance::Instance::acquire(home.path()).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let handler: Handler = Arc::new(move |request| {
+        log.lock().unwrap().push(request);
+        Reply::ok()
+    });
+    handoff::serve(
+        rt.handle(),
+        &handoff::endpoint(home.path()).unwrap(),
+        handler,
+    )
+    .unwrap();
+
+    let (out, answers) = as_browser(
+        &home,
+        EXTENSION,
+        &[
+            serde_json::json!({ "v": 1, "cmd": "hello" }),
+            serde_json::json!({ "v": 1, "cmd": "add", "links": [{
+                "url": "https://cdn.example/a.m3u8",
+                "title": "A Page",
+                "referer": "https://site.example/watch",
+            }] }),
+        ],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(answers[0]["running"], true, "{answers:?}");
+    assert_eq!(answers[1]["running"], true, "{answers:?}");
+    let Valid::Add(links) = &seen.lock().unwrap()[0] else {
+        panic!("{seen:?}")
+    };
+    assert_eq!(links[0].title.as_deref(), Some("A Page"));
+    assert_eq!(
+        links[0].headers,
+        [(
+            "Referer".to_owned(),
+            "https://site.example/watch".to_owned()
+        )]
     );
 }

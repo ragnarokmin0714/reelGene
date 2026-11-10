@@ -21,7 +21,10 @@ fetched and checked against its build's checksum, and watched for changes;
 a tools folder of its own, never among downloads, that takes its tools
 along when moved; ffmpeg and yt-dlp imported from files downloaded by hand,
 yt-dlp from a mirror, always checked; cookies for videos that need signing
-in; ffmpeg limited to media formats, and a reminder when it gets old.
+in; ffmpeg limited to media formats, and a reminder when it gets old; a
+browser extension (Chromium browsers) that finds the playlists and videos a
+page plays and hands them over through Native Messaging, with the page's
+title and Referer.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:
@@ -51,9 +54,6 @@ Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 Not needed for reelgene to work; each waits for something only a person can
 supply (a browser to test in, real samples, a site to try).
 
-- **Video link detection from the browser**: an extension watches network
-  requests for playlists and hands them over through Native Messaging — never
-  through a local HTTP port, which any web page could call.
 - **A Rust TS → MP4 remuxer** (H.264/H.265 + AAC, about 1,500 lines), so the
   common case needs no ffmpeg. CI compares it against ffmpeg on the same
   samples with ffprobe (duration, frame count, A/V sync); unusual streams
@@ -62,6 +62,10 @@ supply (a browser to test in, real samples, a site to try).
   tell which ones a site change has broken.
 
 ## Later
+
+- The browser extension for Firefox: another manifest (`allowed_extensions`,
+  a gecko id) and its own host locations; and in a store, so Developer mode
+  is not needed (the store's ID joins `allowed_origins`).
 
 - Auto-update, only with signed updates (minisign).
 - Code signing for the Windows executable.

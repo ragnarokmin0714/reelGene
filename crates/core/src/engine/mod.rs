@@ -144,6 +144,25 @@ impl Discovery {
             quality: Default::default(),
         }
     }
+
+    /// Headers the link needs, such as the Referer a browser sent with it:
+    /// kept in the recipe, so every resolve and every resume sends them.
+    /// Only direct links take them (a site resolver sets its own); `false`
+    /// when this one does not. Give them before `Engine::qualities`, which
+    /// fetches the playlist with them.
+    pub fn give_headers(&mut self, headers: &[(String, String)]) -> bool {
+        if headers.is_empty() {
+            return true;
+        }
+        let direct = self.resolver == crate::resolver::direct::ID;
+        match self.found.spec.as_object_mut().filter(|_| direct) {
+            Some(spec) => {
+                spec.insert("headers".into(), serde_json::json!(headers));
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1126,5 +1145,28 @@ mod tests {
         );
         assert_eq!(pick(Quality::Height(240)), Some(360), "else the smallest");
         assert_eq!(choose(&[], Quality::Best), None);
+    }
+
+    #[test]
+    fn only_direct_links_take_headers() {
+        let referer = [("Referer".to_owned(), "https://site.example/".to_owned())];
+        let found = |resolver: &str| Discovery {
+            resolver: resolver.into(),
+            found: Discovered {
+                title: "t".into(),
+                spec: serde_json::json!({ "url": "https://cdn.example/a.m3u8" }),
+                episodes: Vec::new(),
+            },
+        };
+        let mut direct = found("direct");
+        assert!(direct.give_headers(&referer));
+        assert_eq!(
+            direct.found.spec["headers"],
+            serde_json::json!([["Referer", "https://site.example/"]])
+        );
+        let mut site = found("page");
+        assert!(!site.give_headers(&referer));
+        assert!(site.found.spec.get("headers").is_none());
+        assert!(site.give_headers(&[]), "nothing to give is no refusal");
     }
 }

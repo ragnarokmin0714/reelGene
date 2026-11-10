@@ -16,6 +16,10 @@ network or leaving it overnight, and pick up where they stopped.
   link anywhere and it is listed, ready to add — or added by itself, if you
   prefer. Ordinary web pages are ignored; only links reelgene can download
   appear.
+- **Finds what a page plays**: the browser extension lists the playlists
+  and video files the page you are watching loads, and sends the one you
+  pick to reelgene with the page's title and the Referer its server checks
+  (see [The browser extension](#the-browser-extension)).
 - **HLS playlists and direct video links**: `.m3u8` (AES-128 encrypted
   included, fMP4 or MPEG-TS, separate audio tracks) and plain files such as
   `.mp4`.
@@ -116,6 +120,7 @@ reelgene doctor                                            # where things are, f
 reelgene ffmpeg [--accept | --from FILE]                   # fetch ffmpeg, checked, or import one
 reelgene yt-dlp [--check | --from FILE]                    # fetch the official yt-dlp, or import one
 reelgene cookies [import FILE | remove]                    # cookies for videos that need signing in
+reelgene browser [install | remove]                        # the browser extension: set up, undo
 reelgene report                                            # a problem report, in this folder
 reelgene licenses                                          # reelgene's and its fonts' licences
 ```
@@ -123,9 +128,9 @@ reelgene licenses                                          # reelgene's and its 
 `Ctrl-C` stops cleanly; `reelgene run` continues later. The exit code is 0
 when everything finished, 1 when something failed. Only one reelgene runs per
 data folder. While one runs (the window, or `reelgene get` / `run`),
-`reelgene get URL` and `reelgene add URL` pass their links to it and return;
-options such as `-o` cannot be passed that way, and other commands wait for
-it to close (`doctor` always works).
+`reelgene get URL` and `reelgene add URL` pass their links to it and return,
+with `--title` and `-H` headers; other options such as `-o` cannot be passed
+that way, and other commands wait for it to close (`doctor` always works).
 
 Headers given with `-H` are saved with the job, because a resume needs them
 too; do not pass anything you would not keep on disk.
@@ -195,6 +200,37 @@ The download folder in Settings → Downloads works the same way: the folder
 in use is in the field, ready to edit, and a folder that does not exist yet
 is made with the first download. A path that is not a full one, or is a
 file, cannot be saved.
+
+## The browser extension
+
+A page that plays a video loads it from somewhere: a playlist (`.m3u8`) or a
+video file. The reelgene extension for Chrome, Edge, Brave, Vivaldi and
+Chromium watches for those requests and lists them under its toolbar button,
+with a count on it. Click **Download** beside one and it goes to reelgene,
+named after the page, with the `Referer` and `Origin` the browser sent, which
+servers often check before they hand out a video. If reelgene is closed, the
+link waits in its queue until you open it.
+
+Setting it up, once:
+
+1. In reelgene, **Settings → Browser → Set up** (or `reelgene browser
+   install`). This writes the extension into reelgene's data folder and lets
+   the browsers start reelgene for it.
+2. In the browser, open its Extensions page (`chrome://extensions`,
+   `edge://extensions`), turn on **Developer mode**, choose **Load unpacked**
+   and pick that folder (Settings shows it, and **Open extension folder**
+   opens it).
+
+The extension comes with reelgene and is updated with it; a portable copy
+that moves to another folder is found again the next time its window opens.
+**Remove** in Settings (or `reelgene browser remove`) undoes step 1; remove
+the extension in the browser yourself.
+
+What it does not do: it sends nothing until you click, keeps its list only in
+the browser's memory for the open tab, and never passes cookies or sign-in
+headers, so a video that needs your session cannot be downloaded this way.
+Signed links can expire within minutes: send a link while the page is
+playing. DRM-protected video is refused, as everywhere in reelgene.
 
 ## Pages without a resolver
 
@@ -319,6 +355,11 @@ folder appears as `~`; read it before sending it anyway.
   your account can open (a Unix socket in a folder of yours; a named pipe
   closed to the network on Windows), never a network port that a web page
   could reach.
+- **The browser extension** talks to reelgene through the browser's Native
+  Messaging (the browser starts reelgene and passes messages over a pipe),
+  which only this extension may use; never a local network port. It sends a
+  link, the page's title, and the `Referer` and `Origin` of the request, and
+  only when you click; cookies and sign-in headers stay in the browser.
 - **Cookies** you import are kept like passwords and given only to yt-dlp,
   only for a video that asks to sign in (see
   [Videos that need signing in](#videos-that-need-signing-in)).

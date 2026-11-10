@@ -12,6 +12,7 @@ pub const VERSION: &str = match option_env!("REELGENE_VERSION") {
 };
 
 pub mod app;
+pub mod browser;
 pub mod format;
 pub mod handoff;
 pub mod instance;

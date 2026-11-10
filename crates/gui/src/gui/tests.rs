@@ -1195,7 +1195,7 @@ fn a_second_reelgene_brings_the_window_back_and_hands_over_links() {
     assert!(d.wait_for_tray(), "with no window open, Show opens one");
 
     let url = Url::parse(&format!("{}/show/ep01/index.m3u8", env.base)).unwrap();
-    assert!(handoff(Valid::Add(vec![url])).ok);
+    assert!(handoff(Valid::Add(vec![url.into()])).ok);
     let mut h = open(Arc::clone(&d));
     until(&mut h, "the handed link, queued", |h| {
         h.query_all_by_label("ep01").next().is_some()
@@ -1451,6 +1451,39 @@ mod screens {
             shoot(name, theme, lang, move |g| {
                 let mut form = g.settings_form();
                 form.tab = tab;
+                g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+            });
+        }
+        // The browser page set up for two browsers, and not set up.
+        for (name, theme, lang, set_up) in [
+            ("settings-browser", Dark, "zh-TW", true),
+            ("settings-browser-light", Light, "en", false),
+        ] {
+            shoot(name, theme, lang, move |g| {
+                use reelgene_app::browser::{Registration, Status};
+                let on = if set_up {
+                    Registration::Here
+                } else {
+                    Registration::Absent
+                };
+                g.desktop
+                    .set_browser_state(super::super::desktop::BrowserState {
+                        status: Some(Ok(Status {
+                            extension_dir: "/home/me/.local/share/reelgene/browser-extension"
+                                .into(),
+                            extension_current: true,
+                            browsers: vec![
+                                ("Chrome", on.clone()),
+                                ("Edge", on),
+                                ("Brave", Registration::NoBrowser),
+                                ("Vivaldi", Registration::NoBrowser),
+                                ("Chromium", Registration::NoBrowser),
+                            ],
+                        })),
+                        busy: false,
+                    });
+                let mut form = g.settings_form();
+                form.tab = Tab::Browser;
                 g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
             });
         }

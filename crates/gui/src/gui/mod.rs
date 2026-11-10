@@ -65,6 +65,8 @@ pub(crate) enum Msg {
     YtDlp(desktop::YtTask, Result<String, String>),
     /// Cookies imported (`true`) or removed, or why not.
     Cookies(Result<bool, String>),
+    /// The browser extension set up (for these browsers) or removed, or why not.
+    Browser(Result<Option<Vec<&'static str>>, String>),
     /// ffmpeg and yt-dlp moved to a new tools folder (its path), or why not.
     ToolsMoved(Result<String, String>),
 }
@@ -130,6 +132,10 @@ pub(crate) enum Action {
     OpenSettings(dialogs::Tab),
     YtDlp(desktop::YtTask),
     RemoveCookies,
+    /// Set the browser extension up (`true`) or undo it.
+    Browser(bool),
+    /// The extension's folder in the file manager, to load it in the browser.
+    OpenExtension,
     /// The clipboard's text into the link field (`read`: and read the
     /// links in it at once, as the paste button does).
     Paste {
@@ -365,6 +371,11 @@ impl Gui {
                 }
                 Err(e) => self.toast(e, true),
             },
+            Msg::Browser(result) => match result {
+                Ok(Some(names)) => self.toast((self.t.browser_done)(&names), false),
+                Ok(None) => self.toast(self.t.browser_removed.to_owned(), false),
+                Err(e) => self.toast(e, true),
+            },
             Msg::Picked(dialogs::Field::Cookies, path) => self.desktop.cookies(Some(&path)),
             Msg::Picked(dialogs::Field::FfmpegFile, path) => self.desktop.fetch_ffmpeg(Some(path)),
             Msg::Picked(dialogs::Field::YtDlpFile, path) => self.desktop.yt_dlp_import(path),
@@ -426,6 +437,7 @@ impl Gui {
                 if matches!(dialog, Dialog::Settings(_)) {
                     // Imported or removed from the command line meanwhile.
                     self.desktop.refresh_cookies();
+                    self.desktop.refresh_browser();
                 }
                 self.dialog = Some(dialog);
             }
@@ -456,10 +468,20 @@ impl Gui {
                 let mut form = self.settings_form();
                 form.tab = tab;
                 self.desktop.refresh_cookies();
+                self.desktop.refresh_browser();
                 self.dialog = Some(Dialog::Settings(Box::new(form)));
             }
             Action::YtDlp(task) => self.desktop.yt_dlp_task(task),
             Action::RemoveCookies => self.desktop.cookies(None),
+            Action::Browser(install) => self.desktop.browser(install),
+            Action::OpenExtension => {
+                let dir = self
+                    .desktop
+                    .places
+                    .data_dir
+                    .join(reelgene_app::browser::EXTENSION_DIR);
+                reelgene_app::platform::reveal(&dir);
+            }
             Action::Paste { read } => self.paste(read),
             Action::ClearInput => self.input.clear(),
         }

@@ -4098,6 +4098,7 @@ dependencies = [
 name = "reelgene-app"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "jiff",
  "log",
  "reelgene-core",
@@ -4105,6 +4106,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+ "windows-registry",
  "windows-sys 0.61.2",
 ]
 

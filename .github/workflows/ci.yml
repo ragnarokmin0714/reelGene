@@ -37,6 +37,9 @@ jobs:
       - run: cargo clippy -p reelgene --no-default-features --all-targets --locked -- -D warnings
       # Every failing test in one run, not just the first failing binary.
       - run: cargo test --workspace --locked --no-fail-fast
+      # The browser extension's link detection; the runners have Node.
+      - if: runner.os == 'Linux'
+        run: node --test "extension/test/*.test.mjs"
 
   deny:
     strategy:
