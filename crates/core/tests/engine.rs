@@ -332,6 +332,50 @@ async fn ts_is_kept_with_a_notice_when_there_is_no_ffmpeg() {
     );
 }
 
+/// A stand-in that answers `-version` and copies its first input to its
+/// output, as `-c copy` does in size.
+#[cfg(unix)]
+async fn fake_ffmpeg(dir: &Path) -> reelgene_core::mux::Ffmpeg {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("ffmpeg");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+[ "$1" = -version ] && { echo "ffmpeg version 9.0-test"; exit 0; }
+input=
+while [ $# -gt 1 ]; do
+  [ "$1" = -i ] && [ -z "$input" ] && input=${2#file:}
+  shift
+done
+cp "$input" "${1#file:}"
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    reelgene_core::mux::Ffmpeg::probe(&path).await.unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_mp4_made_by_ffmpeg_leaves_no_partial_files_behind() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, 2, 0);
+    let tools = scratch("remux-tools");
+    let ffmpeg = fake_ffmpeg(&tools).await;
+    let mut h = harness_with("remux", |cfg| cfg.ffmpeg = Some(ffmpeg)).await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    let output = h.done(ep).await;
+    assert_eq!(output, h.out().join("Test Drama").join("01 ep01.mp4"));
+    assert_eq!(std::fs::read(&output).unwrap(), expected(2, 0));
+    assert!(
+        !h.out().join(".reelgene").exists(),
+        "the parts and the joined TS go once the MP4 is saved"
+    );
+    std::fs::remove_dir_all(&tools).ok();
+}
+
 #[tokio::test]
 async fn resume_refetches_only_the_missing_segment() {
     let cdn = FakeCdn::start().await;

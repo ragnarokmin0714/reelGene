@@ -463,7 +463,9 @@ impl Worker<'_> {
                     let out = self.dir.join("out.mp4");
                     match ff.remux(&main, audio.as_deref(), &out, self.cancel).await {
                         Ok(()) if remux_plausible(&main, audio.as_deref(), &out).await => {
-                            return self.finish(&out, "mp4").await;
+                            let output = self.finish(&out, "mp4").await?;
+                            remove_parts(&self.job.out_dir, self.ep.id).await;
+                            return Ok(output);
                         }
                         // Stream copy changes the size a little, not by half:
                         // a much smaller MP4 lost a stream, so keep the source.
