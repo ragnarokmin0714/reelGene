@@ -695,31 +695,40 @@ fn cookies_are_imported_replaced_and_removed_from_the_tools_page() {
         .desktop
         .tx
         .send(Msg::Picked(Field::Cookies, exported.clone()));
-    until(&mut h, "cookies imported", |h| {
-        h.query_by_label_contains("1 cookies for site.example (imported ")
-            .is_some()
-    });
-    let said = |h: &mut Harness<'static, State>, text: &str| {
-        h.state_mut()
-            .gui()
-            .toasts
-            .iter()
-            .any(|t| t.text == text && !t.error)
+    // The toast and the status line come from different threads (opening
+    // Settings started a refresh that may read the jar first), and a toast
+    // lasts only 20 test steps: so a toast is remembered once seen, and both
+    // are waited for (`&`, not `&&`, so the toast is looked at every step).
+    // Checking it after the line alone was flaky on CI.
+    let seen = std::cell::Cell::new(false);
+    let said = |h: &Harness<'static, State>, text: &str| {
+        let now = h
+            .state()
+            .gui
+            .as_ref()
+            .is_some_and(|g| g.toasts.iter().any(|t| t.text == text && !t.error));
+        seen.set(seen.get() || now);
+        seen.get()
     };
-    assert!(
-        said(&mut h, EN.cookies_imported),
-        "and says to delete the export"
+    until(
+        &mut h,
+        "cookies imported, and says to delete the export",
+        |h| {
+            said(h, EN.cookies_imported)
+                & h.query_by_label_contains("1 cookies for site.example (imported ")
+                    .is_some()
+        },
     );
     let _ = h.get_by_label(EN.cookies_replace);
     let jar = h.state().desktop.yt_dlp.config().cookies.unwrap();
     assert!(jar.has(), "kept at once, without Save");
 
+    seen.set(false);
     h.get_by_label(EN.cookies_remove).click();
-    until(&mut h, "cookies removed", |h| {
-        h.query_by_label(EN.cookies_none).is_some()
+    until(&mut h, "cookies removed, and says so", |h| {
+        said(h, EN.cookies_removed) & h.query_by_label(EN.cookies_none).is_some()
     });
     assert!(!jar.has());
-    assert!(said(&mut h, EN.cookies_removed));
 }
 
 #[cfg(unix)]
