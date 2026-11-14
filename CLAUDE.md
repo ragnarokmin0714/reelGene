@@ -341,7 +341,10 @@ Changing the tools folder moves ffmpeg and yt-dlp along unless unticked
 (`app::move_tools`, copy-and-remove across disks, never over a file
 already there); their records go by checksum, so they still pass, and
 program paths in settings that pointed into the old folder follow
-(`app::moved_path`).
+(`app::moved_path`). A program path in settings that is the tools folder's
+own copy (`ToolsDirs::own`; picked there with Browse…) counts as none set,
+in the engine and in the form: it is reelgene's to fetch and watch, and
+"Get yt-dlp" used to refuse it as "a yt-dlp of their own".
 
 **How it looks.** When stability, performance and compatibility are close,
 appearance decides (Roger, 2026-10-19). All colours, spacing and type live in

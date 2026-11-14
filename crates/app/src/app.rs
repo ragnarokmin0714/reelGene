@@ -179,15 +179,15 @@ pub fn registry(yt_dlp: YtDlpTool) -> Registry {
 pub fn yt_dlp_config(settings: &Settings, places: &Places) -> (YtDlpConfig, Vec<String>) {
     let tools = tools_dirs(settings, places);
     let mut config = YtDlpConfig::new(
-        settings.yt_dlp.clone(),
+        tools.own(settings.yt_dlp.as_deref(), "yt-dlp"),
         tools.dir,
         places.data_dir.join("yt-dlp-checked.json"),
     );
     config.also = tools.also;
     config.allow_unofficial = settings.yt_dlp_unofficial;
     config.cookies = Some(crate::seal::cookie_jar(&places.data_dir));
-    let mut warnings: Vec<String> = settings
-        .yt_dlp
+    let mut warnings: Vec<String> = config
+        .configured
         .as_ref()
         .filter(|p| !(p.is_absolute() && p.is_file()))
         .map(|p| format!("the yt-dlp set in settings ({}) was not found", p.display()))
@@ -288,6 +288,25 @@ impl ToolsDirs {
             .chain(self.also.iter().cloned())
             .collect()
     }
+
+    /// A program set in settings, unless it is the very file reelgene keeps
+    /// in the tools folder (picked there with Browse…, say): that one is
+    /// reelgene's to fetch and watch, not the user's own.
+    pub fn own(&self, configured: Option<&Path>, name: &str) -> Option<PathBuf> {
+        let p = configured?;
+        let ours = self.dir.join(if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        });
+        // Windows paths ignore case, and a picker may spell them otherwise.
+        let same = if cfg!(windows) {
+            p.to_string_lossy().to_lowercase() == ours.to_string_lossy().to_lowercase()
+        } else {
+            p == ours
+        };
+        (!same).then(|| p.to_path_buf())
+    }
 }
 
 pub fn tools_dirs(settings: &Settings, places: &Places) -> ToolsDirs {
@@ -387,11 +406,13 @@ pub async fn find_ffmpeg(
     places: &Places,
     accept: bool,
 ) -> (Option<Ffmpeg>, Option<String>) {
-    let tools = tools_dirs(settings, places).search();
+    let dirs = tools_dirs(settings, places);
+    let set = dirs.own(settings.ffmpeg.as_deref(), "ffmpeg");
+    let tools = dirs.search();
     // An archive is never a program: running one only gets the system's
     // "not a valid application". Say what it is and look elsewhere, so an
     // ffmpeg imported since is used.
-    let (configured, archive_note) = match settings.ffmpeg.as_deref() {
+    let (configured, archive_note) = match set.as_deref() {
         Some(p) if tools::is_archive(p) => (None, Some(archive_set(p))),
         other => (other, None),
     };
@@ -671,6 +692,34 @@ mod tests {
         );
         // A folder that merely starts with the same letters is another folder.
         assert_eq!(problem("/media/videos2"), None);
+    }
+
+    #[test]
+    fn a_yt_dlp_set_to_the_tools_folders_own_is_reelgenes_to_fetch() {
+        let p = places();
+        let exe = if cfg!(windows) {
+            "yt-dlp.exe"
+        } else {
+            "yt-dlp"
+        };
+        let ours = p.tools_dir().join(exe);
+        let s = Settings {
+            yt_dlp: Some(ours.clone()),
+            ..Settings::default()
+        };
+        let (config, warnings) = yt_dlp_config(&s, &p);
+        assert_eq!(config.configured, None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let theirs = a("/opt/bin").join(exe);
+        let s = Settings {
+            yt_dlp: Some(theirs.clone()),
+            ..Settings::default()
+        };
+        assert_eq!(yt_dlp_config(&s, &p).0.configured, Some(theirs));
+        if cfg!(windows) {
+            let shouted = PathBuf::from(ours.display().to_string().to_uppercase());
+            assert_eq!(tools_dirs(&s, &p).own(Some(&shouted), "yt-dlp"), None);
+        }
     }
 
     #[test]

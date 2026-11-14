@@ -214,6 +214,15 @@ fn parse_range(text: &str) -> Vec<std::ops::RangeInclusive<i64>> {
         .collect()
 }
 
+/// The tools folder `dir`, to tell its own programs from the user's.
+fn ours(dir: &Path) -> reelgene_app::app::ToolsDirs {
+    reelgene_app::app::ToolsDirs {
+        dir: dir.to_path_buf(),
+        also: Vec::new(),
+        warning: None,
+    }
+}
+
 /// Why a typed folder cannot be used; a missing one is fine, it is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FolderProblem {
@@ -284,14 +293,17 @@ impl SettingsForm {
         let or = |p: &Option<PathBuf>, default: &Path| {
             p.as_deref().unwrap_or(default).display().to_string()
         };
+        // The tools folder's own copy shows as no program set: it is one.
+        let tools = ours(settings.tools_dir.as_deref().unwrap_or(default_tools));
+        let own = |p: &Option<PathBuf>, name| text(&tools.own(p.as_deref(), name));
         Self {
             default_folder: default_folder.display().to_string(),
             folder: or(&settings.download_dir, default_folder),
-            ffmpeg: text(&settings.ffmpeg),
+            ffmpeg: own(&settings.ffmpeg, "ffmpeg"),
             tools: or(&settings.tools_dir, default_tools),
             default_tools: default_tools.display().to_string(),
             move_tools: true,
-            yt_dlp: text(&settings.yt_dlp),
+            yt_dlp: own(&settings.yt_dlp, "yt-dlp"),
             yt_dlp_key: text(&settings.yt_dlp_key),
             yt_source: settings.yt_dlp_source.clone().unwrap_or_default(),
             limit_mb: settings.speed_limit as f64 / 1000.0,
@@ -368,11 +380,12 @@ impl SettingsForm {
             (!s.trim().is_empty() && p.is_absolute()).then_some(p)
         };
         let unless = |s: &str, default: &str| path(s).filter(|p| *p != Path::new(default));
+        let tools = ours(&self.tools_dir());
         Settings {
             download_dir: unless(&self.folder, &self.default_folder),
-            ffmpeg: path(&self.ffmpeg),
+            ffmpeg: tools.own(path(&self.ffmpeg).as_deref(), "ffmpeg"),
             tools_dir: unless(&self.tools, &self.default_tools),
-            yt_dlp: path(&self.yt_dlp),
+            yt_dlp: tools.own(path(&self.yt_dlp).as_deref(), "yt-dlp"),
             yt_dlp_key: path(&self.yt_dlp_key),
             yt_dlp_source: Some(self.yt_source.trim().to_owned()).filter(|s| !s.is_empty()),
             speed_limit: (self.limit_mb * 1000.0).round() as u64,
@@ -1520,6 +1533,39 @@ mod tests {
             None,
             "switched off, the span is not saved"
         );
+    }
+
+    #[test]
+    fn the_tools_folders_own_programs_count_as_none_set() {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let exe = |n: &str| {
+            if cfg!(windows) {
+                format!("{n}.exe")
+            } else {
+                n.to_owned()
+            }
+        };
+        let at = |p: &str| PathBuf::from(format!("{root}{p}"));
+        let tools = at("tools");
+        let settings = Settings {
+            yt_dlp: Some(tools.join(exe("yt-dlp"))),
+            ffmpeg: Some(at("bin").join(exe("ffmpeg"))),
+            ..Settings::default()
+        };
+        let mut form = SettingsForm::new(&settings, &at("downloads"), &tools);
+        assert_eq!(form.yt_dlp, "", "reelgene's own copy");
+        assert_eq!(
+            form.ffmpeg,
+            at("bin").join(exe("ffmpeg")).display().to_string()
+        );
+        // Picked there with Browse…, it is saved as none set.
+        form.ffmpeg = tools.join(exe("ffmpeg")).display().to_string();
+        let s = form.finish();
+        assert_eq!((s.ffmpeg, s.yt_dlp), (None, None));
+        // In another tools folder, that folder's copy is the one.
+        form.tools = at("apps").display().to_string();
+        form.yt_dlp = tools.join(exe("yt-dlp")).display().to_string();
+        assert_eq!(form.finish().yt_dlp, Some(tools.join(exe("yt-dlp"))));
     }
 
     #[test]
