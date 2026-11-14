@@ -255,6 +255,12 @@ fn exe_name() -> &'static str {
     }
 }
 
+/// Whether `path` is named like an archive, which is never a program to run:
+/// a build's zip (to import) or ffmpeg's source code.
+pub fn is_archive(path: &Path) -> bool {
+    !matches!(Packed::of(path), Ok(Packed::Program))
+}
+
 /// What a file the user picked holds, by its name.
 enum Packed {
     Archive,
@@ -269,7 +275,10 @@ impl Packed {
             .unwrap_or_default();
         if name.ends_with(".zip") || name.ends_with(".tar.xz") || name.ends_with(".txz") {
             Ok(Self::Archive)
-        } else if name.ends_with(".7z") || name.ends_with(".rar") || name.ends_with(".tar.gz") {
+        } else if [".7z", ".rar", ".tar.gz", ".tgz", ".tar.bz2", ".tar"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
+        {
             Err(Error::Unsupported(
                 "reelgene reads .zip and .tar.xz archives: take the build in one of those, \
                  or unpack it and pick its ffmpeg"
@@ -335,11 +344,13 @@ fn extract(archive: &Path, out: &Path, exe: &str, whole: bool) -> Result<()> {
     let file = open(archive)?;
     let name = archive.to_string_lossy().to_lowercase();
     let mut found = false;
+    let mut source = SourceSigns::default();
     if name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(file).map_err(|e| bad(&e))?;
         if whole && zip.file_names().flatten().any(|n| is_shared_library(&n)) {
             return Err(shared());
         }
+        zip.file_names().flatten().for_each(|n| source.see(&n));
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| bad(&e))?;
             if entry.is_file() && wanted(&entry.name().map_err(|e| bad(&e))?) {
@@ -359,6 +370,7 @@ fn extract(archive: &Path, out: &Path, exe: &str, whole: bool) -> Result<()> {
             if whole && is_shared_library(&name) {
                 return Err(shared());
             }
+            source.see(&name);
             if !found && entry.header().entry_type().is_file() && wanted(&name) {
                 copy_capped(&mut entry, out)?;
                 found = true;
@@ -370,9 +382,43 @@ fn extract(archive: &Path, out: &Path, exe: &str, whole: bool) -> Result<()> {
     }
     if found {
         Ok(())
+    } else if source.all() {
+        Err(Error::Unsupported(source_code(exe)))
     } else {
         Err(bad(&format!("no bin/{exe} in it")))
     }
+}
+
+/// What tells ffmpeg's source code from a build: its build script and its
+/// libraries' code at the top, as in GitHub's "Source code" zip and the
+/// tarballs ffmpeg's site offers.
+#[derive(Default)]
+struct SourceSigns {
+    configure: bool,
+    libavcodec: bool,
+}
+
+impl SourceSigns {
+    fn see(&mut self, name: &str) {
+        let name = name.replace('\\', "/");
+        let parts: Vec<&str> = name.trim_start_matches("./").split('/').collect();
+        // At the top, or one folder down (`FFmpeg-n8.1.3/configure`).
+        self.configure |= matches!(parts[..], ["configure"] | [_, "configure"]);
+        self.libavcodec |= matches!(parts[..], ["libavcodec", _, ..] | [_, "libavcodec", _, ..]);
+    }
+
+    fn all(&self) -> bool {
+        self.configure && self.libavcodec
+    }
+}
+
+/// Said of ffmpeg's source code, picked where a build belongs.
+pub fn source_code(exe: &str) -> String {
+    format!(
+        "this is ffmpeg's source code, not a build: it has no {exe} to run. Press Get ffmpeg, \
+         or take a build such as BtbN's (the {platform} archive without \"-shared\" in its name)",
+        platform = build_platform().map_or("one for your system", |(p, _)| p)
+    )
 }
 
 #[cfg(test)]
@@ -427,6 +473,45 @@ mod tests {
         extract(&archive, &out, "ffmpeg.exe", false).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"yes");
         assert!(extract(&archive, &out, "ffplay.exe", false).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn source_code_picked_for_a_build_is_called_source_code() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("reelgene-ffsrc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_of = |names: &[&str]| {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            for name in names {
+                zip.start_file(*name, options).unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.finish().unwrap().into_inner()
+        };
+        // As GitHub names and lays out a tag's "Source code (zip)".
+        let archive = dir.join("FFmpeg-n8.1.3.zip");
+        let names = [
+            "FFmpeg-n8.1.3/configure",
+            "FFmpeg-n8.1.3/libavcodec/avcodec.c",
+            "FFmpeg-n8.1.3/fftools/ffmpeg.c",
+        ];
+        std::fs::write(&archive, zip_of(&names)).unwrap();
+        let e = extract(&archive, &dir.join("out"), "ffmpeg.exe", true).unwrap_err();
+        assert!(matches!(e, Error::Unsupported(_)), "{e}");
+        assert!(e.to_string().contains("source code"), "{e}");
+
+        // Some other archive missing the program is just that.
+        std::fs::write(&archive, zip_of(&["notes/configure", "x/y/libavcodec/a.c"])).unwrap();
+        let e = extract(&archive, &dir.join("out"), "ffmpeg.exe", true).unwrap_err();
+        assert!(e.to_string().contains("no bin/ffmpeg.exe"), "{e}");
+        assert!(!dir.join("out").exists());
+
+        assert!(is_archive(Path::new("C:/t/FFmpeg-n8.1.3.zip")));
+        assert!(is_archive(Path::new("/t/ffmpeg-8.1.tar.gz")));
+        assert!(!is_archive(Path::new("/t/ffmpeg.exe")));
+        assert!(!is_archive(Path::new("/t/ffmpeg")));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -307,7 +307,13 @@ video. A real ffmpeg 9.0 joined a 720p VP9 video with AAC sound on
 zip or tar.xz (only `bin/ffmpeg`, read to the end so a `-shared` build is
 refused by its `avcodec` libraries; .7z is not read) or the program; the
 old one is set aside as `.old` and put back unless the new one probes as
-ffmpeg. A dated snapshot build (`Ffmpeg::built`, BtbN's `-20261023`
+ffmpeg. ffmpeg's source code (GitHub's "Source code" zip, the site's
+tarballs: `configure` and `libavcodec/` at the top) is refused by that
+name, not as "no bin/ffmpeg". An archive is never the ffmpeg program
+(`tools::is_archive`): picked with the program's Browse… it is imported,
+typed it cannot be saved, and one already in settings is skipped with a
+warning rather than run (Windows answered "not a valid Win32
+application"). A dated snapshot build (`Ffmpeg::built`, BtbN's `-20261023`
 suffix) over 183 days old gets a warning (`app::ffmpeg_age_warning`);
 undated release and distribution builds are not judged, as distributions
 patch their own.

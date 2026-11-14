@@ -760,6 +760,36 @@ fn an_ffmpeg_picked_from_a_file_is_imported_and_used() {
 }
 
 #[test]
+fn an_archive_is_never_taken_as_the_ffmpeg_program() {
+    let env = env("ffmpeg-archive");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    h.get_by_label(EN.section_tools).click();
+    settle(&mut h);
+    // Picked with the program's Browse…, it is imported instead: this one
+    // is no zip at all, so the import says so, and the field stays empty.
+    let archive = env.dir.join("FFmpeg-n8.1.3.zip");
+    std::fs::write(&archive, "not a zip").unwrap();
+    let _ = h
+        .state_mut()
+        .desktop
+        .tx
+        .send(Msg::Picked(Field::Ffmpeg, archive.clone()));
+    until(&mut h, "imported, not set", |h| {
+        h.query_by_label_contains("the ffmpeg archive").is_some()
+    });
+    assert!(h.query_by_label(EN.ffmpeg_is_archive).is_none());
+    // Typed, it cannot be saved.
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, EN.ffmpeg)
+        .scroll_to_me();
+    settle(&mut h);
+    retype(&mut h, EN.ffmpeg, &archive.display().to_string());
+    let _ = h.get_by_label(EN.ffmpeg_is_archive);
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled());
+}
+
+#[test]
 fn a_yt_dlp_mirror_is_checked_as_typed_and_used_once_saved() {
     let env = env("yt-source");
     let mut h = window(&env, english());

@@ -332,6 +332,12 @@ impl SettingsForm {
         reelgene_app::app::tools_dir_problem(Path::new(typed), &self.finish(), places)
     }
 
+    /// Whether the ffmpeg typed is an archive, which cannot be run.
+    fn ffmpeg_is_archive(&self) -> bool {
+        let typed = self.ffmpeg.trim();
+        !typed.is_empty() && reelgene_core::tools::is_archive(Path::new(typed))
+    }
+
     /// The download folder typed, unless it cannot be one.
     fn folder_problem(&self) -> Option<FolderProblem> {
         folder_problem(&self.folder)
@@ -839,7 +845,8 @@ fn settings_ui(
             && form.yt_source_ok()
             && form.tools_problem(&tools.places).is_none()
             && form.folder_problem().is_none()
-            && folder_problem(&form.tools).is_none();
+            && folder_problem(&form.tools).is_none()
+            && !form.ffmpeg_is_archive();
         if ui
             .add_enabled_ui(ok, |ui| widgets::button(ui, Kind::Primary, None, t.save))
             .inner
@@ -1073,6 +1080,16 @@ fn tools_page(
         });
         ui.end_row();
     });
+    if form.ffmpeg_is_archive() {
+        ui.add(
+            egui::Label::new(
+                RichText::new(t.ffmpeg_is_archive)
+                    .color(ui.visuals().error_fg_color)
+                    .size(13.0),
+            )
+            .wrap(),
+        );
+    }
 
     ui.add_space(14.0);
     ui.heading("yt-dlp");

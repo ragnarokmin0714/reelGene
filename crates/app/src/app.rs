@@ -388,15 +388,58 @@ pub async fn find_ffmpeg(
     accept: bool,
 ) -> (Option<Ffmpeg>, Option<String>) {
     let tools = tools_dirs(settings, places).search();
-    let Some(path) = mux::locate(settings.ffmpeg.as_deref(), &tools) else {
-        let warning = settings
-            .ffmpeg
-            .as_ref()
-            .map(|p| format!("the ffmpeg set in settings ({}) was not found", p.display()));
-        return (None, warning);
+    // An archive is never a program: running one only gets the system's
+    // "not a valid application". Say what it is and look elsewhere, so an
+    // ffmpeg imported since is used.
+    let (configured, archive_note) = match settings.ffmpeg.as_deref() {
+        Some(p) if tools::is_archive(p) => (None, Some(archive_set(p))),
+        other => (other, None),
     };
+    let with_note = |warning: Option<String>| match (&archive_note, warning) {
+        (Some(note), Some(w)) => Some(format!("{note}\n{w}")),
+        (note, w) => w.or_else(|| note.clone()),
+    };
+    let Some(path) = mux::locate(configured, &tools) else {
+        let warning = configured
+            .map(|p| format!("the ffmpeg set in settings ({}) was not found", p.display()));
+        return (None, with_note(warning));
+    };
+    let (found, warning) = probe_found(path, configured.is_none(), &tools, places, accept).await;
+    (found, with_note(warning))
+}
+
+/// Said of an archive set as the ffmpeg program in settings.
+fn archive_set(path: &Path) -> String {
+    let exe = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let looks_like_source = path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().to_lowercase().starts_with("ffmpeg-n"));
+    let what = if looks_like_source {
+        format!(" (by its name, ffmpeg's source code, which has no {exe} in it)")
+    } else {
+        String::new()
+    };
+    format!(
+        "the ffmpeg set in settings ({}) is an archive{what}, not a program, so it is not \
+         used: clear that field, then press Get ffmpeg, or Import ffmpeg… with a build's zip",
+        path.display()
+    )
+}
+
+/// Check the ffmpeg found and probe it. `unset`: none named in settings.
+async fn probe_found(
+    path: PathBuf,
+    unset: bool,
+    tools: &[PathBuf],
+    places: &Places,
+    accept: bool,
+) -> (Option<Ffmpeg>, Option<String>) {
     // One named in settings is the user's, one on PATH the system's.
-    let in_tools = settings.ffmpeg.is_none() && tools.iter().any(|d| path.parent() == Some(d));
+    let in_tools = unset && tools.iter().any(|d| path.parent() == Some(d));
     if in_tools {
         let (file, record) = (path.clone(), ffmpeg_record(places));
         let seen = tokio::task::spawn_blocking(move || {
@@ -509,6 +552,33 @@ mod tests {
             warnings.iter().any(|w| w.contains("download source")),
             "{warnings:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn an_archive_set_as_ffmpeg_is_explained_not_run() {
+        let root = std::env::temp_dir().join(format!("reelgene-ff-archive-{}", std::process::id()));
+        let archive = root.join("tools/FFmpeg-n8.1.3.zip");
+        std::fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        std::fs::write(&archive, "PK").unwrap();
+        let places = Places {
+            portable: false,
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            downloads: root.join("downloads"),
+            exe_dir: None,
+            user_downloads: None,
+        };
+        let settings = Settings {
+            ffmpeg: Some(archive.clone()),
+            tools_dir: Some(root.join("empty")),
+            ..Settings::default()
+        };
+        let (_, warning) = find_ffmpeg(&settings, &places, false).await;
+        let warning = warning.unwrap();
+        assert!(warning.contains("is an archive"), "{warning}");
+        assert!(warning.contains("source code"), "{warning}");
+        assert!(!warning.contains("does not work as ffmpeg"), "{warning}");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

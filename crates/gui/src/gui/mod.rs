@@ -378,6 +378,12 @@ impl Gui {
             },
             Msg::Picked(dialogs::Field::Cookies, path) => self.desktop.cookies(Some(&path)),
             Msg::Picked(dialogs::Field::FfmpegFile, path) => self.desktop.fetch_ffmpeg(Some(path)),
+            // A build's zip picked as the program: what Import is for.
+            Msg::Picked(dialogs::Field::Ffmpeg, path)
+                if reelgene_core::tools::is_archive(&path) =>
+            {
+                self.desktop.fetch_ffmpeg(Some(path));
+            }
             Msg::Picked(dialogs::Field::YtDlpFile, path) => self.desktop.yt_dlp_import(path),
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
