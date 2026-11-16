@@ -2,8 +2,13 @@
 //! itself names, the way a browser would find it. `<video src>` and its
 //! `<source src>` children, and the `og:video` tags pages set for link
 //! previews. Many sites write the current video's address straight into the
-//! HTML; for those no site resolver is needed. Pages that load their video
-//! by script are left to yt-dlp, the next fallback.
+//! HTML; for those no site resolver is needed.
+//!
+//! A page with no player in its markup may still name playlists in its
+//! scripts (a player's config, JSON for the page). Those are read too, but
+//! scripts name adverts and previews as readily as the video, so each is
+//! measured and judged (`sift`): only the video is offered. Pages that build
+//! the address at run time are left to yt-dlp, the next fallback.
 //!
 //! Like yt-dlp it claims nothing by itself (`matches` is false), so pages
 //! copied to the clipboard are never fetched; only links the user adds are.
@@ -12,6 +17,7 @@
 
 use super::{Ctx, Discovered, EpisodeRef, MediaKind, Resolved, Resolver};
 use crate::error::{Error, Result};
+use crate::sift::{self, Verdict};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use url::Url;
@@ -20,6 +26,8 @@ pub const ID: &str = "page";
 
 /// More than this is a page of previews, not of a video.
 const MAX_VIDEOS: usize = 20;
+/// Playlists from scripts measured at most: each costs a request or two.
+const MAX_SCRIPTED: usize = 12;
 
 pub struct Page;
 
@@ -36,9 +44,18 @@ impl Resolver for Page {
     async fn discover(&self, url: &Url, cx: Ctx<'_>) -> Result<Discovered> {
         let html = cx.get_text(url, &[]).await?;
         let videos = videos(&html, url);
-        if videos.is_empty() {
-            return Err(Error::resolver(ID, "found no video on this page"));
-        }
+        // A video in the markup is found by its place; one from the scripts
+        // by its address without the query, which signatures change.
+        let hints: Vec<Value> = if videos.is_empty() {
+            sifted(&html, url, &cx)
+                .await?
+                .iter()
+                .enumerate()
+                .map(|(i, u)| json!({ "n": i, "path": address(u) }))
+                .collect()
+        } else {
+            (0..videos.len()).map(|i| json!({ "n": i })).collect()
+        };
         let title = title(&html).unwrap_or_else(|| {
             url.path_segments()
                 .and_then(|mut s| s.next_back())
@@ -46,7 +63,7 @@ impl Resolver for Page {
                 .unwrap_or("video")
                 .to_owned()
         });
-        let several = videos.len() > 1;
+        let several = hints.len() > 1;
         // One episode of a series: file it under the series, by its number.
         if !several && let Some(ep) = super::title::split_episode(&title) {
             return Ok(Discovered {
@@ -54,22 +71,24 @@ impl Resolver for Page {
                 episodes: vec![EpisodeRef {
                     index: ep.index,
                     title: ep.label,
-                    hint: json!({ "n": 0 }),
+                    hint: hints[0].clone(),
                 }],
                 title: ep.series,
             });
         }
         Ok(Discovered {
             spec: json!({ "url": url.as_str() }),
-            episodes: (0..videos.len())
-                .map(|i| EpisodeRef {
+            episodes: hints
+                .into_iter()
+                .enumerate()
+                .map(|(i, hint)| EpisodeRef {
                     index: i as i64 + 1,
                     title: if several {
                         format!("{title} #{}", i + 1)
                     } else {
                         title.clone()
                     },
-                    hint: json!({ "n": i }),
+                    hint,
                 })
                 .collect(),
             title,
@@ -83,10 +102,15 @@ impl Resolver for Page {
             .ok_or_else(|| Error::resolver(ID, "the stored page link is unreadable"))?;
         let n = hint["n"].as_u64().unwrap_or(0) as usize;
         let html = cx.get_text(&page, &[]).await?;
-        let (url, kind) = videos(&html, &page)
-            .into_iter()
-            .nth(n)
-            .ok_or_else(|| Error::resolver(ID, "the video is no longer on the page"))?;
+        let gone = || Error::resolver(ID, "the video is no longer on the page");
+        let (url, kind) = match hint["path"].as_str() {
+            Some(path) => scripted(&html, &page)
+                .into_iter()
+                .find(|u| address(u) == path)
+                .map(|u| (u, MediaKind::Hls))
+                .ok_or_else(gone)?,
+            None => videos(&html, &page).into_iter().nth(n).ok_or_else(gone)?,
+        };
         Ok(Resolved {
             url,
             kind,
@@ -137,6 +161,100 @@ fn videos(html: &str, base: &Url) -> Vec<(Url, MediaKind)> {
     }
     found.truncate(MAX_VIDEOS);
     found
+}
+
+/// Playlists named anywhere in the page, scripts included: absolute http(s)
+/// links whose path ends in `.m3u8`, with JSON's and HTML's escapes undone.
+/// Only ones the page may lead to (`net::may_follow`), in order, no repeats.
+fn scripted(html: &str, page: &Url) -> Vec<Url> {
+    let text = html
+        .replace("\\/", "/")
+        .replace("\\u002F", "/")
+        .replace("\\u002f", "/")
+        .replace("\\u0026", "&")
+        .replace("&amp;", "&");
+    let stop = |c: char| c.is_whitespace() || "\"'`<>\\(){}|^".contains(c) || c.is_control();
+    let mut found: Vec<Url> = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("http") {
+        rest = &rest[at..];
+        let end = rest.find(stop).unwrap_or(rest.len());
+        let candidate = rest[..end].trim_end_matches(['.', ',', ';']);
+        rest = &rest[end.max(4)..];
+        let Ok(url) = Url::parse(candidate) else {
+            continue;
+        };
+        let hls = url.path().to_ascii_lowercase().ends_with(".m3u8");
+        if hls
+            && matches!(url.scheme(), "http" | "https")
+            && crate::net::may_follow(page, &url)
+            && !found.contains(&url)
+        {
+            found.push(url);
+        }
+        if found.len() == MAX_SCRIPTED {
+            break;
+        }
+    }
+    found
+}
+
+/// A link without its query and fragment: what stays put when a signed link
+/// is signed again.
+fn address(url: &Url) -> String {
+    let mut bare = url.clone();
+    bare.set_query(None);
+    bare.set_fragment(None);
+    bare.to_string()
+}
+
+/// The playlists in a page's scripts that are its video, adverts and
+/// previews left out (`sift::judge`). Each is fetched with the page as its
+/// Referer, as the page's player would.
+async fn sifted(html: &str, page: &Url, cx: &Ctx<'_>) -> Result<Vec<Url>> {
+    let found = scripted(html, page);
+    if found.is_empty() {
+        return Err(Error::resolver(ID, "found no video on this page"));
+    }
+    let headers = [("Referer".to_owned(), page.to_string())];
+    let measured = futures::future::join_all(
+        found
+            .iter()
+            .map(|u| sift::measure(cx.http, u, &headers, cx.cancel)),
+    )
+    .await;
+    let pairs: Vec<(&Url, Option<sift::Measured>)> = found
+        .iter()
+        .zip(measured)
+        .map(|(u, m)| (u, m.ok()))
+        .collect();
+    let verdicts = sift::judge(&pairs);
+    let count = |want: fn(&Verdict) -> bool| verdicts.iter().filter(|v| want(v)).count();
+    log::info!(
+        "{}: of {} playlists in the page's scripts, {} kept; left out {} adverts or \
+         previews, {} other versions, {} unreadable",
+        crate::net::redact(page),
+        found.len(),
+        count(|v| *v == Verdict::Video),
+        count(|v| matches!(v, Verdict::Short | Verdict::Advert)),
+        count(|v| matches!(v, Verdict::Version(_))),
+        count(|v| *v == Verdict::Unknown),
+    );
+    let named = pairs.len();
+    drop(pairs);
+    let kept: Vec<Url> = found
+        .into_iter()
+        .zip(verdicts)
+        .filter(|(_, v)| *v == Verdict::Video)
+        .map(|(u, _)| u)
+        .collect();
+    if kept.is_empty() {
+        return Err(Error::resolver(
+            ID,
+            format!("the page's scripts name {named} playlists, but none could be read"),
+        ));
+    }
+    Ok(kept)
 }
 
 /// HLS by its extension or declared type; a file by a media extension.
@@ -316,6 +434,30 @@ mod tests {
         );
         assert!(videos("<", &base()).is_empty(), "never fails on odd markup");
         assert!(videos("<video src=\"", &base()).is_empty());
+    }
+
+    #[test]
+    fn playlists_in_scripts_are_found_through_their_escapes() {
+        let html = r#"<script>
+            p({"a":"https:\/\/cdn.example\/v\/master.m3u8?sig=1\u0026t=2",
+               b: 'https://cdn.example/v/master.m3u8?sig=1&t=2',
+               c: "https:\u002F\u002Fads.example\u002Fpre.m3u8",
+               d: "http://192.168.1.9/nas.m3u8", e: "https://cdn.example/poster.jpg",
+               f: `https://cdn.example/a,720,1080,.mp4.csmil/master.m3u8`});
+            </script><a href="https://cdn.example/x/index.M3U8">.</a>"#;
+        let found: Vec<String> = scripted(html, &base()).iter().map(Url::to_string).collect();
+        assert_eq!(
+            found,
+            [
+                "https://cdn.example/v/master.m3u8?sig=1&t=2",
+                "https://ads.example/pre.m3u8",
+                "https://cdn.example/a,720,1080,.mp4.csmil/master.m3u8",
+                "https://cdn.example/x/index.M3U8",
+            ],
+            "escapes undone, repeats and the local network left out"
+        );
+        let signed = Url::parse("https://cdn.example/v/i.m3u8?sig=9#t").unwrap();
+        assert_eq!(address(&signed), "https://cdn.example/v/i.m3u8");
     }
 
     #[test]

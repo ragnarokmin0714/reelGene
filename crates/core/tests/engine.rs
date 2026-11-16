@@ -1376,6 +1376,64 @@ async fn a_page_naming_its_video_is_downloaded_without_any_site_resolver() {
 }
 
 #[tokio::test]
+async fn a_video_named_only_in_scripts_is_found_and_its_adverts_left_out() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, SEGMENTS, 0);
+    // Another version of it: a master naming the same playlist.
+    cdn.serve(
+        "/master.m3u8",
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720\nindex.m3u8\n",
+    );
+    cdn.serve("/ads/pre.m3u8", playlist("seg", 1, false));
+    cdn.serve("/p/hover.m3u8", playlist("seg", 2, false));
+    let base = cdn.url("/").to_string();
+    let escaped = base.replace('/', "\\/");
+    cdn.serve(
+        "/watch/8",
+        format!(
+            r#"<html><head><title>Episode Eight</title></head><body><div id="player"></div>
+               <script>var cfg = {{"pre":"{escaped}ads\/pre.m3u8",
+                 "src":"{escaped}master.m3u8","hover":"{base}p/hover.m3u8",
+                 "alt":"{base}index.m3u8?sig=abc&amp;t=1", "old":"{base}gone.m3u8"}};</script>
+               </body></html>"#
+        ),
+    );
+    let mut h = harness("page-scripted").await;
+    let page = cdn.url("/watch/8");
+    let found = h.engine.discover(&page, None).await.unwrap();
+    assert_eq!(found.resolver, "page");
+    assert_eq!(
+        found.found.episodes.len(),
+        1,
+        "the advert, the preview, the other version and the unreadable one are left out"
+    );
+    assert_eq!(found.found.title, "Episode Eight");
+    let id = h
+        .engine
+        .add(found.into_job(page.clone(), h.out()))
+        .await
+        .unwrap();
+    let ep = h
+        .engine
+        .snapshot()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|j| j.id == id)
+        .unwrap()
+        .episodes[0]
+        .id;
+    let output = h.done(ep).await;
+    assert_eq!(std::fs::read(output).unwrap(), expected(SEGMENTS, 0));
+    let hit = &cdn.hits("/ads/pre.m3u8")[0];
+    assert_eq!(
+        hit.headers.get("referer").map(String::as_str),
+        Some(page.as_str()),
+        "measured as the player would"
+    );
+}
+
+#[tokio::test]
 async fn a_page_without_a_player_says_so_and_points_at_yt_dlp() {
     let cdn = FakeCdn::start().await;
     cdn.serve("/article", "<html><p>no video here</p></html>");

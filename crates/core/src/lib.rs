@@ -16,6 +16,7 @@ pub mod net;
 pub mod paths;
 pub mod pgp;
 pub mod resolver;
+pub mod sift;
 pub mod store;
 pub mod tools;
 
