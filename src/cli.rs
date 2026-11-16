@@ -101,7 +101,8 @@ pub enum Cmd {
     },
     /// The browser extension that finds the videos pages play: show whether
     /// it is set up, set it up (write the extension and let Chrome, Edge,
-    /// Brave, Vivaldi and Chromium start reelgene for it), or undo that.
+    /// Firefox, Brave, Vivaldi and Chromium start reelgene for it), or undo
+    /// that.
     Browser {
         #[command(subcommand)]
         action: Option<BrowserCmd>,

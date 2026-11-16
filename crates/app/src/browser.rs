@@ -3,11 +3,13 @@
 //!
 //! Chromium browsers (Chrome, Edge, Brave, Vivaldi, Chromium) start the
 //! program a host manifest names, with the calling extension's origin as its
-//! first argument, and talk over stdin and stdout: each message is a 32-bit
+//! first argument; Firefox passes the manifest's path and then the
+//! extension's ID. Both talk over stdin and stdout: each message is a 32-bit
 //! length in native byte order, then that much JSON. Only our extension may
-//! call (`allowed_origins`; its ID is fixed by the public key in its
-//! manifest), and the program checks the origin it is given as well. Never a
-//! local HTTP port: any web page can call one (see `handoff.rs`).
+//! call (`allowed_origins`, whose ID is fixed by the public key in its
+//! manifest; Firefox's `allowed_extensions`, by the ID the manifest states),
+//! and the program checks what it is given as well. Never a local HTTP
+//! port: any web page can call one (see `handoff.rs`).
 //!
 //! The extension's files are built into the program and written out by
 //! `install`, so the extension is always the program's own version; loading
@@ -27,6 +29,9 @@ use url::Url;
 pub const HOST: &str = "io.github.ragnarokmin0714.reelgene";
 /// Derived from the public key in `extension/manifest.json`.
 pub const EXTENSION_ID: &str = "fdhdafcfibgpogbnmablonggapohkggm";
+/// Firefox's name for the extension: `browser_specific_settings.gecko.id`
+/// in `extension/manifest.json`.
+pub const FIREFOX_ID: &str = "reelgene@ragnarokmin0714.github.io";
 /// Where the extension's files are written, in the data folder.
 pub const EXTENSION_DIR: &str = "browser-extension";
 
@@ -67,11 +72,20 @@ pub const EXTENSION: &[(&str, &[u8])] = &[
     ("icons/128.png", embed!("icons/128.png")),
 ];
 
+/// Which kind of host manifest a browser reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    Chromium,
+    Firefox,
+}
+
 /// A browser reelgene can register with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Browser {
     pub name: &'static str,
-    /// Its folder under `~/.config` on Linux.
+    pub family: Family,
+    /// Its folder on Linux: under `~/.config` for Chromium browsers, under
+    /// the home folder for Firefox.
     #[cfg_attr(windows, allow(dead_code))]
     config: &'static str,
     /// Its key under `HKEY_CURRENT_USER` on Windows.
@@ -79,29 +93,40 @@ pub struct Browser {
     key: &'static str,
 }
 
-pub const BROWSERS: [Browser; 5] = [
+pub const BROWSERS: [Browser; 6] = [
     Browser {
         name: "Chrome",
+        family: Family::Chromium,
         config: "google-chrome",
         key: r"Software\Google\Chrome",
     },
     Browser {
         name: "Edge",
+        family: Family::Chromium,
         config: "microsoft-edge",
         key: r"Software\Microsoft\Edge",
     },
     Browser {
+        name: "Firefox",
+        family: Family::Firefox,
+        config: ".mozilla",
+        key: r"Software\Mozilla",
+    },
+    Browser {
         name: "Brave",
+        family: Family::Chromium,
         config: "BraveSoftware/Brave-Browser",
         key: r"Software\BraveSoftware\Brave-Browser",
     },
     Browser {
         name: "Vivaldi",
+        family: Family::Chromium,
         config: "vivaldi",
         key: r"Software\Vivaldi",
     },
     Browser {
         name: "Chromium",
+        family: Family::Chromium,
         config: "chromium",
         key: r"Software\Chromium",
     },
@@ -136,16 +161,36 @@ impl Status {
     }
 }
 
-/// The host manifest naming `exe`.
-pub fn manifest(exe: &Path) -> String {
-    let json = serde_json::json!({
+/// The host manifest naming `exe`, as a browser of `family` reads it.
+pub fn manifest(exe: &Path, family: Family) -> String {
+    let mut json = serde_json::json!({
         "name": HOST,
         "description": "reelgene: takes the video links the extension found",
         "path": exe,
         "type": "stdio",
-        "allowed_origins": [origin()],
     });
+    match family {
+        Family::Chromium => json["allowed_origins"] = serde_json::json!([origin()]),
+        Family::Firefox => json["allowed_extensions"] = serde_json::json!([FIREFOX_ID]),
+    }
     serde_json::to_string_pretty(&json).expect("plain JSON")
+}
+
+/// Whether the browser that started this program did so for our extension:
+/// `args` are the program's arguments after its own name. Chromium passes
+/// the extension's origin; Firefox the host manifest's path and the
+/// extension's ID.
+pub fn called_by_extension(args: &[String]) -> Option<&str> {
+    match args {
+        [origin, ..] if origin.starts_with("chrome-extension://") => Some(origin),
+        [manifest, id, ..] if manifest.ends_with(".json") && id.contains('@') => Some(id),
+        _ => None,
+    }
+}
+
+/// Whether `caller` (`called_by_extension`) is our extension.
+pub fn is_ours(caller: &str) -> bool {
+    caller == origin() || caller == FIREFOX_ID
 }
 
 /// Write the extension's files into `dir`, replacing older ones.
@@ -193,7 +238,7 @@ pub fn install(data_dir: &Path) -> io::Result<Vec<&'static str>> {
     if done.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            "no Chrome, Edge, Brave, Vivaldi or Chromium found for this user: open the browser once, then try again",
+            "no Chrome, Edge or Firefox (nor Brave, Vivaldi or Chromium) found for this user: open the browser once, then try again",
         ));
     }
     Ok(done)
@@ -257,7 +302,7 @@ mod os {
     use super::*;
 
     pub fn registrations(exe: &Path) -> io::Result<Vec<(&'static str, Registration)>> {
-        registrations_in(&config_home()?, exe)
+        registrations_in(&Roots::here()?, exe)
     }
 
     pub fn register(
@@ -265,40 +310,61 @@ mod os {
         exe: &Path,
         which: impl Fn(&Browser) -> bool,
     ) -> io::Result<Vec<&'static str>> {
-        register_in(&config_home()?, exe, which)
+        register_in(&Roots::here()?, exe, which)
     }
 
     pub fn unregister(_data_dir: &Path, exe: &Path) -> io::Result<Vec<&'static str>> {
-        unregister_in(&config_home()?, exe)
+        unregister_in(&Roots::here()?, exe)
     }
 
-    fn config_home() -> io::Result<PathBuf> {
-        let abs = |k: &str| {
-            std::env::var_os(k)
-                .map(PathBuf::from)
-                .filter(|p| p.is_absolute())
-        };
-        abs("XDG_CONFIG_HOME")
-            .or_else(|| abs("HOME").map(|h| h.join(".config")))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home folder"))
+    /// Where browsers keep their profiles: Chromium's under the config
+    /// folder, Firefox's under the home folder.
+    pub(super) struct Roots {
+        pub config: PathBuf,
+        pub home: PathBuf,
     }
 
-    fn file(config: &Path, b: &Browser) -> PathBuf {
-        config
-            .join(b.config)
-            .join("NativeMessagingHosts")
-            .join(format!("{HOST}.json"))
+    impl Roots {
+        fn here() -> io::Result<Self> {
+            let abs = |k: &str| {
+                std::env::var_os(k)
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute())
+            };
+            let home = abs("HOME")
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no home folder"))?;
+            Ok(Self {
+                config: abs("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config")),
+                home,
+            })
+        }
+
+        /// The browser's own folder, there once it has run.
+        fn profile(&self, b: &Browser) -> PathBuf {
+            match b.family {
+                Family::Chromium => self.config.join(b.config),
+                Family::Firefox => self.home.join(b.config),
+            }
+        }
+
+        fn file(&self, b: &Browser) -> PathBuf {
+            let dir = match b.family {
+                Family::Chromium => "NativeMessagingHosts",
+                Family::Firefox => "native-messaging-hosts",
+            };
+            self.profile(b).join(dir).join(format!("{HOST}.json"))
+        }
     }
 
     pub(super) fn registrations_in(
-        config: &Path,
+        roots: &Roots,
         exe: &Path,
     ) -> io::Result<Vec<(&'static str, Registration)>> {
         Ok(BROWSERS
             .iter()
             .map(|b| {
-                let state = if config.join(b.config).is_dir() {
-                    registration(std::fs::read_to_string(file(config, b)).ok(), exe)
+                let state = if roots.profile(b).is_dir() {
+                    registration(std::fs::read_to_string(roots.file(b)).ok(), exe)
                 } else {
                     Registration::NoBrowser
                 };
@@ -308,33 +374,33 @@ mod os {
     }
 
     pub(super) fn register_in(
-        config: &Path,
+        roots: &Roots,
         exe: &Path,
         which: impl Fn(&Browser) -> bool,
     ) -> io::Result<Vec<&'static str>> {
         let mut done = Vec::new();
         for b in BROWSERS.iter().filter(|b| which(b)) {
-            if !config.join(b.config).is_dir() {
+            if !roots.profile(b).is_dir() {
                 continue;
             }
-            let to = file(config, b);
+            let to = roots.file(b);
             std::fs::create_dir_all(to.parent().expect("has a parent"))?;
-            std::fs::write(&to, manifest(exe))?;
+            std::fs::write(&to, manifest(exe, b.family))?;
             done.push(b.name);
         }
         Ok(done)
     }
 
-    pub(super) fn unregister_in(config: &Path, exe: &Path) -> io::Result<Vec<&'static str>> {
+    pub(super) fn unregister_in(roots: &Roots, exe: &Path) -> io::Result<Vec<&'static str>> {
         let mut done = Vec::new();
-        for (b, (_, state)) in BROWSERS.iter().zip(registrations_in(config, exe)?) {
+        for (b, (_, state)) in BROWSERS.iter().zip(registrations_in(roots, exe)?) {
             let ours = match state {
                 Registration::Here => true,
                 Registration::Elsewhere(p) => !p.exists(),
                 Registration::Absent | Registration::NoBrowser => false,
             };
             if ours {
-                std::fs::remove_file(file(config, b))?;
+                std::fs::remove_file(roots.file(b))?;
                 done.push(b.name);
             }
         }
@@ -354,8 +420,12 @@ mod os {
         format!(r"{}\NativeMessagingHosts\{HOST}", b.key)
     }
 
-    fn manifest_file(data_dir: &Path) -> PathBuf {
-        data_dir.join(format!("{HOST}.json"))
+    /// One file per family: Firefox reads another key than Chromium.
+    fn manifest_file(data_dir: &Path, family: Family) -> PathBuf {
+        match family {
+            Family::Chromium => data_dir.join(format!("{HOST}.json")),
+            Family::Firefox => data_dir.join(format!("{HOST}.firefox.json")),
+        }
     }
 
     fn installed(b: &Browser) -> bool {
@@ -389,11 +459,11 @@ mod os {
         exe: &Path,
         which: impl Fn(&Browser) -> bool,
     ) -> io::Result<Vec<&'static str>> {
-        let file = manifest_file(data_dir);
         std::fs::create_dir_all(data_dir)?;
-        std::fs::write(&file, manifest(exe))?;
         let mut done = Vec::new();
         for b in BROWSERS.iter().filter(|b| which(b) && installed(b)) {
+            let file = manifest_file(data_dir, b.family);
+            std::fs::write(&file, manifest(exe, b.family))?;
             CURRENT_USER
                 .create(key(b))
                 .and_then(|k| k.set_string("", file.to_string_lossy()))
@@ -416,12 +486,16 @@ mod os {
                 done.push(b.name);
             }
         }
-        // The file goes once no browser names it any more.
-        if registrations(exe)?
-            .iter()
-            .all(|(_, r)| *r != Registration::Here)
-        {
-            let _ = std::fs::remove_file(manifest_file(data_dir));
+        // A file goes once no browser names it any more.
+        let left = registrations(exe)?;
+        for family in [Family::Chromium, Family::Firefox] {
+            let named = BROWSERS
+                .iter()
+                .zip(&left)
+                .any(|(b, (_, r))| b.family == family && *r == Registration::Here);
+            if !named {
+                let _ = std::fs::remove_file(manifest_file(data_dir, family));
+            }
         }
         Ok(done)
     }
@@ -663,6 +737,10 @@ mod tests {
             .map(|n| char::from(b'a' + n))
             .collect();
         assert_eq!(id, EXTENSION_ID);
+        assert_eq!(
+            manifest["browser_specific_settings"]["gecko"]["id"],
+            FIREFOX_ID
+        );
         let popup =
             std::str::from_utf8(EXTENSION.iter().find(|(p, _)| *p == "popup.js").unwrap().1)
                 .unwrap();
@@ -785,10 +863,18 @@ mod tests {
     #[test]
     fn a_manifest_names_this_program_for_our_extension_only() {
         let exe = Path::new("/opt/reelgene/reelgene");
-        let text = manifest(exe);
+        let firefox: serde_json::Value =
+            serde_json::from_str(&manifest(exe, Family::Firefox)).unwrap();
+        assert_eq!(
+            firefox["allowed_extensions"],
+            serde_json::json!([FIREFOX_ID])
+        );
+        assert!(firefox.get("allowed_origins").is_none());
+        let text = manifest(exe, Family::Chromium);
         let json: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(json["type"], "stdio");
         assert_eq!(json["allowed_origins"], serde_json::json!([origin()]));
+        assert!(json.get("allowed_extensions").is_none());
         assert_eq!(manifest_program(&text).as_deref(), Some(exe));
         assert_eq!(registration(Some(text.clone()), exe), Registration::Here);
         assert_eq!(
@@ -804,33 +890,45 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rg-browser-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let config = root.join("config");
+        let roots = os::Roots {
+            config: config.clone(),
+            home: root.join("home"),
+        };
         std::fs::create_dir_all(config.join("google-chrome")).unwrap();
         std::fs::create_dir_all(config.join("BraveSoftware/Brave-Browser")).unwrap();
+        std::fs::create_dir_all(roots.home.join(".mozilla/firefox")).unwrap();
         let exe = root.join("reelgene");
         std::fs::write(&exe, "").unwrap();
 
-        let done = os::register_in(&config, &exe, |_| true).unwrap();
-        assert_eq!(done, ["Chrome", "Brave"]);
+        let done = os::register_in(&roots, &exe, |_| true).unwrap();
+        assert_eq!(done, ["Chrome", "Firefox", "Brave"]);
         assert!(
             !config.join("microsoft-edge").exists(),
             "no browser, no folder"
         );
-        let states = os::registrations_in(&config, &exe).unwrap();
+        let firefox = roots
+            .home
+            .join(format!(".mozilla/native-messaging-hosts/{HOST}.json"));
+        let text = std::fs::read_to_string(&firefox).unwrap();
+        assert!(text.contains(FIREFOX_ID), "{text}");
+        let states = os::registrations_in(&roots, &exe).unwrap();
         assert_eq!(states[0], ("Chrome", Registration::Here));
         assert_eq!(states[1], ("Edge", Registration::NoBrowser));
+        assert_eq!(states[2], ("Firefox", Registration::Here));
 
         // Another copy that still exists is left alone; a moved one is not.
         let other = root.join("other-reelgene");
         std::fs::write(&other, "").unwrap();
-        let states = os::registrations_in(&config, &other).unwrap();
+        let states = os::registrations_in(&roots, &other).unwrap();
         assert_eq!(states[0], ("Chrome", Registration::Elsewhere(exe.clone())));
-        assert!(os::unregister_in(&config, &other).unwrap().is_empty());
+        assert!(os::unregister_in(&roots, &other).unwrap().is_empty());
         std::fs::remove_file(&exe).unwrap();
         assert_eq!(
-            os::unregister_in(&config, &other).unwrap(),
-            ["Chrome", "Brave"]
+            os::unregister_in(&roots, &other).unwrap(),
+            ["Chrome", "Firefox", "Brave"]
         );
-        let states = os::registrations_in(&config, &other).unwrap();
+        assert!(!firefox.exists());
+        let states = os::registrations_in(&roots, &other).unwrap();
         assert_eq!(states[0], ("Chrome", Registration::Absent));
         std::fs::remove_dir_all(&root).ok();
     }

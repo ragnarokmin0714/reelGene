@@ -27,8 +27,13 @@ for later is in `ROADMAP.md`.
 - The browser extension ran in a real Chromium 141 (Playwright's arm64
   build) on 2026-11-10: found an HLS playlist with its Referer, the popup
   sent it over Native Messaging, and `reelgene run` downloaded it from a CDN
-  that refuses requests without one. Never in Chrome or Edge themselves, nor
-  on Windows (the registry path is type-checked only).
+  that refuses requests without one. On 2026-11-16 the popup there listed a
+  page's video first with its length and folded its pre-roll and preview
+  away; and Playwright's Firefox 142 loaded it as a temporary add-on (over
+  the remote debugging protocol: Playwright cannot open `moz-extension://`
+  pages), sniffed the playlists with their Referer and measured them
+  through Native Messaging. Never in Chrome, Edge or release Firefox
+  themselves, nor on Windows (the registry path is type-checked only).
 - The ffmpeg remux path runs against a real ffmpeg only when
   `REELGENE_TEST_FFMPEG` names one (`mux::tests::a_real_ffmpeg_…`); CI has
   none, so there it is tested for its arguments.
@@ -74,7 +79,18 @@ is added.
 (`Registry::fallbacks`): first `resolver/page.rs`, the video the page names
 itself (`<video>`/`<source>` src, `og:video`; a small tag scanner, not an
 HTML parser, that never fails), then yt-dlp. A DRM refusal ends the chain:
-nothing protected is fetched by another route.
+nothing protected is fetched by another route. With no player in the
+markup, `page.rs` reads absolute `.m3u8` links anywhere in the page (JSON's
+`\/` and `\u002F` undone), at most 12, each passing `net::may_follow`, and
+lets `sift.rs` pick: every one is fetched with the page as Referer and its
+length added up (a master by its first variant); under half the longest is
+an advert or preview, within 2 s / 1 % of a kept one is another version
+(masters kept first), and advert networks' hosts or whole words (`ads`,
+`preroll`, `trailer`, …) in host or path mark adverts; the longest measured
+is kept even so, so a wrong word never loses the video. Such an episode's
+hint holds the link without its query (`path`), since signatures change;
+older hints by position still work. The extension's popup asks the same
+judge (`measure` message) and folds what is not the video away.
 
 **yt-dlp is a fallback, not a resolver of sites** (`resolver/ytdlp.rs`). It
 claims nothing (`matches` is false), so clipboard links never reach an
@@ -200,9 +216,18 @@ and replaying a site's sign-in is not reelgene's business. The extension's
 ID is fixed by the public key in its manifest (the private key was thrown
 away; a store version would get its own ID); `allowed_origins` names only
 it and `native::run` checks the origin argument again. The browser starts
-the very executable with that origin as its first argument (`main` checks
-before parsing a command line, and attaches no console: stdout is the
-message pipe, which is why `cli::add` reports through a callback). A
+the very executable with that origin as its first argument; Firefox passes
+the host manifest's path and the extension's ID instead
+(`browser::called_by_extension`; `main` checks before parsing a command
+line, and attaches no console: stdout is the message pipe, which is why
+`cli::add` reports through a callback). Firefox knows the extension by
+`browser_specific_settings.gecko.id` (`FIREFOX_ID`, `allowed_extensions`),
+reads hosts from `~/.mozilla/native-messaging-hosts/` or
+`HKCU\Software\Mozilla\NativeMessagingHosts\<host>` (its own manifest file,
+`<host>.firefox.json`), runs `background.scripts` where Chrome runs the
+`service_worker` (one manifest serves both; Chrome 121+), shows Referer
+without `extraHeaders` and refuses that option, so the scripts test for
+it; both use `globalThis.browser ?? chrome` with promises. A
 message is a native-endian u32 length and JSON, capped at 64 KiB; `hello`
 says whether a reelgene runs, `add` hands the links to it (`take`) or, with
 none running, queues them as `reelgene add` would. The extension's files
@@ -431,6 +456,7 @@ crates/core/            package `reelgene-core`: the engine, no UI
   src/paths.rs          safe names and the naming template
   src/detect.rs         links in clipboard text
   src/resolver/         the site seam: mod.rs, direct.rs, page.rs, ytdlp.rs, extra.rs
+  src/sift.rs           the video among adverts and previews: measure, judge
   src/store.rs          SQLite actor
   src/engine/           scheduler (mod.rs), worker.rs, meter.rs
   src/mux.rs            concat, ffmpeg, media checks, Mark of the Web

@@ -1,7 +1,8 @@
 //! reelgene started by a browser, for the extension: a native messaging host.
 //!
 //! The browser runs the program a host manifest names (`browser::install`)
-//! with the extension's origin as the first argument, writes messages to
+//! with the extension's origin (Chromium) or its manifest's path and the
+//! extension's ID (Firefox) as arguments, writes messages to
 //! stdin and reads the answers from stdout; nothing else may be written
 //! there. Links go to the reelgene that is running, as `reelgene add` would
 //! hand them over, or into the queue for the next time it opens.
@@ -14,17 +15,17 @@ use reelgene_app::instance::{Instance, LockError};
 use reelgene_app::places::Places;
 use std::process::ExitCode;
 
-/// The origin, when the browser started this program for an extension.
+/// The extension, when a browser started this program for one: its origin
+/// (Chromium) or its ID (Firefox).
 pub fn caller() -> Option<String> {
-    std::env::args()
-        .nth(1)
-        .filter(|a| a.starts_with("chrome-extension://"))
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    browser::called_by_extension(&args).map(str::to_owned)
 }
 
 pub fn run(rt: &tokio::runtime::Runtime, caller: &str) -> ExitCode {
-    // The browser only starts us for the extension the manifest allows; an
-    // origin that is not ours means something else started the program.
-    if caller != browser::origin() {
+    // The browser only starts us for the extension the manifest allows; one
+    // that is not ours means something else started the program.
+    if !browser::is_ours(caller) {
         eprintln!("reelgene: not our extension: {caller}");
         return ExitCode::FAILURE;
     }

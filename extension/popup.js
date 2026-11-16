@@ -8,7 +8,11 @@ import { arrange, clock } from "./sniff.js";
 // The native host reelgene registers (`reelgene browser install`).
 export const HOST = "io.github.ragnarokmin0714.reelgene";
 
-const t = (key, ...subs) => chrome.i18n.getMessage(key, subs) || key;
+// Firefox's `browser` returns promises everywhere; Chrome's `chrome` does in
+// Manifest V3.
+const api = globalThis.browser ?? chrome;
+
+const t = (key, ...subs) => api.i18n.getMessage(key, subs) || key;
 const $ = (id) => document.getElementById(id);
 
 for (const el of document.querySelectorAll("[data-i18n]")) {
@@ -16,18 +20,16 @@ for (const el of document.querySelectorAll("[data-i18n]")) {
 }
 
 /// One message to reelgene, one reply back; a missing host is told apart
-/// because it needs setting up, not retrying.
-function ask(message) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendNativeMessage(HOST, { v: 1, ...message }, (reply) => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        resolve({ ok: false, missing: /not found/i.test(err.message), error: err.message });
-      } else {
-        resolve(reply || { ok: false, error: t("noReply") });
-      }
-    });
-  });
+/// because it needs setting up, not retrying. Chrome says "not found",
+/// Firefox "No such native application".
+async function ask(message) {
+  try {
+    const reply = await api.runtime.sendNativeMessage(HOST, { v: 1, ...message });
+    return reply || { ok: false, error: t("noReply") };
+  } catch (err) {
+    const text = String(err?.message || err);
+    return { ok: false, missing: /not found|no such native application/i.test(text), error: text };
+  }
 }
 
 function showStatus(hello) {
@@ -108,9 +110,9 @@ function show(links, judged) {
 }
 
 async function main() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   const key = `tab:${tab?.id}`;
-  const links = tab ? (await chrome.storage.session.get(key))[key] || [] : [];
+  const links = tab ? (await api.storage.session.get(key))[key] || [] : [];
   // Newest first until reelgene has judged them: the video playing now is
   // the last one found.
   show(links);

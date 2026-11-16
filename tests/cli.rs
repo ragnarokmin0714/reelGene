@@ -474,6 +474,15 @@ fn as_browser(
     origin: &str,
     messages: &[serde_json::Value],
 ) -> (Output, Vec<serde_json::Value>) {
+    as_started_by(home, &[origin], messages)
+}
+
+/// The program started as a browser starts a host: `args` after its name.
+fn as_started_by(
+    home: &Home,
+    args: &[&str],
+    messages: &[serde_json::Value],
+) -> (Output, Vec<serde_json::Value>) {
     use std::io::Read;
     let mut input = Vec::new();
     for m in messages {
@@ -482,7 +491,7 @@ fn as_browser(
         input.extend(body);
     }
     let mut child = home
-        .command(&[origin])
+        .command(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -587,6 +596,26 @@ fn the_extension_hears_which_playlists_look_like_adverts() {
         ] }),
         "{answers:?}"
     );
+}
+
+#[test]
+fn firefox_starts_the_host_with_the_manifest_and_our_id() {
+    let home = Home::new("native-firefox");
+    let hello = serde_json::json!({ "v": 1, "cmd": "hello" });
+    let manifest =
+        "/home/u/.mozilla/native-messaging-hosts/io.github.ragnarokmin0714.reelgene.json";
+    let (out, answers) = as_started_by(
+        &home,
+        &[manifest, "reelgene@ragnarokmin0714.github.io"],
+        std::slice::from_ref(&hello),
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(answers[0]["ok"], true, "{answers:?}");
+
+    let (out, answers) = as_started_by(&home, &[manifest, "other@example.com"], &[hello]);
+    assert!(!out.status.success());
+    assert!(answers.is_empty());
+    assert!(text(&out).contains("not our extension"), "{}", text(&out));
 }
 
 #[test]

@@ -22,9 +22,11 @@ a tools folder of its own, never among downloads, that takes its tools
 along when moved; ffmpeg and yt-dlp imported from files downloaded by hand,
 yt-dlp from a mirror, always checked; cookies for videos that need signing
 in; ffmpeg limited to media formats, and a reminder when it gets old; a
-browser extension (Chromium browsers) that finds the playlists and videos a
-page plays and hands them over through Native Messaging, with the page's
-title and Referer.
+browser extension (Chrome, Edge, Firefox and other Chromium browsers) that
+finds the playlists and videos a page plays and hands them over through
+Native Messaging, with the page's title and Referer, the video listed first
+and adverts set apart; playlists named only in a page's scripts found, with
+adverts and previews left out.
 
 Release candidates (`v0.1.0-rc.N`) are published as pre-releases to try;
 `v0.1.0` follows once these pass:
@@ -63,9 +65,13 @@ supply (a browser to test in, real samples, a site to try).
 
 ## Later
 
-- The browser extension for Firefox: another manifest (`allowed_extensions`,
-  a gecko id) and its own host locations; and in a store, so Developer mode
-  is not needed (the store's ID joins `allowed_origins`).
+- **A signed Firefox add-on.** Firefox runs the extension now, but only as
+  a temporary add-on that it forgets on restart; release Firefox installs
+  only add-ons Mozilla has signed. Unlisted signing on addons.mozilla.org
+  is automatic: the release workflow could sign the folder with `web-ext
+  sign` and attach the `.xpi`, given an AMO API key as a repository secret.
+- The extension in the Chrome Web Store, so Developer mode is not needed
+  (the store's ID joins `allowed_origins`).
 
 - Auto-update, only with signed updates (minisign).
 - Code signing for the Windows executable.

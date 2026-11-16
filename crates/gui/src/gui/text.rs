@@ -455,7 +455,7 @@ pub static EN: Text = Text {
     cookies_removed: "Cookies removed",
     cookies_how: "How to export them safely",
     cookies_steps: "1. Make a separate account for this, not your main one (for age-restricted videos, an adult one). Downloading with cookies can break a site's terms, and the account may be locked.\n2. Open a private window and sign in with that account. Allow your cookie export add-on in private windows.\n3. Export that site's cookies as cookies.txt (the Netscape format).\n4. Close the private window at once and do not browse with it again: sites renew cookies as you browse, and the exported ones would stop working.\n5. Import the file here, then delete it.\n\nWhen videos ask to sign in again, export and import anew. Remove the cookies when you no longer need them.",
-    browser_about: "The reelgene extension finds the videos a page plays (HLS playlists and video files) and sends the one you pick here, with the page's title and the Referer its server checks. Cookies and passwords stay in the browser. For Chrome, Edge, Brave, Vivaldi and Chromium.",
+    browser_about: "The reelgene extension finds the videos a page plays (HLS playlists and video files) and sends the one you pick here, with the page's title and the Referer its server checks. Cookies and passwords stay in the browser. For Chrome, Edge and Firefox (Brave, Vivaldi and Chromium work too).",
     browser_none: "Not set up.",
     browser_set_up_for: |names| format!("Set up for {}.", names.join(", ")),
     browser_out_of_date: "The extension's folder is from another version: set up again.",
@@ -465,7 +465,7 @@ pub static EN: Text = Text {
     browser_open_folder: "Open extension folder",
     browser_remove: "Remove",
     browser_how: "Loading it in the browser",
-    browser_steps: "Once, after setting up:\n1. Open the browser's Extensions page (chrome://extensions, edge://extensions).\n2. Turn on Developer mode.\n3. Choose “Load unpacked” and pick the extension folder above.\n\nThen play a video and click reelgene's button in the toolbar: the number on it is how many videos it found. Links sent while reelgene is closed wait in its queue.",
+    browser_steps: "Once, after setting up:\n1. Open the browser's Extensions page (chrome://extensions, edge://extensions).\n2. Turn on Developer mode.\n3. Choose “Load unpacked” and pick the extension folder above.\n\nFirefox: open about:debugging#/runtime/this-firefox, choose “Load Temporary Add-on…” and pick manifest.json in the extension folder. Firefox forgets it when it closes, so do this again after each restart.\n\nThen play a video and click reelgene's button in the toolbar: the number on it is how many videos it found. Links sent while reelgene is closed wait in its queue.",
     browser_done: |names| {
         let names = names.join(", ");
         format!("reelgene answers {names} now. Load the extension there once (see the steps).")
@@ -726,7 +726,7 @@ pub static ZH_TW: Text = Text {
     cookies_removed: "已移除 cookie",
     cookies_how: "如何安全地匯出",
     cookies_steps: "1. 另外開一個帳號專門給這裡用，不要用主帳號（年齡限制的影片要用已成年的帳號）。用 cookie 下載可能違反網站的使用條款，帳號有被鎖的風險。\n2. 開一個無痕視窗，登入那個帳號。匯出 cookie 的擴充套件要允許在無痕視窗執行。\n3. 把那個網站的 cookie 匯出成 cookies.txt（Netscape 格式）。\n4. 匯出後馬上關掉無痕視窗，不要再用它瀏覽：網站會在你瀏覽時更換 cookie，剛匯出的就會失效。\n5. 在這裡匯入那個檔案，然後把它刪掉。\n\n影片又開始要求登入時，照同樣步驟重新匯出、再匯入。不再需要時，按「移除 cookie」。",
-    browser_about: "reelgene 擴充功能會找出網頁正在播放的影片（HLS 播放清單和影片檔），把你選的那個連同網頁標題、伺服器會檢查的 Referer 一起送來這裡。Cookie 和密碼都留在瀏覽器裡。支援 Chrome、Edge、Brave、Vivaldi 和 Chromium。",
+    browser_about: "reelgene 擴充功能會找出網頁正在播放的影片（HLS 播放清單和影片檔），把你選的那個連同網頁標題、伺服器會檢查的 Referer 一起送來這裡。Cookie 和密碼都留在瀏覽器裡。支援 Chrome、Edge 和 Firefox（Brave、Vivaldi、Chromium 也可以）。",
     browser_none: "尚未設定。",
     browser_set_up_for: |names| format!("已為 {} 設定。", names.join("、")),
     browser_out_of_date: "擴充功能資料夾是其他版本的：請重新設定。",
@@ -736,7 +736,7 @@ pub static ZH_TW: Text = Text {
     browser_open_folder: "開啟擴充功能資料夾",
     browser_remove: "移除",
     browser_how: "在瀏覽器載入",
-    browser_steps: "設定後做一次就好：\n1. 打開瀏覽器的擴充功能頁面（chrome://extensions、edge://extensions）。\n2. 開啟「開發人員模式」。\n3. 選「載入未封裝項目」，挑上面那個擴充功能資料夾。\n\n之後播放影片，再按工具列上的 reelgene 按鈕：上面的數字是找到幾個影片。reelgene 沒開時送出的連結，會在佇列裡等它開啟。",
+    browser_steps: "設定後做一次就好：\n1. 打開瀏覽器的擴充功能頁面（chrome://extensions、edge://extensions）。\n2. 開啟「開發人員模式」。\n3. 選「載入未封裝項目」，挑上面那個擴充功能資料夾。\n\nFirefox：開啟 about:debugging#/runtime/this-firefox，選「載入暫時性附加元件…」，挑擴充功能資料夾裡的 manifest.json。Firefox 關閉後會忘記它，每次重新開啟都要再載入一次。\n\n之後播放影片，再按工具列上的 reelgene 按鈕：上面的數字是找到幾個影片。reelgene 沒開時送出的連結，會在佇列裡等它開啟。",
     browser_done: |names| {
         let names = names.join("、");
         format!("reelgene 現在會回應 {names}。請在瀏覽器載入擴充功能一次（見步驟）。")

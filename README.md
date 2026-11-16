@@ -20,6 +20,11 @@ network or leaving it overnight, and pick up where they stopped.
   and video files the page you are watching loads, and sends the one you
   pick to reelgene with the page's title and the Referer its server checks
   (see [The browser extension](#the-browser-extension)).
+- **Pages that name their video**: give reelgene the page's address. A
+  video in the page's player is found directly; one named only in the
+  page's scripts is found too, after each playlist there is measured, and
+  adverts and previews (short ones, advert networks) are left out. Pages
+  that build the address while playing go to yt-dlp, or use the extension.
 - **HLS playlists and direct video links**: `.m3u8` (AES-128 encrypted
   included, fMP4 or MPEG-TS, separate audio tracks) and plain files such as
   `.mp4`.
@@ -204,9 +209,12 @@ file, cannot be saved.
 ## The browser extension
 
 A page that plays a video loads it from somewhere: a playlist (`.m3u8`) or a
-video file. The reelgene extension for Chrome, Edge, Brave, Vivaldi and
-Chromium watches for those requests and lists them under its toolbar button,
-with a count on it. Click **Download** beside one and it goes to reelgene,
+video file. The reelgene extension for Chrome, Edge and Firefox (Brave,
+Vivaldi and Chromium work too) watches for those requests and lists them
+under its toolbar button, with a count on it. reelgene measures the
+playlists, so the video comes first with its length, and short ones (adverts,
+previews) and other versions of it are folded away below; they can still be
+downloaded. Click **Download** beside one and it goes to reelgene,
 named after the page, with the `Referer` and `Origin` the browser sent, which
 servers often check before they hand out a video. If reelgene is closed, the
 link waits in its queue until you open it.
@@ -219,7 +227,10 @@ Setting it up, once:
 2. In the browser, open its Extensions page (`chrome://extensions`,
    `edge://extensions`), turn on **Developer mode**, choose **Load unpacked**
    and pick that folder (Settings shows it, and **Open extension folder**
-   opens it).
+   opens it). In Firefox, open `about:debugging#/runtime/this-firefox`,
+   choose **Load Temporary Add-on…** and pick `manifest.json` in that
+   folder. Firefox forgets such an add-on when it closes, so this is done
+   again after each restart until a signed version is published.
 
 The extension comes with reelgene and is updated with it; a portable copy
 that moves to another folder is found again the next time its window opens.
