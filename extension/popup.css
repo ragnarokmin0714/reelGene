@@ -88,3 +88,13 @@ button.done { background: transparent; color: var(--ok); padding: 5px 4px; }
 .note { grid-column: 2 / 4; font-size: 11px; color: var(--muted); }
 .note.bad { color: var(--bad); }
 .empty { margin: 0; padding: 28px 20px 30px; text-align: center; color: var(--muted); }
+.measuring { margin: 8px 14px 0; font-size: 11px; color: var(--muted); }
+.aside { margin: 0 8px 8px; border-top: 1px solid var(--line); }
+.aside summary {
+  padding: 9px 10px 4px;
+  font-size: 11px; color: var(--muted);
+  cursor: pointer;
+}
+.aside ul { padding: 0; }
+.aside li { opacity: .7; }
+.aside li:hover { opacity: 1; }

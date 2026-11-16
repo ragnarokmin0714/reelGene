@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  arrange,
   classify,
+  clock,
   keyOf,
   MAX_PER_TAB,
   MIN_VIDEO_BYTES,
@@ -68,4 +70,29 @@ test("only where a request came from, never credentials", () => {
     { name: "Authorization", value: "Bearer secret" },
   ]);
   assert.deepEqual(got, { referer: "https://site.example/watch", origin: "https://site.example" });
+});
+
+test("the video first, adverts and other versions apart", () => {
+  const link = (name, kind = "playlist") => ({ kind, url: `https://cdn.example/${name}` });
+  const links = [link("ad.m3u8"), link("main.m3u8"), link("alt.m3u8"), link("odd.m3u8"), link("ep2.m3u8")];
+  const judged = [
+    { verdict: "short", secs: 30 },
+    { verdict: "video", secs: 1500 },
+    { verdict: "version", secs: 1500, of: 1 },
+    { verdict: "unknown" },
+    { verdict: "video", secs: 1800 },
+  ];
+  const names = (rows) => rows.map((r) => r.link.url.split("/").pop());
+  const { main, aside } = arrange(links, judged);
+  assert.deepEqual(names(main), ["ep2.m3u8", "main.m3u8", "odd.m3u8"]);
+  assert.deepEqual(names(aside), ["alt.m3u8", "ad.m3u8"]);
+  // Before an answer, or without one: everything, newest first.
+  assert.deepEqual(names(arrange(links).main), ["ep2.m3u8", "odd.m3u8", "alt.m3u8", "main.m3u8", "ad.m3u8"]);
+  assert.deepEqual(arrange(links).aside, []);
+});
+
+test("lengths read as a clock", () => {
+  assert.equal(clock(30), "0:30");
+  assert.equal(clock(1453.4), "24:13");
+  assert.equal(clock(3723), "1:02:03");
 });

@@ -1,5 +1,9 @@
 // The list of video links found in the current tab, each with a button that
-// hands it to reelgene through Native Messaging.
+// hands it to reelgene through Native Messaging. reelgene measures the
+// playlists, so the video comes first and adverts, previews and other
+// versions of it are set apart (`arrange`).
+
+import { arrange, clock } from "./sniff.js";
 
 // The native host reelgene registers (`reelgene browser install`).
 export const HOST = "io.github.ragnarokmin0714.reelgene";
@@ -40,7 +44,10 @@ function showStatus(hello) {
   help.hidden = false;
 }
 
-function row(link) {
+/// Playlists reelgene is asked to measure: the newest ones.
+const MAX_MEASURE = 20;
+
+function row(link, judged) {
   const li = document.createElement("li");
   const kind = document.createElement("span");
   kind.className = "kind";
@@ -54,7 +61,12 @@ function row(link) {
   name.title = link.key;
   const where = document.createElement("div");
   where.className = "where";
-  where.textContent = new URL(link.url).host;
+  const facts = [new URL(link.url).host];
+  if (judged?.live) facts.push(t("live"));
+  else if (judged?.secs) facts.push(clock(judged.secs));
+  if (judged?.verdict === "version") facts.push(t("versionNote"));
+  if (judged?.verdict === "short" || judged?.verdict === "advert") facts.push(t("advertNote"));
+  where.textContent = facts.join(" · ");
   what.append(name, where);
   const button = document.createElement("button");
   button.textContent = t("download");
@@ -87,14 +99,41 @@ function row(link) {
   return li;
 }
 
+function show(links, judged) {
+  const { main, aside } = arrange(links, judged);
+  $("list").replaceChildren(...main.map((r) => row(r.link, r.judged)));
+  $("aside-list").replaceChildren(...aside.map((r) => row(r.link, r.judged)));
+  $("aside-title").textContent = t("asideTitle", String(aside.length));
+  $("aside").hidden = aside.length === 0;
+}
+
 async function main() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const key = `tab:${tab?.id}`;
   const links = tab ? (await chrome.storage.session.get(key))[key] || [] : [];
-  // Newest first: the video playing now is the last one found.
-  $("list").append(...links.toReversed().map(row));
+  // Newest first until reelgene has judged them: the video playing now is
+  // the last one found.
+  show(links);
   $("empty").hidden = links.length > 0;
-  showStatus(await ask({ cmd: "hello" }));
+  const hello = await ask({ cmd: "hello" });
+  showStatus(hello);
+  const playlists = links
+    .map((link, i) => ({ link, i }))
+    .filter((p) => p.link.kind === "playlist")
+    .slice(-MAX_MEASURE);
+  if (!hello.ok || playlists.length < 2) return;
+  $("measuring").hidden = false;
+  const reply = await ask({
+    cmd: "measure",
+    links: playlists.map(({ link }) => ({ url: link.url, referer: link.referer, origin: link.origin })),
+  });
+  $("measuring").hidden = true;
+  if (!reply.ok || !Array.isArray(reply.measured)) return;
+  const judged = [];
+  playlists.forEach((p, n) => {
+    judged[p.i] = reply.measured[n];
+  });
+  show(links, judged);
 }
 
 main();

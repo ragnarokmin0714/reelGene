@@ -474,6 +474,7 @@ struct Envelope {
 enum Ask {
     Hello,
     Add { links: Vec<Seen> },
+    Measure { links: Vec<Seen> },
 }
 
 /// A link as the extension saw it.
@@ -495,7 +496,12 @@ pub enum Asked {
     Hello,
     /// Download these.
     Add(Vec<Given>),
+    /// How long do these playlists play, and which look like adverts?
+    Measure(Vec<handoff::Link>),
 }
+
+/// Playlists measured at once: the popup asks for the ones it lists.
+pub const MAX_MEASURE: usize = 20;
 
 pub fn parse(message: &[u8]) -> Result<Asked, String> {
     let envelope: Envelope =
@@ -517,7 +523,69 @@ pub fn parse(message: &[u8]) -> Result<Asked, String> {
             }
             Ok(Asked::Add(links))
         }
+        Ask::Measure { links } => {
+            if links.is_empty() || links.len() > MAX_MEASURE {
+                return Err("no links, or too many".into());
+            }
+            let links = links
+                .into_iter()
+                .map(|seen| handoff::check_link(given(seen)))
+                .collect::<Result<_, _>>()?;
+            Ok(Asked::Measure(links))
+        }
     }
+}
+
+/// What reelgene makes of one playlist the extension found (`sift`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Judged {
+    /// How long it plays, when it could be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secs: Option<f64>,
+    pub live: bool,
+    /// `video`, `version`, `short`, `advert` or `unknown`.
+    pub verdict: &'static str,
+    /// For a version: the index of the link it is a version of.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub of: Option<usize>,
+}
+
+/// One playlist read takes no longer than this: the popup is waiting.
+const MEASURE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Fetch each playlist with the headers its page sent, and judge them
+/// together as a page's scripts are judged.
+pub async fn measure(http: &reelgene_core::http::Http, links: &[handoff::Link]) -> Vec<Judged> {
+    use reelgene_core::sift::{self, Verdict};
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let measured = futures::future::join_all(links.iter().map(|l| async {
+        let read = sift::measure(http, &l.url, &l.headers, &cancel);
+        tokio::time::timeout(MEASURE_TIMEOUT, read)
+            .await
+            .ok()
+            .and_then(Result::ok)
+    }))
+    .await;
+    let pairs: Vec<_> = links.iter().map(|l| &l.url).zip(measured).collect();
+    sift::judge(&pairs)
+        .into_iter()
+        .zip(&pairs)
+        .map(|(verdict, (_, m))| {
+            let (verdict, of) = match verdict {
+                Verdict::Video => ("video", None),
+                Verdict::Version(of) => ("version", Some(of)),
+                Verdict::Short => ("short", None),
+                Verdict::Advert => ("advert", None),
+                Verdict::Unknown => ("unknown", None),
+            };
+            Judged {
+                secs: m.map(|m| m.secs),
+                live: m.is_some_and(|m| m.live),
+                verdict,
+                of,
+            }
+        })
+        .collect()
 }
 
 fn given(seen: Seen) -> Given {
@@ -562,6 +630,9 @@ pub struct Answer {
     pub running: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queued: Option<usize>,
+    /// Answers `measure`, one for each link, in order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured: Option<Vec<Judged>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -684,6 +755,23 @@ mod tests {
             Asked::Add(vec![Given::plain("https://cdn.example/a.m3u8")])
         );
         assert_eq!(parse(br#"{"v":1,"cmd":"hello"}"#), Ok(Asked::Hello));
+        let Ok(Asked::Measure(links)) = parse(
+            br#"{"v":1,"cmd":"measure","links":[{"url":"https://cdn.example/a.m3u8","referer":"https://site.example/w","cookie":"x"}]}"#,
+        ) else {
+            panic!("a measure message");
+        };
+        assert_eq!(
+            links[0].headers,
+            [("Referer".to_owned(), "https://site.example/w".to_owned())]
+        );
+        let many = format!(
+            r#"{{"v":1,"cmd":"measure","links":[{}]}}"#,
+            vec![r#"{"url":"https://cdn.example/a.m3u8"}"#; MAX_MEASURE + 1].join(",")
+        );
+        assert!(parse(many.as_bytes()).is_err());
+        assert!(
+            parse(br#"{"v":1,"cmd":"measure","links":[{"url":"file:///etc/passwd"}]}"#).is_err()
+        );
         for bad in [
             &br#"{"v":1,"cmd":"add","links":[{"url":"file:///etc/passwd"}]}"#[..],
             br#"{"v":1,"cmd":"add","links":[]}"#,

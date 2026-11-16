@@ -14,5 +14,10 @@
   "notSetUp": { "message": "尚未設定" },
   "hostError": { "message": "reelgene 沒有回應" },
   "noReply": { "message": "reelgene 沒有回覆。" },
-  "setUpHelp": { "message": "讓 reelgene 能回應這個瀏覽器：設定 → 瀏覽器 → 設定，或執行「reelgene browser install」。" }
+  "setUpHelp": { "message": "讓 reelgene 能回應這個瀏覽器：設定 → 瀏覽器 → 設定，或執行「reelgene browser install」。" },
+  "measuring": { "message": "正在分辨正片和廣告…" },
+  "asideTitle": { "message": "可能是廣告、預覽或另一個版本（$COUNT$）", "placeholders": { "count": { "content": "$1" } } },
+  "advertNote": { "message": "很短：可能是廣告或預覽" },
+  "versionNote": { "message": "上面那部影片的另一個版本" },
+  "live": { "message": "直播" }
 }

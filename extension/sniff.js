@@ -116,3 +116,27 @@ function decode(s) {
     return s;
   }
 }
+
+/// The list as the popup shows it, once reelgene has judged the playlists
+/// (`judged[i]` for `links[i]`, or missing): the video first, longest first;
+/// then whatever was not judged, newest first; and apart, the ones that look
+/// like adverts, previews or another version of the video.
+export function arrange(links, judged = []) {
+  const rows = links.map((link, i) => ({ link, judged: judged[i] || null, i }));
+  const verdict = (r) => r.judged?.verdict || "unknown";
+  const aside = (r) => ["short", "advert", "version"].includes(verdict(r));
+  const newest = (a, b) => b.i - a.i;
+  const videos = rows
+    .filter((r) => verdict(r) === "video")
+    .sort((a, b) => (b.judged.secs || 0) - (a.judged.secs || 0) || newest(a, b));
+  const rest = rows.filter((r) => verdict(r) !== "video" && !aside(r)).sort(newest);
+  return { main: [...videos, ...rest], aside: rows.filter(aside).sort(newest) };
+}
+
+/// `1:02:03`, `24:13`, `0:30`.
+export function clock(secs) {
+  const s = Math.round(secs);
+  const [h, m, r] = [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60];
+  const two = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${two(m)}:${two(r)}` : `${m}:${two(r)}`;
+}

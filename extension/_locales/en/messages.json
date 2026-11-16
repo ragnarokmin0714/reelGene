@@ -14,5 +14,10 @@
   "notSetUp": { "message": "Not set up" },
   "hostError": { "message": "reelgene did not answer" },
   "noReply": { "message": "reelgene gave no reply." },
-  "setUpHelp": { "message": "Let reelgene answer this browser: Settings → Browser → Set up, or run “reelgene browser install”." }
+  "setUpHelp": { "message": "Let reelgene answer this browser: Settings → Browser → Set up, or run “reelgene browser install”." },
+  "measuring": { "message": "Telling the video from adverts…" },
+  "asideTitle": { "message": "Probably adverts, previews or another version ($COUNT$)", "placeholders": { "count": { "content": "$1" } } },
+  "advertNote": { "message": "short: probably an advert or preview" },
+  "versionNote": { "message": "another version of the video above" },
+  "live": { "message": "live" }
 }

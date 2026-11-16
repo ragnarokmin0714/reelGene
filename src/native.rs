@@ -57,7 +57,21 @@ async fn answer(message: &[u8]) -> Answer {
             Err(e) => Answer::refused(e),
         },
         Ok(Asked::Add(links)) => add(links).await.unwrap_or_else(Answer::refused),
+        Ok(Asked::Measure(links)) => measure(&links).await.unwrap_or_else(Answer::refused),
     }
+}
+
+/// Read the playlists through the proxy the settings name, as downloads do.
+async fn measure(links: &[reelgene_app::handoff::Link]) -> Result<Answer, String> {
+    let places = Places::detect()?;
+    let (settings, _) = reelgene_app::settings::Settings::load(&places.settings_file());
+    let config = reelgene_app::app::http_config(&settings)?;
+    let http = reelgene_core::http::Http::new(config).map_err(|e| e.to_string())?;
+    Ok(Answer {
+        ok: true,
+        measured: Some(browser::measure(&http, links).await),
+        ..Answer::default()
+    })
 }
 
 /// Whether a reelgene holds the queue now. The lock is let go at once.

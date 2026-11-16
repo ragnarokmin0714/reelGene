@@ -4099,12 +4099,14 @@ name = "reelgene-app"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "futures",
  "jiff",
  "log",
  "reelgene-core",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "url",
  "windows-registry",
  "windows-sys 0.61.2",

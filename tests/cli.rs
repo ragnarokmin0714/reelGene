@@ -553,6 +553,43 @@ fn the_extension_queues_links_with_the_referer_they_need() {
 }
 
 #[test]
+fn the_extension_hears_which_playlists_look_like_adverts() {
+    use serde_json::json;
+    let vod = |secs: u32| {
+        let mut s = String::from("#EXTM3U\n#EXT-X-TARGETDURATION:10\n");
+        for i in 0..secs / 10 {
+            s.push_str(&format!("#EXTINF:10.0,\nseg{i}.ts\n"));
+        }
+        s.push_str("#EXT-X-ENDLIST\n");
+        s.into_bytes()
+    };
+    let base = serve(HashMap::from([
+        ("/v/main.m3u8", vod(1500)),
+        ("/s/pre.m3u8", vod(30)),
+    ]));
+    let home = Home::new("native-measure");
+    let link =
+        |path: &str| json!({ "url": format!("{base}{path}"), "referer": "https://site.example/w" });
+    let (out, answers) = as_browser(
+        &home,
+        EXTENSION,
+        &[json!({ "v": 1, "cmd": "measure", "links": [
+            link("/s/pre.m3u8"), link("/v/main.m3u8"), link("/v/gone.m3u8"),
+        ] })],
+    );
+    assert!(out.status.success(), "{}", text(&out));
+    assert_eq!(
+        answers[0],
+        json!({ "ok": true, "measured": [
+            { "secs": 30.0, "live": false, "verdict": "short" },
+            { "secs": 1500.0, "live": false, "verdict": "video" },
+            { "live": false, "verdict": "unknown" },
+        ] }),
+        "{answers:?}"
+    );
+}
+
+#[test]
 fn only_our_extension_is_answered() {
     let home = Home::new("native-other");
     let hello = serde_json::json!({ "v": 1, "cmd": "hello" });
