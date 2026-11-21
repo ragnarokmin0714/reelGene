@@ -458,6 +458,24 @@ fn detected_links_are_listed_and_web_pages_are_not() {
 }
 
 #[test]
+fn copied_links_wait_to_be_added_and_a_ts_piece_says_so() {
+    let env = env("grab-wait");
+    let mut h = window(&env, english());
+    h.state_mut().desktop.links(detect::find_links(
+        "https://cdn.example/v/abc/index.m3u8 https://cdn.example/v/abc/abc2.ts?auth_key=1-2-0-ff",
+    ));
+    settle(&mut h);
+    let _ = h.get_by_label("Detected links (2)");
+    let _ = h.get_by_label(EN.piece);
+    std::thread::sleep(Duration::from_millis(200));
+    h.run_steps(5);
+    assert!(
+        env.rt.block_on(env.engine.snapshot()).unwrap().is_empty(),
+        "copying a link is not asking for it"
+    );
+}
+
+#[test]
 fn settings_are_saved_to_the_file_and_take_effect() {
     let env = env("settings");
     let mut h = window(&env, english());
@@ -466,9 +484,9 @@ fn settings_are_saved_to_the_file_and_take_effect() {
     h.get_by_label(EN.section_behaviour).click();
     settle(&mut h);
     // Scroll first, as a person would, should the page not fit.
-    h.get_by_label(EN.auto_add).scroll_to_me();
+    h.get_by_label(EN.ask_quality).scroll_to_me();
     settle(&mut h);
-    h.get_by_label(EN.auto_add).click();
+    h.get_by_label(EN.ask_quality).click();
     settle(&mut h);
     h.get_by_label(EN.notify).scroll_to_me();
     settle(&mut h);
@@ -476,13 +494,13 @@ fn settings_are_saved_to_the_file_and_take_effect() {
     settle(&mut h);
     h.get_by_label(EN.save).click();
     settle(&mut h);
-    assert!(h.state_mut().gui().settings.auto_add);
+    assert!(h.state_mut().gui().settings.ask_quality);
     assert!(
         !h.state_mut().gui().settings.notify,
         "notifications are on until turned off"
     );
     let saved = std::fs::read_to_string(env.dir.join("settings.json")).unwrap();
-    assert!(saved.contains("\"auto_add\": true"), "{saved}");
+    assert!(saved.contains("\"ask_quality\": true"), "{saved}");
     assert!(saved.contains("\"notify\": false"), "{saved}");
     assert!(h.query_by_label(EN.save).is_none(), "the dialog closed");
 }
@@ -1403,7 +1421,8 @@ mod screens {
         shoot("grabbed", Dark, "zh-TW", |g| {
             demo(g);
             for link in detect::find_links(
-                "https://cdn.example.com/show/ep01/index.m3u8 http://192.168.1.20/movie.mp4",
+                "https://cdn.example.com/show/ep01/index.m3u8 http://192.168.1.20/movie.mp4 \
+                 https://cdn.example.com/v/abc/abc2.ts?auth_key=1-2-0-ff",
             ) {
                 g.grabbed.push(Grabbed { link, busy: false });
             }

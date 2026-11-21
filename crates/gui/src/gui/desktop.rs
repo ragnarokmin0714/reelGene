@@ -22,7 +22,6 @@ use reelgene_app::settings::Settings;
 use reelgene_core::cookies::{self, Summary};
 use reelgene_core::detect::Link;
 use reelgene_core::engine::{Discovery, Engine, EpisodeId, Event, QualityOption, Status};
-use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use reelgene_core::tools::{self, YtDlpTool};
 use std::collections::{HashSet, VecDeque};
@@ -528,7 +527,7 @@ impl Desktop {
             }
             Valid::Add(links) => match weak.upgrade() {
                 Some(me) => {
-                    links.into_iter().for_each(|link| me.read_as(link, true));
+                    links.into_iter().for_each(|link| me.read_as(link));
                     Reply::ok()
                 }
                 None => Reply::refused("it is closing"),
@@ -554,31 +553,15 @@ impl Desktop {
         }
     }
 
-    /// Links the clipboard turned up. Only ones a resolver claims are worth
-    /// anything; with auto-add on, public ones are read straight away, open
-    /// window or not.
-    pub fn links(self: &Arc<Self>, links: Vec<Link>) {
-        let auto = lock(&self.settings).auto_add;
-        let queued: HashSet<String> = if auto {
-            let jobs = self.rt.block_on(self.engine.snapshot()).unwrap_or_default();
-            jobs.into_iter().map(|j| j.source).collect()
-        } else {
-            HashSet::new()
-        };
-        let mut listed = Vec::new();
-        for link in links {
-            if self.engine.claims(&link.url).is_none() {
-                continue;
-            }
-            if auto && !link.private {
-                if !queued.contains(&net::redact(&link.url)) {
-                    // Queued by itself: no questions.
-                    self.read_as(link.url.into(), false);
-                }
-            } else {
-                listed.push(link);
-            }
-        }
+    /// Links the clipboard turned up, only listed: copying a link is not
+    /// asking for it, so nothing is fetched until the user adds one (Roger,
+    /// 2026-11-21: queueing them by themselves was dangerous). Only ones a
+    /// resolver claims are worth listing.
+    pub fn links(&self, links: Vec<Link>) {
+        let listed: Vec<Link> = links
+            .into_iter()
+            .filter(|link| self.engine.claims(&link.url).is_some())
+            .collect();
         if !listed.is_empty() {
             let _ = self.tx.send(Msg::Links(listed));
         }
@@ -587,13 +570,13 @@ impl Desktop {
 
     /// Read what is behind a link, in the background. A single video is
     /// queued right away; a series goes to the window for the episode picker.
-    /// A link the user added: may ask which episodes, and which qualities.
+    /// It may ask which episodes, and which qualities.
     pub fn read(self: &Arc<Self>, url: Url) {
-        self.read_as(url.into(), true);
+        self.read_as(url.into());
     }
 
     /// A handed-over link may bring its name and the headers it needs.
-    fn read_as(self: &Arc<Self>, link: handoff::Link, ask: bool) {
+    fn read_as(self: &Arc<Self>, link: handoff::Link) {
         self.reading.fetch_add(1, Ordering::Relaxed);
         let me = Arc::clone(self);
         let settings = self.settings();
@@ -608,7 +591,7 @@ impl Desktop {
                     // Looked up either way, to tell which quality it gets and
                     // how big; a failed look is no reason to stop.
                     let mut qualities = me.engine.qualities(&url, &d).await.unwrap_or_default();
-                    let choose = ask && settings.ask_quality && qualities.len() > 1;
+                    let choose = settings.ask_quality && qualities.len() > 1;
                     if !choose {
                         // Only the one the settings get: told, not asked.
                         let chosen = reelgene_core::engine::choose(&qualities, settings.quality());

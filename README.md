@@ -13,9 +13,11 @@ network or leaving it overnight, and pick up where they stopped.
 ## What it does
 
 - **Watches the clipboard** (on by default, one switch to turn off). Copy a
-  link anywhere and it is listed, ready to add — or added by itself, if you
-  prefer. Ordinary web pages are ignored; only links reelgene can download
-  appear.
+  link anywhere and it is listed, ready to add; nothing is fetched until you
+  add it. Ordinary web pages are ignored; only links reelgene can download
+  appear. A `.ts` link is marked as what it nearly always is, a few seconds
+  of a video: the whole video comes through its `.m3u8` playlist or the
+  browser extension.
 - **Finds what a page plays**: the browser extension lists the playlists
   and video files the page you are watching loads, and sends the one you
   pick to reelgene with the page's title and the Referer its server checks

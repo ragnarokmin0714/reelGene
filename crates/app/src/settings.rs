@@ -79,11 +79,8 @@ pub struct Settings {
     pub language: Option<String>,
     /// Closing the window keeps reelgene running in the tray, if there is one.
     pub close_to_tray: bool,
-    /// Queue detected links by themselves instead of listing them first.
-    pub auto_add: bool,
     /// When a video comes in several qualities, ask which (one or more)
-    /// rather than take `quality`, which is then only told. Links queued by
-    /// themselves never ask.
+    /// rather than take `quality`, which is then only told.
     pub ask_quality: bool,
     /// A system notification when a batch ends and the window is not in front.
     pub notify: bool,
@@ -120,7 +117,6 @@ impl Default for Settings {
             proxy: "system".to_owned(),
             language: None,
             close_to_tray: true,
-            auto_add: false,
             ask_quality: false,
             notify: true,
         }
@@ -273,6 +269,16 @@ mod tests {
             s.clipboard,
             "fields the file does not mention take their defaults"
         );
+
+        // Links copied are never queued by themselves any more: an old
+        // file's switch for that is read past, not an error.
+        std::fs::write(&path, r#"{ "version": 2, "auto_add": true }"#).unwrap();
+        let (s, warning) = Settings::load(&path);
+        assert!(warning.is_none());
+        assert_eq!(s, Settings::default());
+        s.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("auto_add"), "{saved}");
         std::fs::remove_dir_all(&dir).ok();
     }
 

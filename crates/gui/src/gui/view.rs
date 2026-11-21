@@ -234,12 +234,17 @@ fn grabbed(g: &Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
         for (i, item) in g.grabbed.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.set_min_height(ROW_H);
-                let kind = match item.link.kind {
-                    LinkKind::Playlist => "m3u8",
-                    LinkKind::MediaFile => "video",
-                    LinkKind::Page => "page",
-                };
-                widgets::badge(ui, kind, p.weak);
+                if detect::looks_like_piece(&item.link.url) {
+                    // Added, it would be those few seconds: say so first.
+                    widgets::badge(ui, t.piece, p.warning).on_hover_text(t.piece_help);
+                } else {
+                    let kind = match item.link.kind {
+                        LinkKind::Playlist => "m3u8",
+                        LinkKind::MediaFile => "video",
+                        LinkKind::Page => "page",
+                    };
+                    widgets::badge(ui, kind, p.weak);
+                }
                 let url_w = (ui.available_width() - 260.0).max(120.0);
                 ui.allocate_ui_with_layout(
                     vec2(url_w, ROW_H),

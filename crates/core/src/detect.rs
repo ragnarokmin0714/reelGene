@@ -102,9 +102,29 @@ pub fn classify(url: &Url) -> LinkKind {
     }
 }
 
+/// A `.ts` link. Copied from a web player it is nearly always one piece of
+/// an HLS video, a few seconds long: the rest have signatures of their own,
+/// which only the video's playlist (`.m3u8`) gives, so the whole video is
+/// found through that, never by guessing its neighbours' addresses.
+pub fn looks_like_piece(url: &Url) -> bool {
+    url.path().to_ascii_lowercase().ends_with(".ts")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ts_link_is_taken_for_a_piece_of_a_video() {
+        let u = |s| Url::parse(s).unwrap();
+        assert!(looks_like_piece(&u(
+            "https://cdn.example/v/abc/abc2.ts?auth_key=1-2-0-ff"
+        )));
+        assert!(looks_like_piece(&u("https://cdn.example/v/SEG7.TS")));
+        assert!(!looks_like_piece(&u("https://cdn.example/v/index.m3u8")));
+        assert!(!looks_like_piece(&u("https://cdn.example/v/movie.mp4")));
+        assert!(!looks_like_piece(&u("https://cdn.example/v/abc2")));
+    }
 
     #[test]
     fn finds_links_in_prose_and_drops_the_prose() {

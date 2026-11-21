@@ -154,7 +154,7 @@ a version-1 file's `ask_quality: true` was the old written-out default and is
 turned off on load (`Settings::upgraded`). With it on, a link the user adds
 that offers two or more opens the picker even for one episode; one job per
 quality ticked, and with several the template gains ` [720p]` so the files
-stay apart. Links queued by themselves never ask.
+stay apart.
 
 **Resume granularity.** Series per episode (scheduler), playlist per segment,
 single file per byte (`Range` + `If-Range` with the stored ETag or
@@ -419,7 +419,13 @@ clicks arrive through the window's message loop.
 
 **Desktop glue.** Clipboard: a thread polls once a second, ignores what was
 there at startup, and passes on only links that some resolver claims, so
-copying ordinary pages adds nothing. Tray: `ksni` (D-Bus, no GTK) on Linux,
+copying ordinary pages adds nothing. Copied links are only listed, never
+read or queued by themselves: copying is not asking, and the old "queue
+detected links by themselves" switch was taken out as dangerous (Roger,
+2026-11-21; an old file's `auto_add` is read past). A `.ts` link gets a
+"few seconds" badge (`detect::looks_like_piece`). reelgene never guesses a
+piece's neighbours: CDN signatures cover each file's own path, so the rest
+come only from the playlist. Tray: `ksni` (D-Bus, no GTK) on Linux,
 `tray-icon` on Windows (created on the window's thread). Closing goes to the
 tray only if a tray actually registered. Sounds are synthesised WAVs played with PlaySound or
 `pw-play`/`paplay`/`aplay`: linking an audio library would need ALSA on Linux

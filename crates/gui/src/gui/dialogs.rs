@@ -844,7 +844,6 @@ fn settings_ui(
             }
             if form.tab == Tab::Behaviour {
                 ui.checkbox(&mut form.s.clipboard, t.watch_clipboard);
-                ui.checkbox(&mut form.s.auto_add, t.auto_add);
                 ui.checkbox(&mut form.s.autostart, t.autostart);
                 ui.checkbox(&mut form.s.close_to_tray, t.close_to_tray);
                 ui.checkbox(&mut form.s.notify, t.notify);
