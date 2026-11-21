@@ -45,7 +45,8 @@ network or leaving it overnight, and pick up where they stopped.
   a broken file; a file that plays far shorter than its playlist says is
   flagged.
 - **File names you choose**: `{series}/{index} {title}` by default, so
-  episodes sort and each series gets a folder.
+  episodes sort and each series gets a folder; a single video that is not
+  part of a series is just `{title}`, straight in the download folder.
 - **A window and a command line**, the same engine underneath. The window
   has a tray icon, English and Traditional Chinese, optional animations that
   follow the system's reduce-motion setting, and two optional sounds — one

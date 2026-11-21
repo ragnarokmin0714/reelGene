@@ -586,7 +586,7 @@ impl Desktop {
                 Ok(mut d) => {
                     d.give_headers(&link.headers);
                     if let Some(title) = link.title {
-                        d.found.title = title;
+                        d.found.retitle(title);
                     }
                     // Looked up either way, to tell which quality it gets and
                     // how big; a failed look is no reason to stop.
@@ -652,7 +652,7 @@ pub(crate) fn download_dir(settings: &Settings, places: &Places) -> PathBuf {
 pub(crate) fn job(settings: &Settings, places: &Places, url: Url, d: Discovery) -> NewJob {
     let mut job = d.into_job(url, download_dir(settings, places));
     job.quality = settings.quality();
-    job.template.clone_from(&settings.template);
+    job.template = settings.template_for(job.is_single()).to_owned();
     job
 }
 

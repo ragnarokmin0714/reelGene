@@ -303,7 +303,15 @@ lines, with the home folder masked as `~`.
 component; `output_path` refuses anything that leaves the download folder.
 Partial files live in `<download folder>/.reelgene/<episode id>/` so the
 final rename never crosses filesystems. Single files keep only media
-extensions.
+extensions. A single video (`NewJob::is_single`: one episode in all, whose
+title only repeats the job's) is named by `single_template`, `{title}` by
+default, so it gets no folder of its own (Roger, 2026-11-21); an episode a
+page title was split from (`劇名 第5集`) stays under its series, as does one
+episode picked from many. The template is chosen when the job is made
+(`Settings::template_for`) and stored with it, like the series one. Naming a
+single video (`retitle`: `--title`, the extension's page title, the picker)
+renames its episode too, or the file would keep the name guessed from its
+link.
 
 **ffmpeg** is not bundled (size, security updates, GPL obligations) and is
 optional, but separate sound is only joined with it, and some sites never

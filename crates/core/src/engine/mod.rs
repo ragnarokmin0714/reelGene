@@ -131,6 +131,11 @@ impl Discovery {
     /// A job for every discovered episode, default naming and best quality.
     /// Filter `episodes` or change the other fields before adding it.
     pub fn into_job(self, source: Url, out_dir: PathBuf) -> NewJob {
+        let template = if self.found.is_single() {
+            paths::SINGLE_TEMPLATE
+        } else {
+            paths::DEFAULT_TEMPLATE
+        };
         NewJob {
             note: Default::default(),
             title: self.found.title,
@@ -140,7 +145,7 @@ impl Discovery {
             episode_count: self.found.episodes.len(),
             episodes: self.found.episodes,
             out_dir,
-            template: paths::DEFAULT_TEMPLATE.to_owned(),
+            template: template.to_owned(),
             quality: Default::default(),
         }
     }

@@ -76,6 +76,10 @@ pub struct NameVars<'a> {
 /// The default: a folder per series, episodes numbered so they sort.
 pub const DEFAULT_TEMPLATE: &str = "{series}/{index} {title}";
 
+/// A single video's default, one that is not an episode of a series: just
+/// its name, straight in the download folder, with no folder of its own.
+pub const SINGLE_TEMPLATE: &str = "{title}";
+
 /// Render a template like `{series}/{index:02} {title}` into a relative path.
 ///
 /// `/` separates folders; every rendered component is sanitised on its own, so

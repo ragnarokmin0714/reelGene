@@ -130,6 +130,20 @@ pub struct NewJob {
     pub quality: Quality,
 }
 
+impl NewJob {
+    /// One video, not an episode of a series (see
+    /// [`Discovered::is_single`](crate::resolver::Discovered::is_single)):
+    /// one episode picked from many is still part of the series.
+    pub fn is_single(&self) -> bool {
+        self.episode_count <= 1 && crate::resolver::is_single(&self.title, &self.episodes)
+    }
+
+    /// Name it; a single video's episode takes the name too.
+    pub fn retitle(&mut self, title: String) {
+        crate::resolver::retitle(&mut self.title, &mut self.episodes, title);
+    }
+}
+
 /// The quality a job's first episode comes in, as found when it was added,
 /// with its estimated size: for telling the user, not for choosing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

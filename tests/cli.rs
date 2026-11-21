@@ -135,11 +135,8 @@ fn get_downloads_a_playlist_and_list_shows_it_done() {
 
     let out = home.run(&["get", &url, "--title", "Demo"]);
     assert!(out.status.success(), "{}", text(&out));
-    let file = home
-        .path()
-        .join("downloads")
-        .join("Demo")
-        .join("01 ep01.ts");
+    // One video, named by --title, straight in the download folder.
+    let file = home.path().join("downloads").join("Demo.ts");
     assert_eq!(
         std::fs::read(&file).unwrap(),
         b"first-second",
@@ -341,11 +338,7 @@ fn a_page_without_a_resolver_is_read_by_the_users_yt_dlp() {
 
     let out = home.run(&["get", &format!("{base}/watch?v=1")]);
     assert!(out.status.success(), "{}", text(&out));
-    let file = home
-        .path()
-        .join("downloads")
-        .join("Clip")
-        .join("01 Clip.mp4");
+    let file = home.path().join("downloads").join("Clip.mp4");
     assert_eq!(
         std::fs::read(&file).unwrap(),
         b"moving-pictures",
@@ -548,11 +541,7 @@ fn the_extension_queues_links_with_the_referer_they_need() {
     // works because the Referer was kept with the job.
     let out = home.run(&["run"]);
     assert!(out.status.success(), "{}", text(&out));
-    let file = home
-        .path()
-        .join("downloads")
-        .join("A Page")
-        .join("01 ep01.ts");
+    let file = home.path().join("downloads").join("A Page.ts");
     assert_eq!(
         std::fs::read(&file).unwrap(),
         b"guarded-video",

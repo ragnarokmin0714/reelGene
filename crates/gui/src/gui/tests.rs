@@ -378,7 +378,8 @@ fn a_pasted_playlist_is_read_queued_and_downloaded() {
     until(&mut h, "the download to finish", |h| {
         h.query_by_label_contains(EN.done).is_some()
     });
-    let file = env.dir.join("downloads").join("ep01").join("01 ep01.ts");
+    // One video: straight in the download folder, no folder of its own.
+    let file = env.dir.join("downloads").join("ep01.ts");
     assert_eq!(std::fs::read(file).unwrap(), b"video");
 }
 
@@ -473,6 +474,31 @@ fn copied_links_wait_to_be_added_and_a_ts_piece_says_so() {
         env.rt.block_on(env.engine.snapshot()).unwrap().is_empty(),
         "copying a link is not asking for it"
     );
+}
+
+#[test]
+fn a_single_videos_name_has_a_field_of_its_own() {
+    let env = env("single-name");
+    let mut h = window(&env, english());
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    assert_eq!(field_value(&h, EN.naming_single_help), "{title}");
+    retype(&mut h, EN.naming_single_help, "{series}/{title}");
+    h.get_by_label(EN.save).click();
+    settle(&mut h);
+    assert_eq!(
+        h.state_mut().gui().settings.single_template,
+        "{series}/{title}"
+    );
+
+    // Used from the next link on.
+    type_link(&mut h, &format!("{}/show/ep01/index.m3u8", env.base));
+    h.get_by_label(EN.start).click();
+    until(&mut h, "the download to finish", |h| {
+        h.query_by_label_contains(EN.done).is_some()
+    });
+    let file = env.dir.join("downloads").join("ep01").join("ep01.ts");
+    assert_eq!(std::fs::read(file).unwrap(), b"video");
 }
 
 #[test]
@@ -634,6 +660,9 @@ fn ffmpeg_put_in_the_tools_folder_is_found_without_a_restart() {
     )
     .unwrap();
     std::fs::set_permissions(&ffmpeg, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Below the naming rows: scrolled to, as a person would.
+    h.get_by_label(EN.check_again).scroll_to_me();
+    settle(&mut h);
     h.get_by_label(EN.check_again).click();
     until(&mut h, "the news that ffmpeg is there", |h| {
         h.query_by_label_contains("ffmpeg 7.1 found").is_some()
@@ -1081,7 +1110,7 @@ fn a_video_in_several_qualities_asks_which_and_can_take_two() {
     names.sort();
     assert_eq!(
         names,
-        ["01 multi [1080p].ts = sharp", "01 multi [360p].ts = soft"],
+        ["multi [1080p].ts = sharp", "multi [360p].ts = soft"],
         "one of each, apart by name, each its own quality"
     );
 }

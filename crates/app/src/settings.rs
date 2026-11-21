@@ -6,7 +6,7 @@
 //! saving goes through a temporary file, so a crash never leaves half a file.
 
 use reelgene_core::hls::Quality;
-use reelgene_core::paths::DEFAULT_TEMPLATE;
+use reelgene_core::paths::{DEFAULT_TEMPLATE, SINGLE_TEMPLATE};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,10 @@ pub struct Settings {
     pub download_dir: Option<PathBuf>,
     /// See `reelgene_core::paths::render_template`.
     pub template: String,
+    /// The same for a single video, one that is not an episode of a series
+    /// (`NewJob::is_single`). By default just its name, with no folder of
+    /// its own (Roger, 2026-11-21).
+    pub single_template: String,
     /// `best`, `worst`, or a height such as `720`.
     pub quality: String,
     /// Episodes downloading at once.
@@ -92,6 +96,7 @@ impl Default for Settings {
             version: VERSION,
             download_dir: None,
             template: DEFAULT_TEMPLATE.to_owned(),
+            single_template: SINGLE_TEMPLATE.to_owned(),
             quality: "best".to_owned(),
             episodes: 2,
             segments: 4,
@@ -190,6 +195,9 @@ impl Settings {
         if self.template.trim().is_empty() {
             self.template = d.template;
         }
+        if self.single_template.trim().is_empty() {
+            self.single_template = d.single_template;
+        }
         if self.quality.parse::<Quality>().is_err() {
             self.quality = d.quality;
         }
@@ -202,6 +210,15 @@ impl Settings {
 
     pub fn quality(&self) -> Quality {
         self.quality.parse().unwrap_or_default()
+    }
+
+    /// The naming a job gets: a single video's or a series'.
+    pub fn template_for(&self, single: bool) -> &str {
+        if single {
+            &self.single_template
+        } else {
+            &self.template
+        }
     }
 }
 
@@ -269,6 +286,7 @@ mod tests {
             s.clipboard,
             "fields the file does not mention take their defaults"
         );
+        assert_eq!(s.single_template, SINGLE_TEMPLATE);
 
         // Links copied are never queued by themselves any more: an old
         // file's switch for that is read past, not an error.

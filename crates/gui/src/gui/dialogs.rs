@@ -62,6 +62,9 @@ impl Pick {
         let start = reelgene_core::engine::choose(&qualities, want)
             .and_then(|c| qualities.iter().position(|q| q == c))
             .unwrap_or(0);
+        let template = settings
+            .template_for(discovery.found.is_single())
+            .to_owned();
         Self {
             url,
             title: discovery.found.title.clone(),
@@ -75,7 +78,7 @@ impl Pick {
                 .map(|(i, q)| (q, i == start))
                 .collect(),
             folder: folder.display().to_string(),
-            template: settings.template.clone(),
+            template,
         }
     }
 
@@ -108,7 +111,7 @@ impl Pick {
             return Vec::new();
         }
         let mut job = self.discovery.clone().into_job(self.url.clone(), folder);
-        job.title = self.title.trim().to_owned();
+        job.retitle(self.title.trim().to_owned());
         let mut checked = self.checked.iter();
         job.episodes
             .retain(|_| checked.next().copied().unwrap_or(false));
@@ -171,11 +174,17 @@ impl Pick {
             .jobs()
             .first()
             .map_or_else(|| self.template.clone(), |j| j.template.clone());
+        // A single video's one episode is named with it (`NewJob::retitle`).
+        let title = if self.discovery.found.is_single() {
+            self.title.trim()
+        } else {
+            &first.title
+        };
         let rel = paths::render_template(
             &template,
             &NameVars {
                 series: self.title.trim(),
-                title: &first.title,
+                title,
                 index: first.index,
                 count: self.discovery.found.episodes.len(),
             },
@@ -690,6 +699,16 @@ fn settings_ui(
                         )
                         .on_hover_text(t.naming_help);
                         ui.label(RichText::new(t.naming_help).color(p.weak).size(12.0));
+                    });
+                    ui.end_row();
+                    ui.label(t.naming_single);
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.s.single_template)
+                                .desired_width(310.0),
+                        )
+                        .on_hover_text(t.naming_single_help);
+                        ui.label(RichText::new(t.naming_single_help).color(p.weak).size(12.0));
                     });
                     ui.end_row();
                     let label = ui.label(t.quality).id;

@@ -49,6 +49,34 @@ pub struct Discovered {
     pub episodes: Vec<EpisodeRef>,
 }
 
+impl Discovered {
+    /// One video, not an episode of a series: a single episode that only
+    /// repeats the title. One a title was split into (`劇名 第5集` → series
+    /// and `第5集`) still belongs under its series.
+    pub fn is_single(&self) -> bool {
+        is_single(&self.title, &self.episodes)
+    }
+
+    /// Name it; a single video's episode takes the name too, or its file
+    /// would keep the one guessed from the link.
+    pub fn retitle(&mut self, title: String) {
+        retitle(&mut self.title, &mut self.episodes, title);
+    }
+}
+
+pub(crate) fn is_single(title: &str, episodes: &[EpisodeRef]) -> bool {
+    matches!(episodes, [ep] if ep.title == title)
+}
+
+pub(crate) fn retitle(title: &mut String, episodes: &mut [EpisodeRef], new: String) {
+    if let [ep] = episodes
+        && ep.title == *title
+    {
+        ep.title.clone_from(&new);
+    }
+    *title = new;
+}
+
 #[derive(Debug, Clone)]
 pub struct EpisodeRef {
     /// As the site numbers it; naming templates use it.
@@ -175,6 +203,7 @@ impl Default for Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Discovery;
 
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()
@@ -197,6 +226,71 @@ mod tests {
         );
         assert!(registry.get("direct").is_some());
         assert!(registry.ids().any(|id| id == "direct"));
+    }
+
+    fn found(title: &str, episodes: &[&str]) -> Discovered {
+        Discovered {
+            title: title.into(),
+            spec: Value::Null,
+            episodes: episodes
+                .iter()
+                .enumerate()
+                .map(|(i, t)| EpisodeRef {
+                    index: i as i64 + 1,
+                    title: (*t).into(),
+                    hint: Value::Null,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_single_video_is_one_episode_named_only_by_its_title() {
+        assert!(found("clip", &["clip"]).is_single());
+        assert!(
+            !found("大劇", &["第5集"]).is_single(),
+            "an episode split from its series' title stays under the series"
+        );
+        assert!(!found("show", &["Episode 1", "Episode 2"]).is_single());
+        assert!(!found("show", &[]).is_single());
+    }
+
+    #[test]
+    fn retitling_a_single_video_renames_its_episode_too() {
+        let mut single = found("abc2", &["abc2"]);
+        single.retitle("A page's title".into());
+        assert_eq!(single.title, "A page's title");
+        assert_eq!(single.episodes[0].title, "A page's title");
+        assert!(single.is_single(), "still one video");
+
+        let mut episode = found("大劇", &["第5集"]);
+        episode.retitle("大劇 第一季".into());
+        assert_eq!(
+            episode.episodes[0].title, "第5集",
+            "the episode keeps its own"
+        );
+    }
+
+    #[test]
+    fn a_job_of_one_episode_picked_from_a_series_is_not_single() {
+        let series = Discovery {
+            resolver: "direct".into(),
+            found: found("x", &["x", "x"]),
+        };
+        let mut job = series.into_job(u("https://site.example/show"), "/d".into());
+        job.episodes.truncate(1);
+        assert!(!job.is_single());
+        assert_eq!(job.template, crate::paths::DEFAULT_TEMPLATE);
+
+        let one = Discovery {
+            resolver: "direct".into(),
+            found: found("clip", &["clip"]),
+        };
+        let mut job = one.into_job(u("https://cdn.example/clip.mp4"), "/d".into());
+        assert!(job.is_single());
+        assert_eq!(job.template, crate::paths::SINGLE_TEMPLATE);
+        job.retitle("Named".into());
+        assert_eq!(job.episodes[0].title, "Named");
     }
 
     #[test]

@@ -710,7 +710,8 @@ async fn discover_then_add_names_the_file_from_the_link() {
         .unwrap();
     let ep = h.engine.snapshot().await.unwrap()[0].episodes[0].id;
     let output = h.done(ep).await;
-    assert_eq!(output, h.out().join("ep07").join("01 ep07.ts"));
+    // One video: no folder of its own (`paths::SINGLE_TEMPLATE`).
+    assert_eq!(output, h.out().join("ep07.ts"));
     let job = &h.engine.snapshot().await.unwrap()[0];
     assert_eq!(job.id, id);
     assert!(!job.source.contains('?'));

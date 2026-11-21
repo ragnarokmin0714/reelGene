@@ -359,10 +359,10 @@ fn take_handed(app: &App, engine: &Engine) -> Option<Handed> {
     let (tx, results) = mpsc::unbounded_channel();
     let reading = Arc::new(AtomicUsize::new(0));
     let (engine, counter) = (engine.clone(), Arc::clone(&reading));
-    let (out, quality, template) = (
+    let (out, quality, settings) = (
         app.download_dir(),
         app.settings.quality(),
-        app.settings.template.clone(),
+        Arc::new(app.settings.clone()),
     );
     let handler: handoff::Handler = Arc::new(move |request| match request {
         Valid::Show => Reply::refused("it runs in a terminal and has no window to show"),
@@ -370,7 +370,7 @@ fn take_handed(app: &App, engine: &Engine) -> Option<Handed> {
             for link in links {
                 counter.fetch_add(1, Ordering::SeqCst);
                 let (engine, tx, out) = (engine.clone(), tx.clone(), out.clone());
-                let template = template.clone();
+                let settings = Arc::clone(&settings);
                 tokio::spawn(async move {
                     let url = link.url;
                     let shown = net::redact(&url);
@@ -379,10 +379,10 @@ fn take_handed(app: &App, engine: &Engine) -> Option<Handed> {
                         found.give_headers(&link.headers);
                         let mut job = found.into_job(url, out);
                         job.quality = quality;
-                        job.template = template;
                         if let Some(t) = link.title {
-                            job.title = t;
+                            job.retitle(t);
                         }
+                        job.template = settings.template_for(job.is_single()).to_owned();
                         let title = job.title.clone();
                         engine
                             .add(job)
@@ -470,10 +470,6 @@ pub async fn add(
         Some(q) => q.parse().map_err(|e: reelgene_core::Error| e.to_string())?,
         None => app.settings.quality(),
     };
-    let template = args
-        .template
-        .clone()
-        .unwrap_or_else(|| app.settings.template.clone());
     let selection = args.episodes.as_deref().map(parse_selection).transpose()?;
     let headers = args
         .headers
@@ -508,7 +504,7 @@ pub async fn add(
         let mut job = found.into_job(url.clone(), out.clone());
         job.note = note;
         if let Some(t) = &args.title {
-            job.title.clone_from(t);
+            job.retitle(t.clone());
         }
         if let Some(sel) = &selection {
             job.episodes
@@ -518,7 +514,10 @@ pub async fn add(
             }
         }
         job.quality = quality;
-        job.template.clone_from(&template);
+        job.template = match &args.template {
+            Some(t) => t.clone(),
+            None => app.settings.template_for(job.is_single()).to_owned(),
+        };
         let (count, title) = (job.episodes.len(), job.title.clone());
         let id = engine.add(job).await.map_err(|e| e.to_string())?;
         let told = told(note, total > 1)

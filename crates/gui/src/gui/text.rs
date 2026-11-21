@@ -95,6 +95,9 @@ pub struct Text {
     pub batch_done: fn(usize, usize) -> String,
 
     pub naming: &'static str,
+    /// The file names of a single video, not an episode of a series.
+    pub naming_single: &'static str,
+    pub naming_single_help: &'static str,
     pub section_downloads: &'static str,
     pub section_connections: &'static str,
     pub section_look: &'static str,
@@ -334,7 +337,9 @@ pub static EN: Text = Text {
             format!("Finished: {done} done, {failed} failed")
         }
     },
-    naming: "File names",
+    naming: "Series names",
+    naming_single: "One video's name",
+    naming_single_help: "For a video not in a series; without / it gets no folder",
     section_downloads: "Downloads",
     section_connections: "Connections",
     section_look: "Look and sounds",
@@ -613,7 +618,9 @@ pub static ZH_TW: Text = Text {
             format!("下載結束：完成 {done} 集，失敗 {failed} 集")
         }
     },
-    naming: "檔名格式",
+    naming: "影集檔名",
+    naming_single: "單部影片檔名",
+    naming_single_help: "不屬於影集的影片；沒有 / 就不另開資料夾",
     section_downloads: "下載",
     section_connections: "連線",
     section_look: "外觀與音效",
