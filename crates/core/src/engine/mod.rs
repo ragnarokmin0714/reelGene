@@ -152,20 +152,40 @@ impl Discovery {
 
     /// Headers the link needs, such as the Referer a browser sent with it:
     /// kept in the recipe, so every resolve and every resume sends them.
-    /// Only direct links take them (a site resolver sets its own); `false`
+    /// Only direct links and pasted playlists take them (a site resolver sets
+    /// its own); `false`
     /// when this one does not. Give them before `Engine::qualities`, which
     /// fetches the playlist with them.
     pub fn give_headers(&mut self, headers: &[(String, String)]) -> bool {
         if headers.is_empty() {
             return true;
         }
-        let direct = self.resolver == crate::resolver::direct::ID;
-        match self.found.spec.as_object_mut().filter(|_| direct) {
+        use crate::resolver::{direct, pasted};
+        let takes = matches!(self.resolver.as_str(), direct::ID | pasted::ID);
+        match self.found.spec.as_object_mut().filter(|_| takes) {
             Some(spec) => {
                 spec.insert("headers".into(), serde_json::json!(headers));
                 true
             }
             None => false,
+        }
+    }
+}
+
+/// The playlist a resolve led to: held in the recipe (a pasted one), else
+/// fetched from where it points.
+pub(crate) async fn playlist_text(
+    resolver: &dyn Resolver,
+    spec: &serde_json::Value,
+    resolved: &crate::resolver::Resolved,
+    http: &Http,
+    cancel: &CancellationToken,
+) -> Result<String> {
+    match resolver.playlist_text(spec) {
+        Some(text) => Ok(text.to_owned()),
+        None => {
+            http.get_text(&resolved.url, &resolved.headers, cancel)
+                .await
         }
     }
 }
@@ -492,9 +512,7 @@ impl Engine {
         {
             return Ok(Vec::new());
         }
-        let text = http
-            .get_text(&resolved.url, &resolved.headers, &cancel)
-            .await?;
+        let text = playlist_text(r, &found.found.spec, &resolved, http, &cancel).await?;
         let Playlist::Master(master) = hls::parse(&text, &resolved.url)? else {
             return Ok(Vec::new());
         };

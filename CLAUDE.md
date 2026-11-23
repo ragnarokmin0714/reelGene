@@ -245,6 +245,29 @@ leaving ones that start another existing copy alone. Headers given to a
 direct link are put in its spec by `Discovery::give_headers` before the
 quality lookup, which fetches the playlist with them.
 
+**Pasted playlists** (`resolver/pasted.rs`, `gui/paste.rs`). A playlist's
+text, as a browser's developer tools show it, can be added instead of a
+link: the text is the recipe (`spec.text`, capped at 4 MiB, plus a Referer
+the user gives in `spec.headers`, as for a direct link). `Resolver` gained
+one method with a default, `playlist_text`, so that the worker and
+`Engine::qualities` take the playlist from the recipe instead of fetching
+`Resolved::url` (`engine::playlist_text`); `Resolved` itself is unchanged,
+so the private branch's resolvers still build. `Resolved::url` and the job's
+source are the folder of the first piece (or quality), without the query.
+Only absolute links pass `pasted::read`: it parses against a `relative:/`
+base and refuses whatever stays in that scheme, since a pasted copy no
+longer knows where it came from. Its signatures cannot be renewed: a lapsed
+one fails after the usual re-resolves and the user pastes a fresh copy.
+`pasted::check` (the window's Check) tries what a download starts with —
+the quality the settings get, its key, the first piece fetched, decrypted
+and checked by `mux::looks_like_media` (TS sync bytes at 0/188/376, ISO BMFF
+box types, ID3, two ADTS frames in a row) — and names the stage that failed.
+The clipboard watcher reports a copied playlist as `Copied::Playlist`, one
+row, never its text or its pieces; Ctrl+V of one into the link field is
+taken from the input events before the one-line field flattens it. Only
+links the user's browser received are used, with no cookies: the same line
+as the extension.
+
 **HTTP policy** (`http.rs`): reqwest's own retry only covers protocol NACKs,
 so reelgene retries transient failures itself (network, 408/425/429/5xx) with
 exponential backoff and equal jitter, honours `Retry-After` (seconds or HTTP

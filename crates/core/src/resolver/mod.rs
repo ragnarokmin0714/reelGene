@@ -19,6 +19,7 @@
 pub mod direct;
 mod extra;
 pub mod page;
+pub mod pasted;
 mod title;
 pub mod ytdlp;
 
@@ -126,6 +127,13 @@ pub trait Resolver: Send + Sync {
     async fn discover(&self, url: &Url, cx: Ctx<'_>) -> Result<Discovered>;
 
     async fn resolve(&self, spec: &Value, hint: &Value, cx: Ctx<'_>) -> Result<Resolved>;
+
+    /// The playlist itself, when the recipe holds it (one the user pasted)
+    /// rather than `Resolved::url` naming where to fetch it. The URL then
+    /// only stands for where it came from.
+    fn playlist_text<'a>(&self, _spec: &'a Value) -> Option<&'a str> {
+        None
+    }
 }
 
 /// Every resolver compiled into this build.
@@ -146,6 +154,7 @@ impl Registry {
         extra::register(&mut registry);
         registry.add(Box::new(direct::Direct));
         registry.add(Box::new(page::Page));
+        registry.add(Box::new(pasted::Pasted));
         registry.add_fallback(page::ID);
         registry
     }

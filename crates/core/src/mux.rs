@@ -66,6 +66,36 @@ pub fn looks_like_text(head: &[u8]) -> bool {
             .all(|&b| b >= 0x20 || matches!(b, b'\t' | b'\n' | b'\r') || b >= 0x80)
 }
 
+/// Whether bytes start like media that reelgene joins: MPEG-TS (a sync byte
+/// every 188), ISO BMFF (fMP4 and CMAF boxes), or packed audio (ID3, ADTS
+/// frames). A wrong key turns a piece into noise, which starts like none of
+/// these; each check looks at more than one byte so that noise rarely does.
+pub fn looks_like_media(head: &[u8]) -> bool {
+    let ts = head.first() == Some(&0x47)
+        && head.len() > 188
+        && (188..head.len().min(189 * 3))
+            .step_by(188)
+            .all(|i| head[i] == 0x47);
+    let bmff = head.len() >= 8
+        && matches!(
+            &head[4..8],
+            b"ftyp" | b"styp" | b"moof" | b"moov" | b"sidx" | b"emsg" | b"prft"
+        );
+    ts || bmff || head.starts_with(b"ID3") || adts(head)
+}
+
+/// Two ADTS frames in a row: a sync word, a frame length that lands on the
+/// next sync word.
+fn adts(head: &[u8]) -> bool {
+    let sync = |b: &[u8]| b.len() >= 6 && b[0] == 0xFF && b[1] & 0xF6 == 0xF0;
+    if !sync(head) {
+        return false;
+    }
+    let len =
+        ((head[3] as usize & 0x03) << 11) | ((head[4] as usize) << 3) | (head[5] as usize >> 5);
+    len >= 7 && head.get(len..).is_some_and(sync)
+}
+
 /// Rough length of an MPEG-TS file in seconds: the last video timestamp minus
 /// the first (PTS, 90 kHz), read from the head and tail only. `None` when no
 /// timestamps are found — not TS, or an unusual layout.
@@ -427,6 +457,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("reelgene-mux-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn media_is_told_from_noise() {
+        let mut ts = vec![0u8; 188 * 3];
+        for i in [0, 188, 376] {
+            ts[i] = 0x47;
+        }
+        assert!(looks_like_media(&ts));
+        ts[188] = 0x00;
+        assert!(!looks_like_media(&ts), "one sync byte is not enough");
+        assert!(looks_like_media(b"\0\0\0\x18styp....moof"));
+        assert!(looks_like_media(b"ID3\x04\0\0\0\0\0\0"));
+        // Two ADTS frames of 9 bytes each.
+        let frame = [0xFF, 0xF1, 0x50, 0x80, 0x01, 0x20, 0, 0, 0];
+        assert!(looks_like_media(&[frame, frame].concat()));
+        assert!(!looks_like_media(&frame[..6]), "no second frame to land on");
+        // What a wrong key makes of a piece.
+        let noise: Vec<u8> = (0..2048u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
+        assert!(!looks_like_media(&noise));
+        assert!(!looks_like_media(b""));
     }
 
     #[tokio::test]

@@ -81,7 +81,9 @@ fn serve(routes: HashMap<&'static str, Vec<u8>>) -> String {
             while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
                 line.clear();
             }
-            let path = first.split_whitespace().nth(1).unwrap_or("/");
+            // Signed links carry a query; the files are found by path.
+            let target = first.split_whitespace().nth(1).unwrap_or("/");
+            let path = target.split('?').next().unwrap_or(target);
             let mut stream = stream;
             let body = routes.get(path);
             let head = match body {
@@ -433,6 +435,104 @@ fn a_series_opens_the_episode_picker_and_a_range_picks_episodes() {
     assert!(
         h.query_by_label("Episode 1").is_none(),
         "unchecked episodes stay out"
+    );
+}
+
+/// Decrypted pieces of a video: MPEG-TS packets, a sync byte every 188.
+fn ts_piece(seed: u8) -> Vec<u8> {
+    (0..188 * 3)
+        .map(|i| if i % 188 == 0 { 0x47 } else { seed })
+        .collect()
+}
+
+/// A playlist as a browser's developer tools show it, every link absolute
+/// and signed, its two pieces served beside it.
+fn pasted_playlist() -> String {
+    let base = serve(HashMap::from([
+        ("/v/abc/abc0.ts", ts_piece(1)),
+        ("/v/abc/abc1.ts", ts_piece(2)),
+    ]));
+    format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n\
+         #EXTINF:5.000,\n{base}/v/abc/abc0.ts?auth_key=1-r-0-aa\n\
+         #EXTINF:5.000,\n{base}/v/abc/abc1.ts?auth_key=1-r-0-bb\n#EXT-X-ENDLIST\n"
+    )
+}
+
+#[test]
+fn a_playlist_pasted_into_the_link_field_is_checked_and_downloaded() {
+    let env = env("pasted");
+    let mut h = window(&env, english());
+    let input = h.get_by_role(egui::accesskit::Role::TextInput);
+    input.focus();
+    settle(&mut h);
+    h.event(egui::Event::Paste(pasted_playlist()));
+    settle(&mut h);
+    let _ = h.get_by_label(EN.paste_title);
+    let _ = h.get_by_label_contains("2 pieces · 0:10");
+    assert!(
+        h.state_mut().gui().input.is_empty(),
+        "not flattened into the link field"
+    );
+    assert_eq!(field_value(&h, EN.paste_name), "abc");
+
+    h.get_by_label(EN.paste_check).click();
+    until(&mut h, "the check to pass", |h| {
+        h.query_by_label_contains((EN.paste_passed)(false))
+            .is_some()
+    });
+    h.get_by_label(EN.paste_add).click();
+    settle(&mut h);
+    assert!(
+        h.query_by_label(EN.paste_title).is_none(),
+        "the window closed"
+    );
+    h.get_by_label(EN.start).click();
+    until(&mut h, "the download to finish", |h| {
+        h.query_by_label_contains(EN.done).is_some()
+    });
+    let file = env.dir.join("downloads").join("abc.ts");
+    assert_eq!(
+        std::fs::read(file).unwrap(),
+        [ts_piece(1), ts_piece(2)].concat()
+    );
+}
+
+#[test]
+fn a_copied_playlist_is_one_row_that_opens_its_window() {
+    let env = env("pasted-copied");
+    let mut h = window(&env, english());
+    h.state_mut().gui().read_clipboard = test_clipboard;
+    copy(&pasted_playlist());
+    // What the clipboard watcher sends for a playlist's text.
+    let _ = h.state_mut().desktop.tx.send(Msg::PlaylistCopied);
+    h.state_mut().desktop.wake();
+    settle(&mut h);
+    let _ = h.get_by_label("Detected links (1)");
+    let _ = h.get_by_label(EN.playlist_copied);
+    h.get_by_label(EN.playlist_open).click();
+    settle(&mut h);
+    let _ = h.get_by_label_contains("2 pieces");
+    assert!(h.query_by_label(EN.playlist_copied).is_none());
+
+    // Relative links cannot be followed from a pasted copy: said, not added.
+    copy("#EXTM3U\n#EXTINF:5,\nabc0.ts\n#EXT-X-ENDLIST\n");
+    h.get_by_label(EN.paste_from_clipboard).click();
+    settle(&mut h);
+    let _ = h.get_by_label_contains("browser extension");
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.paste_add)).is_disabled(),
+        "nothing to add"
+    );
+
+    // A web page typed for its Referer must be one.
+    copy(&pasted_playlist());
+    h.get_by_label(EN.paste_from_clipboard).click();
+    settle(&mut h);
+    retype(&mut h, EN.paste_referer_help, "not a page");
+    let _ = h.get_by_label(EN.paste_referer_bad);
+    assert!(
+        egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.paste_add)).is_disabled()
     );
 }
 
@@ -1462,6 +1562,31 @@ mod screens {
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
         });
         shoot_sized("narrow", [560.0, 460.0], Dark, "zh-TW", demo);
+        for (name, theme, language) in [("paste", Dark, "zh-TW"), ("paste-light", Light, "en")] {
+            shoot_sized(name, [900.0, 640.0], theme, language, |g| {
+                let mut text = String::from(
+                    "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,\
+                     URI=\"https://cdn.example.com/v/e8c81aa2/crypt.key?auth_key=1-r-0-aa\",\
+                     IV=0x914cf888a31648d622b38cc70c188e06\n",
+                );
+                for i in 0..288 {
+                    text.push_str(&format!(
+                        "#EXTINF:5.000,\nhttps://cdn.example.com/v/e8c81aa2/e8c81aa2{i}.ts?auth_key=1-r-0-{i}\n"
+                    ));
+                }
+                text.push_str("#EXT-X-ENDLIST\n");
+                let mut form = super::super::paste::PasteForm::new(g.t, Some(text));
+                form.check =
+                    super::super::paste::Check::Passed(reelgene_core::resolver::pasted::Checked {
+                        pieces: 288,
+                        secs: 1440.0,
+                        encrypted: true,
+                        height: None,
+                        ends: true,
+                    });
+                g.dialog = Some(super::super::Dialog::Paste(Box::new(form)));
+            });
+        }
         shoot_sized("pick", [900.0, 700.0], Dark, "zh-TW", |g| {
             use reelgene_core::resolver::{Discovered, EpisodeRef};
             let found = Discovered {

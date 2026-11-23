@@ -254,6 +254,29 @@ page (`<video>`, `<source>`, or the `og:video` tag for link previews). The
 page is read again before every attempt, so signed links stay fresh. Only
 links you add are read this way, never what the clipboard picks up.
 
+## A playlist's text
+
+Sometimes all there is to copy is the playlist itself: the text a browser's
+developer tools show for it, starting with `#EXTM3U`. Paste it into the link
+field (or use **Paste playlist text…** in its right-click menu, or open a
+saved `.m3u8` file) and it opens in a window of its own; copied while
+reelgene watches the clipboard, it shows up among the detected links as one
+row, not as every piece in it. The window tells how many pieces and how long
+it is, and whether it is encrypted. **Check** does what the download would
+start with: it fetches the key and the first piece, decrypts the piece and
+looks at what came out, and says where it stopped if it did (the key refused,
+the piece refused, or a key or IV that does not fit). **Add to the queue**
+then downloads it as one video. A web page can be given for servers that
+check the Referer.
+
+Its links must be absolute: a relative one meant "beside wherever the
+playlist came from", which a pasted copy no longer knows; for those, add the
+playlist's own link or send it from the browser extension. The links are
+signed and expire, and nothing can renew them from the text, so paste and
+add while the video is playing; if they lapse mid-download, copy the
+playlist again and add it again. DRM-protected playlists are refused, as
+everywhere.
+
 ## yt-dlp (optional)
 
 A page that names no video in its HTML (the player loads it by script) can

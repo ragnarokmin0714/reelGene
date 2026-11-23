@@ -32,6 +32,8 @@ pub(crate) enum Field {
     FfmpegFile,
     /// A downloaded yt-dlp to check and import at once.
     YtDlpFile,
+    /// A saved playlist, read into the playlist window at once.
+    Playlist,
 }
 
 /// Choosing episodes from a series: the multiselect from the design.
@@ -340,7 +342,11 @@ impl SettingsForm {
             Field::Tools => self.tools = text,
             Field::YtDlp => self.yt_dlp = text,
             Field::YtDlpKey => self.yt_dlp_key = text,
-            Field::PickFolder | Field::Cookies | Field::FfmpegFile | Field::YtDlpFile => {}
+            Field::PickFolder
+            | Field::Cookies
+            | Field::FfmpegFile
+            | Field::YtDlpFile
+            | Field::Playlist => {}
         }
     }
 
@@ -423,12 +429,14 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
         cookies: g.desktop.cookie_state(),
         browser: g.desktop.browser_state(),
     };
+    let (settings, places) = (g.settings.clone(), g.desktop.places.clone());
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
     let modal = egui::Modal::new(egui::Id::unique("dialog")).frame(frame);
     let response = modal.show(ctx, |ui| match dialog {
         Dialog::Pick(pick) => pick_ui(t, pick, ui, actions),
         Dialog::Settings(form) => settings_ui(t, form, &tools, ui, actions),
+        Dialog::Paste(form) => super::paste::ui(t, form, &settings, &places, ui, actions),
         Dialog::Remove {
             target,
             label,

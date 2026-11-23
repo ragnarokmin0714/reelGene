@@ -2,10 +2,12 @@
 //!
 //! A background thread looks once a second. What it copied stays in the
 //! thread: only well-formed http(s) links come out (see `detect::find_links`),
+//! or the bare news that a playlist's text was copied, never the text itself;
 //! nothing is logged, and text that was already there when reelgene started
 //! is ignored, so old links do not pop up at launch.
 
 use reelgene_core::detect::{self, Link};
+use reelgene_core::resolver::pasted;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,14 +15,23 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_secs(1);
 
+/// What a copy turned up.
+#[derive(Debug, PartialEq)]
+pub enum Copied {
+    Links(Vec<Link>),
+    /// A playlist's text (from a browser's developer tools): one thing to
+    /// open, not each of its pieces as a link.
+    Playlist,
+}
+
 pub struct Watcher {
     enabled: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 }
 
 impl Watcher {
-    /// `found` gets each batch of new links.
-    pub fn start(enabled: bool, found: impl Fn(Vec<Link>) + Send + 'static) -> Self {
+    /// `found` gets each new copy worth telling about.
+    pub fn start(enabled: bool, found: impl Fn(Copied) + Send + 'static) -> Self {
         let watcher = Self {
             enabled: Arc::new(AtomicBool::new(enabled)),
             stop: Arc::new(AtomicBool::new(false)),
@@ -43,7 +54,7 @@ impl Drop for Watcher {
     }
 }
 
-fn run(enabled: &AtomicBool, stop: &AtomicBool, found: impl Fn(Vec<Link>)) {
+fn run(enabled: &AtomicBool, stop: &AtomicBool, found: impl Fn(Copied)) {
     let mut clipboard = None;
     let mut seen = Seen::default();
     while !stop.load(Ordering::Relaxed) {
@@ -68,8 +79,8 @@ fn run(enabled: &AtomicBool, stop: &AtomicBool, found: impl Fn(Vec<Link>)) {
                 continue;
             }
         };
-        if let Some(links) = seen.next(&text) {
-            found(links);
+        if let Some(copied) = seen.next(&text) {
+            found(copied);
         }
     }
 }
@@ -93,7 +104,7 @@ struct Seen {
 }
 
 impl Seen {
-    fn next(&mut self, text: &str) -> Option<Vec<Link>> {
+    fn next(&mut self, text: &str) -> Option<Copied> {
         let mut h = DefaultHasher::new();
         text.hash(&mut h);
         let hash = h.finish();
@@ -102,8 +113,11 @@ impl Seen {
         if !std::mem::replace(&mut self.primed, true) || !changed {
             return None;
         }
+        if pasted::looks_like_playlist(text) {
+            return Some(Copied::Playlist);
+        }
         let links = detect::find_links(text);
-        (!links.is_empty()).then_some(links)
+        (!links.is_empty()).then_some(Copied::Links(links))
     }
 }
 
@@ -123,12 +137,23 @@ mod tests {
             "unchanged"
         );
         assert!(seen.next("no links here").is_none());
-        let links = seen.next("look https://cdn.example/new.m3u8").unwrap();
+        let Some(Copied::Links(links)) = seen.next("look https://cdn.example/new.m3u8") else {
+            panic!("links")
+        };
         assert_eq!(links[0].url.as_str(), "https://cdn.example/new.m3u8");
         assert!(
             seen.next("look https://cdn.example/new.m3u8").is_none(),
             "reported once"
         );
+    }
+
+    #[test]
+    fn a_copied_playlist_is_one_thing_not_each_of_its_pieces() {
+        let mut seen = Seen::default();
+        seen.next("");
+        let playlist = "#EXTM3U\n#EXTINF:5,\nhttps://cdn.example/v/a0.ts?k=1\n\
+                        #EXTINF:5,\nhttps://cdn.example/v/a1.ts?k=2\n#EXT-X-ENDLIST\n";
+        assert_eq!(seen.next(playlist), Some(Copied::Playlist));
     }
 
     #[test]

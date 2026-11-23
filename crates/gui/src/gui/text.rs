@@ -5,6 +5,7 @@
 
 use reelgene_core::cookies::Summary;
 use reelgene_core::engine::{Notice, Status};
+use reelgene_core::resolver::pasted::Stage;
 
 pub struct Text {
     pub code: &'static str,
@@ -26,6 +27,33 @@ pub struct Text {
     /// A `.ts` link: one piece of a video, a few seconds long.
     pub piece: &'static str,
     pub piece_help: &'static str,
+    /// The clipboard holds a playlist's text, not links.
+    pub playlist_copied: &'static str,
+    pub playlist_open: &'static str,
+    pub playlist_gone: &'static str,
+    /// The link field's menu item, and the window it opens.
+    pub paste_playlist: &'static str,
+    pub paste_title: &'static str,
+    pub paste_about: &'static str,
+    pub paste_from_clipboard: &'static str,
+    pub paste_open_file: &'static str,
+    pub paste_none: &'static str,
+    pub paste_not_playlist: &'static str,
+    /// Pieces, length, encrypted.
+    pub paste_read: fn(usize, &str, bool) -> String,
+    /// Qualities in a master playlist.
+    pub paste_read_master: fn(usize) -> String,
+    pub paste_name: &'static str,
+    pub paste_referer: &'static str,
+    pub paste_referer_help: &'static str,
+    pub paste_referer_bad: &'static str,
+    pub paste_check: &'static str,
+    pub paste_checking: &'static str,
+    /// Encrypted or not.
+    pub paste_passed: fn(bool) -> &'static str,
+    pub paste_stage: fn(Stage) -> &'static str,
+    pub paste_expired: &'static str,
+    pub paste_add: &'static str,
     pub reading: &'static str,
 
     pub empty_title: &'static str,
@@ -253,6 +281,47 @@ pub static EN: Text = Text {
     private_link: "local network: not opened by itself",
     piece: "a few seconds",
     piece_help: "A .ts link is usually one piece of a video, a few seconds long. For the whole video, use the browser extension or the video's .m3u8 link.",
+    playlist_copied: "Playlist text in the clipboard",
+    playlist_open: "Open",
+    playlist_gone: "The clipboard no longer holds a playlist.",
+    paste_playlist: "Paste playlist text…",
+    paste_title: "Playlist text",
+    paste_about: "A playlist copied from the browser's developer tools; it starts with #EXTM3U. Its links are signed and expire: paste and add it while the video is playing.",
+    paste_from_clipboard: "Paste from clipboard",
+    paste_open_file: "Open file…",
+    paste_none: "Nothing pasted yet.",
+    paste_not_playlist: "That is not a playlist: it starts with #EXTM3U.",
+    paste_read: |pieces, length, encrypted| {
+        let lock = if encrypted {
+            " · AES-128 encrypted"
+        } else {
+            ""
+        };
+        format!("{pieces} pieces · {length}{lock}")
+    },
+    paste_read_master: |n| format!("A master playlist with {n} qualities"),
+    paste_name: "Name",
+    paste_referer: "Web page (optional)",
+    paste_referer_help: "The page the video plays on: some servers check it (Referer)",
+    paste_referer_bad: "Not a web address: it starts with http:// or https://.",
+    paste_check: "Check",
+    paste_checking: "Checking the key, the first piece and its decryption…",
+    paste_passed: |encrypted| {
+        if encrypted {
+            "It can be put back together: the key works and the first piece decrypts to video."
+        } else {
+            "It can be downloaded: the first piece is video."
+        }
+    },
+    paste_stage: |stage| match stage {
+        Stage::Read => "Playlist",
+        Stage::Quality => "The quality's playlist",
+        Stage::Key => "Key",
+        Stage::Piece => "First piece",
+        Stage::Decrypt => "Decryption",
+    },
+    paste_expired: "The signatures have most likely expired: play the video again and copy the playlist again.",
+    paste_add: "Add to the queue",
     reading: "Reading link…",
     empty_title: "Nothing to download yet",
     empty: "Paste a link above, or copy one anywhere: it shows up here.",
@@ -540,6 +609,43 @@ pub static ZH_TW: Text = Text {
     private_link: "區域網路位址，不會自動連線",
     piece: "幾秒片段",
     piece_help: ".ts 網址通常只是影片的一小段，只有幾秒。要整部影片，請用瀏覽器擴充功能或影片的 .m3u8 網址。",
+    playlist_copied: "剪貼簿裡有播放清單內容",
+    playlist_open: "開啟",
+    playlist_gone: "剪貼簿裡已經不是播放清單了。",
+    paste_playlist: "貼上播放清單內容…",
+    paste_title: "播放清單內容",
+    paste_about: "從瀏覽器開發人員工具複製的播放清單，開頭是 #EXTM3U。裡面的網址有簽章、會過期：請在影片播放中貼上並加入。",
+    paste_from_clipboard: "從剪貼簿貼上",
+    paste_open_file: "開啟檔案…",
+    paste_none: "還沒有內容。",
+    paste_not_playlist: "這不是播放清單：開頭應該是 #EXTM3U。",
+    paste_read: |pieces, length, encrypted| {
+        let lock = if encrypted { " · AES-128 加密" } else { "" };
+        format!("{pieces} 段 · {length}{lock}")
+    },
+    paste_read_master: |n| format!("主播放清單，有 {n} 種畫質"),
+    paste_name: "名稱",
+    paste_referer: "網頁網址（選填）",
+    paste_referer_help: "影片所在的網頁：有些伺服器會檢查（Referer）",
+    paste_referer_bad: "不是網址：要以 http:// 或 https:// 開頭。",
+    paste_check: "檢查",
+    paste_checking: "檢查中：金鑰、第一段、解密…",
+    paste_passed: |encrypted| {
+        if encrypted {
+            "可以還原：金鑰可用，第一段解密後是影片。"
+        } else {
+            "可以下載：第一段是影片。"
+        }
+    },
+    paste_stage: |stage| match stage {
+        Stage::Read => "清單",
+        Stage::Quality => "畫質清單",
+        Stage::Key => "金鑰",
+        Stage::Piece => "第一段",
+        Stage::Decrypt => "解密",
+    },
+    paste_expired: "簽章多半過期了：重新播放影片，再複製一次清單。",
+    paste_add: "加入佇列",
     reading: "讀取網址中…",
     empty_title: "還沒有任何下載",
     empty: "在上方貼上網址，或在任何地方複製網址，就會出現在這裡。",

@@ -13,7 +13,7 @@ use crate::http::{FileDownload, Transfer};
 use crate::mux;
 use crate::net;
 use crate::paths::{self, NameVars};
-use crate::resolver::{Ctx, MediaKind, Resolved};
+use crate::resolver::{Ctx, MediaKind, Resolved, Resolver};
 use crate::store::{EpisodeId, EpisodeRecord, JobRecord, Track};
 use futures::StreamExt;
 use serde::Serialize;
@@ -93,7 +93,7 @@ pub(super) async fn run(
             .await?;
         w.follow(&job.source, &resolved.url)?;
         let result = match resolved.kind {
-            MediaKind::Hls => w.playlist(&resolved).await,
+            MediaKind::Hls => w.playlist(&resolved, resolver).await,
             MediaKind::File => w.file(&resolved).await,
         };
         match result {
@@ -153,10 +153,10 @@ impl TrackPlan {
 type KeyCache = Mutex<HashMap<Url, [u8; 16]>>;
 
 impl Worker<'_> {
-    async fn playlist(&mut self, r: &Resolved) -> Result<PathBuf> {
+    async fn playlist(&mut self, r: &Resolved, resolver: &dyn Resolver) -> Result<PathBuf> {
         let http = &self.sh.http;
         let headers = &r.headers;
-        let text = http.get_text(&r.url, headers, self.cancel).await?;
+        let text = super::playlist_text(resolver, &self.job.spec, r, http, self.cancel).await?;
         let (main, audio, variant) = match hls::parse(&text, &r.url)? {
             Playlist::Media(m) => (*m, None, None),
             Playlist::Master(master) => {

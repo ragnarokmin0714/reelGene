@@ -9,7 +9,7 @@
 //! for the next one.
 
 use super::{Grabbed, Msg};
-use crate::clipboard::Watcher;
+use crate::clipboard::{Copied, Watcher};
 use crate::notify::{self, Note};
 use crate::sound::{Cue, Player};
 use crate::tray::TrayCmd;
@@ -81,6 +81,8 @@ pub(crate) enum YtTask {
 #[derive(Default)]
 pub(crate) struct Stash {
     pub grabbed: Vec<Grabbed>,
+    /// The clipboard took a playlist's text.
+    pub playlist: bool,
     pub waiting: VecDeque<Waiting>,
     /// Shown once, by the first window.
     pub warnings: Vec<String>,
@@ -202,9 +204,15 @@ impl Desktop {
         *lock(&me.schedule) = Some(schedule);
         if desktop {
             let weak = Arc::downgrade(&me);
-            let watcher = Watcher::start(watch, move |links| {
+            let watcher = Watcher::start(watch, move |copied| {
                 if let Some(me) = weak.upgrade() {
-                    me.links(links);
+                    match copied {
+                        Copied::Links(links) => me.links(links),
+                        Copied::Playlist => {
+                            let _ = me.tx.send(Msg::PlaylistCopied);
+                            me.wake();
+                        }
+                    }
                 }
             });
             *lock(&me.clipboard) = Some(watcher);
@@ -490,6 +498,7 @@ impl Desktop {
         *lock(&self.window) = None;
         let mut kept = lock(&self.stash);
         kept.grabbed.extend(stash.grabbed);
+        kept.playlist |= stash.playlist;
         kept.waiting.extend(stash.waiting);
         kept.warnings.extend(stash.warnings);
     }
@@ -566,6 +575,26 @@ impl Desktop {
             let _ = self.tx.send(Msg::Links(listed));
         }
         self.wake();
+    }
+
+    /// Try a pasted playlist off the window's thread, the way its download
+    /// would start (`pasted::check`); the window hears how it went.
+    pub fn check_pasted(self: &Arc<Self>, run: u64, text: String, headers: Vec<(String, String)>) {
+        let me = Arc::clone(self);
+        let quality = self.settings().quality();
+        self.rt.spawn(async move {
+            let cancel = CancellationToken::new();
+            let result = reelgene_core::resolver::pasted::check(
+                &text,
+                quality,
+                &headers,
+                me.engine.http(),
+                &cancel,
+            )
+            .await;
+            let _ = me.tx.send(Msg::Checked(run, result));
+            me.wake();
+        });
     }
 
     /// Read what is behind a link, in the background. A single video is

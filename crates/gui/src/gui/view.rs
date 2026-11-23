@@ -15,6 +15,7 @@ use reelgene_app::format;
 use reelgene_core::detect::{self, LinkKind};
 use reelgene_core::engine::{Command, Status, Target};
 use reelgene_core::net;
+use reelgene_core::resolver::pasted;
 
 /// How long the fade-in of a new job and the pop of a finished episode take.
 const ENTER: f64 = 0.35;
@@ -54,6 +55,10 @@ fn input_menu(t: &Text, field: &egui::Response, text: &str, actions: &mut Vec<Ac
             actions.push(Action::Paste { read: false });
             ui.close();
         }
+        if ui.button(t.paste_playlist).clicked() {
+            actions.push(Action::OpenPasted(None));
+            ui.close();
+        }
         ui.add_enabled_ui(!text.is_empty(), |ui| {
             if ui.button(t.select_all).clicked() {
                 let ctx = ui.ctx().clone();
@@ -87,7 +92,25 @@ fn header(g: &mut Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 214.0).max(160.0);
+                // Ctrl+V of a playlist's text: its own window, before the
+                // one-line field flattens it into a row of piece links.
+                let field = egui::Id::unique("link-field");
+                if ui.memory(|m| m.has_focus(field)) {
+                    let pasted = ui.input_mut(|i| {
+                        let at = i.events.iter().position(|e| {
+                            matches!(e, egui::Event::Paste(s) if pasted::looks_like_playlist(s))
+                        })?;
+                        match i.events.remove(at) {
+                            egui::Event::Paste(text) => Some(text),
+                            _ => None,
+                        }
+                    });
+                    if let Some(text) = pasted {
+                        actions.push(Action::OpenPasted(Some(text)));
+                    }
+                }
                 let edit = TextEdit::singleline(&mut g.input)
+                    .id(field)
                     .hint_text(t.input_hint)
                     .desired_width(width)
                     .margin(Margin::symmetric(12, 7));
@@ -174,7 +197,7 @@ fn body(g: &Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
         .auto_shrink(false)
         .show(ui, |ui| {
             ui.add_space(4.0);
-            if !g.grabbed.is_empty() {
+            if !g.grabbed.is_empty() || g.copied_playlist {
                 grabbed(g, ui, p, actions);
                 ui.add_space(12.0);
             }
@@ -220,7 +243,8 @@ fn grabbed(g: &Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             widgets::icon(ui, Icon::Link, 16.0, p.accent);
-            ui.label(RichText::new((t.grabbed)(g.grabbed.len())).font(theme::strong(14.0)));
+            let count = g.grabbed.len() + usize::from(g.copied_playlist);
+            ui.label(RichText::new((t.grabbed)(count)).font(theme::strong(14.0)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::button(ui, Kind::Primary, Some(Icon::Plus), t.add_all).clicked() {
                     actions.push(Action::GrabAll);
@@ -231,6 +255,21 @@ fn grabbed(g: &Gui, ui: &mut egui::Ui, p: &Palette, actions: &mut Vec<Action>) {
             });
         });
         ui.add_space(4.0);
+        if g.copied_playlist {
+            ui.horizontal(|ui| {
+                ui.set_min_height(ROW_H);
+                widgets::badge(ui, "m3u8", p.weak);
+                ui.label(RichText::new(t.playlist_copied).color(p.text));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if widgets::icon_button(ui, Icon::Close, t.dismiss, None).clicked() {
+                        actions.push(Action::DismissCopied);
+                    }
+                    if widgets::button(ui, Kind::Secondary, None, t.playlist_open).clicked() {
+                        actions.push(Action::OpenCopied);
+                    }
+                });
+            });
+        }
         for (i, item) in g.grabbed.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.set_min_height(ROW_H);

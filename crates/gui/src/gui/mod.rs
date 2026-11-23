@@ -8,6 +8,7 @@
 mod desktop;
 mod dialogs;
 pub mod model;
+mod paste;
 #[cfg(test)]
 mod tests;
 pub mod text;
@@ -54,6 +55,13 @@ pub(crate) enum Msg {
         result: Result<(String, reelgene_core::store::QualityNote), String>,
     },
     Links(Vec<Link>),
+    /// The clipboard took a playlist's text.
+    PlaylistCopied,
+    /// A pasted playlist checked: for the try numbered so.
+    Checked(
+        u64,
+        Result<reelgene_core::resolver::pasted::Checked, reelgene_core::resolver::pasted::Failed>,
+    ),
     /// A path chosen in the system's file dialog.
     Picked(dialogs::Field, PathBuf),
     /// ffmpeg looked for again: its version, or why none is used (empty:
@@ -80,6 +88,7 @@ pub(crate) struct Grabbed {
 pub(crate) enum Dialog {
     Pick(Box<dialogs::Pick>),
     Settings(Box<dialogs::SettingsForm>),
+    Paste(Box<paste::PasteForm>),
     Remove {
         target: Target,
         label: String,
@@ -142,6 +151,14 @@ pub(crate) enum Action {
         read: bool,
     },
     ClearInput,
+    /// The window for a playlist's text, with this text or the clipboard's.
+    OpenPasted(Option<String>),
+    /// The clipboard's playlist into that window.
+    PasteInto,
+    CheckPasted,
+    /// The copied playlist the detected links mention: open it, or forget it.
+    OpenCopied,
+    DismissCopied,
 }
 
 pub struct Gui {
@@ -154,6 +171,8 @@ pub struct Gui {
     settings_path: Option<PathBuf>,
     pub(crate) input: String,
     pub(crate) grabbed: Vec<Grabbed>,
+    /// The clipboard took a playlist's text, said among the detected links.
+    pub(crate) copied_playlist: bool,
     pub(crate) dialog: Option<Dialog>,
     /// Multi-episode discoveries waiting for the picker to be free.
     waiting: VecDeque<desktop::Waiting>,
@@ -195,6 +214,7 @@ impl Gui {
             settings,
             input: String::new(),
             grabbed: stash.grabbed,
+            copied_playlist: stash.playlist,
             dialog: None,
             waiting: stash.waiting,
             toasts: Vec::new(),
@@ -385,6 +405,25 @@ impl Gui {
                 self.desktop.fetch_ffmpeg(Some(path));
             }
             Msg::Picked(dialogs::Field::YtDlpFile, path) => self.desktop.yt_dlp_import(path),
+            Msg::Picked(dialogs::Field::Playlist, path) => {
+                if let Some(Dialog::Paste(form)) = &mut self.dialog {
+                    match read_playlist_file(&path) {
+                        Ok(text) => form.set_text(self.t, text),
+                        Err(e) => self.toast(format!("{}: {e}", path.display()), true),
+                    }
+                }
+            }
+            Msg::PlaylistCopied => self.copied_playlist = true,
+            Msg::Checked(run, result) => {
+                if let Some(Dialog::Paste(form)) = &mut self.dialog
+                    && form.run == run
+                {
+                    form.check = match result {
+                        Ok(c) => paste::Check::Passed(c),
+                        Err(f) => paste::Check::Failed(f),
+                    };
+                }
+            }
             Msg::Picked(field, path) => match (&mut self.dialog, field) {
                 (Some(Dialog::Pick(pick)), dialogs::Field::PickFolder) => pick.set_folder(&path),
                 (Some(Dialog::Settings(form)), field) => form.set(field, &path),
@@ -437,7 +476,10 @@ impl Gui {
                     self.grabbed.remove(i);
                 }
             }
-            Action::DismissAll => self.grabbed.retain(|g| g.busy),
+            Action::DismissAll => {
+                self.grabbed.retain(|g| g.busy);
+                self.copied_playlist = false;
+            }
             Action::Reveal(path) => reelgene_app::platform::reveal(&path),
             Action::Open(dialog) => {
                 if matches!(dialog, Dialog::Settings(_)) {
@@ -490,6 +532,34 @@ impl Gui {
             }
             Action::Paste { read } => self.paste(read),
             Action::ClearInput => self.input.clear(),
+            Action::OpenPasted(text) => {
+                let text = text.or_else(|| self.clipboard_playlist());
+                let form = paste::PasteForm::new(self.t, text);
+                self.act(Action::Open(Dialog::Paste(Box::new(form))));
+            }
+            Action::PasteInto => match (self.clipboard_playlist(), &mut self.dialog) {
+                (Some(text), Some(Dialog::Paste(form))) => form.set_text(self.t, text),
+                (None, _) => self.toast(self.t.paste_not_playlist.to_owned(), true),
+                _ => {}
+            },
+            Action::CheckPasted => {
+                if let Some(Dialog::Paste(form)) = &mut self.dialog
+                    && let Some(headers) = form.headers()
+                {
+                    form.run += 1;
+                    form.check = paste::Check::Running;
+                    let text = form.text().to_owned();
+                    self.desktop.check_pasted(form.run, text, headers);
+                }
+            }
+            Action::OpenCopied => {
+                self.copied_playlist = false;
+                match self.clipboard_playlist() {
+                    Some(text) => self.act(Action::OpenPasted(Some(text))),
+                    None => self.toast(self.t.playlist_gone.to_owned(), true),
+                }
+            }
+            Action::DismissCopied => self.copied_playlist = false,
         }
     }
 
@@ -507,6 +577,10 @@ impl Gui {
                 | dialogs::Field::Cookies
                 | dialogs::Field::FfmpegFile
                 | dialogs::Field::YtDlpFile => dialog.pick_file(),
+                dialogs::Field::Playlist => dialog
+                    .add_filter("M3U8", &["m3u8", "m3u", "txt"])
+                    .add_filter("*", &["*"])
+                    .pick_file(),
                 dialogs::Field::PickFolder | dialogs::Field::Folder | dialogs::Field::Tools => {
                     dialog.pick_folder()
                 }
@@ -547,6 +621,10 @@ impl Gui {
             Ok(_) => return self.toast(self.t.clipboard_empty.to_owned(), true),
             Err(e) => return self.toast(e, true),
         };
+        // A playlist's text, not links: its own window, not each piece.
+        if reelgene_core::resolver::pasted::looks_like_playlist(&text) {
+            return self.act(Action::OpenPasted(Some(text)));
+        }
         if !read {
             self.input.push_str(text.trim());
             return;
@@ -561,6 +639,13 @@ impl Gui {
         for link in links {
             self.act(Action::Read(link.url));
         }
+    }
+
+    /// The clipboard's text, if it is a playlist.
+    fn clipboard_playlist(&self) -> Option<String> {
+        (self.read_clipboard)()
+            .ok()
+            .filter(|text| reelgene_core::resolver::pasted::looks_like_playlist(text))
     }
 
     /// The settings window's form for the settings in use.
@@ -650,6 +735,19 @@ impl Gui {
     }
 }
 
+/// A saved playlist, no bigger than one can be.
+fn read_playlist_file(path: &Path) -> Result<String, String> {
+    use reelgene_core::resolver::pasted::MAX_BYTES;
+    let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if size > MAX_BYTES as u64 {
+        return Err(format!(
+            "over {} MB, more than any playlist",
+            MAX_BYTES >> 20
+        ));
+    }
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
 /// The next window carries on with whatever this one had not finished.
 impl Drop for Gui {
     fn drop(&mut self) {
@@ -659,6 +757,7 @@ impl Drop for Gui {
         }
         self.desktop.detach(Stash {
             grabbed: std::mem::take(&mut self.grabbed),
+            playlist: self.copied_playlist,
             waiting,
             warnings: Vec::new(),
         });

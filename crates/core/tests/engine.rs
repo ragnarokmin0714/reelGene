@@ -1553,3 +1553,87 @@ async fn the_qualities_on_offer_come_with_sizes_best_first() {
             .is_empty()
     );
 }
+
+/// What a video's piece looks like once decrypted: MPEG-TS packets, a sync
+/// byte every 188 bytes, the rest made from `seq`.
+fn ts_piece(seq: u64) -> Vec<u8> {
+    (0..188 * 4)
+        .map(|i| match i % 188 {
+            0 => 0x47,
+            _ => ((i as u64 * 5 + seq * 31) % 251) as u8,
+        })
+        .collect()
+}
+
+fn encrypt_with(iv: &[u8; 16], plain: &[u8]) -> Vec<u8> {
+    let mut buf = vec![0u8; plain.len() + 16];
+    let n = cbc::Encryptor::<aes::Aes128>::new(&KEY.into(), iv.into())
+        .encrypt_padded_b2b::<Pkcs7>(plain, &mut buf)
+        .unwrap()
+        .len();
+    buf.truncate(n);
+    buf
+}
+
+/// A playlist as a browser's developer tools show it: every link absolute
+/// and signed, the key with an IV of its own.
+fn put_pasted(cdn: &FakeCdn, iv: &[u8; 16]) -> String {
+    cdn.serve("/v/abc/crypt.key", KEY.to_vec());
+    let mut text = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,URI=\"{}\",IV=0x{}\n\
+         #EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:6\n",
+        cdn.url("/v/abc/crypt.key?auth_key=1-r-0-aa"),
+        hex::encode(iv)
+    );
+    for i in 0..3u64 {
+        cdn.serve(&format!("/v/abc/abc{i}.ts"), encrypt_with(iv, &ts_piece(i)));
+        let url = cdn.url(&format!("/v/abc/abc{i}.ts?auth_key=1-r-0-{i}"));
+        text.push_str(&format!("#EXTINF:5.000,\n{url}\n"));
+    }
+    text.push_str("#EXT-X-ENDLIST\n");
+    text
+}
+
+#[tokio::test]
+async fn a_pasted_playlist_is_checked_then_downloaded_and_decrypted() {
+    use reelgene_core::resolver::pasted::{self, Stage};
+    let cdn = FakeCdn::start().await;
+    let iv = [0x91; 16];
+    let text = put_pasted(&cdn, &iv);
+    let mut h = harness("pasted").await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let http = h.engine.http().clone();
+
+    let checked = pasted::check(&text, Quality::Best, &[], &http, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(checked.pieces, 3);
+    assert_eq!(checked.secs, 15.0);
+    assert!(checked.encrypted && checked.ends);
+
+    let wrong = text.replace(&hex::encode(iv), &hex::encode([0u8; 16]));
+    let failed = pasted::check(&wrong, Quality::Best, &[], &http, &cancel)
+        .await
+        .unwrap_err();
+    assert_eq!(failed.stage, Stage::Decrypt, "{failed:?}");
+
+    cdn.fail("/v/abc/crypt.key", [Fault::Status(403, None)]);
+    let failed = pasted::check(&text, Quality::Best, &[], &http, &cancel)
+        .await
+        .unwrap_err();
+    assert_eq!(failed.stage, Stage::Key);
+    assert!(failed.error.to_string().contains("403"), "{}", failed.error);
+
+    let (source, d) = pasted::discovery(&text).unwrap();
+    let id = h.engine.add(d.into_job(source, h.out())).await.unwrap();
+    let jobs = h.engine.snapshot().await.unwrap();
+    let ep = jobs.iter().find(|j| j.id == id).unwrap().episodes[0].id;
+    let output = h.done(ep).await;
+    assert_eq!(
+        output,
+        h.out().join("abc.ts"),
+        "one video, named after its folder"
+    );
+    let whole: Vec<u8> = (0..3).flat_map(ts_piece).collect();
+    assert_eq!(std::fs::read(&output).unwrap(), whole);
+}
