@@ -378,10 +378,13 @@ impl Worker<'_> {
             }
             None => None,
         };
-        if main_ext == "ts" && !main.segments.iter().any(|s| s.discontinuity) {
+        // Across a discontinuity the timestamps start over: no length to read.
+        let continuous = !main.segments.iter().any(|s| s.discontinuity);
+        if main_ext == "ts" && continuous {
             self.check_duration(&main_file, main.duration()).await;
         }
-        self.assemble(main_file, main_ext, audio_file).await
+        self.assemble(main_file, main_ext, audio_file, continuous)
+            .await
     }
 
     async fn media(&self, url: &Url, headers: &[(String, String)]) -> Result<MediaPlaylist> {
@@ -450,11 +453,13 @@ impl Worker<'_> {
 
     /// Turn the joined parts into the final file: through ffmpeg when it is
     /// there and helps, as they are otherwise.
+    /// `continuous`: no discontinuity, so the source's length can be read.
     async fn assemble(
         &self,
         main: PathBuf,
         main_ext: &str,
         audio: Option<PathBuf>,
+        continuous: bool,
     ) -> Result<PathBuf> {
         let mut problem = None;
         if main_ext == "ts" || audio.is_some() {
@@ -462,16 +467,21 @@ impl Worker<'_> {
                 Some(ff) => {
                     let out = self.dir.join("out.mp4");
                     match ff.remux(&main, audio.as_deref(), &out, self.cancel).await {
-                        Ok(()) if remux_plausible(&main, audio.as_deref(), &out).await => {
-                            let output = self.finish(&out, "mp4").await?;
-                            remove_parts(&self.job.out_dir, self.ep.id).await;
-                            return Ok(output);
-                        }
-                        // Stream copy changes the size a little, not by half:
-                        // a much smaller MP4 lost a stream, so keep the source.
                         Ok(()) => {
-                            problem =
-                                Some("ffmpeg's MP4 came out far smaller than its input".into())
+                            match remux_problem(&main, audio.as_deref(), &out, continuous).await {
+                                None => {
+                                    let output = self.finish(&out, "mp4").await?;
+                                    log::info!(
+                                        "episode {}: converted to MP4 with ffmpeg {}",
+                                        self.ep.id.0,
+                                        ff.version()
+                                    );
+                                    remove_parts(&self.job.out_dir, self.ep.id).await;
+                                    return Ok(output);
+                                }
+                                // Keep the source: it plays, the MP4 may not.
+                                Some(p) => problem = Some(p),
+                            }
                         }
                         Err(Error::Cancelled) => return Err(Error::Cancelled),
                         Err(e) => problem = Some(e.to_string()),
@@ -806,13 +816,44 @@ fn file_ext(url: &Url) -> String {
         .to_owned()
 }
 
-async fn remux_plausible(main: &Path, audio: Option<&Path>, out: &Path) -> bool {
+/// Why the MP4 ffmpeg wrote cannot stand in for what went in, if it cannot.
+/// Stream copy keeps every picture and sound as they were, so a much smaller
+/// file, a picture or sound gone missing, or a much shorter length is a
+/// conversion gone wrong, with an exit code that said nothing of it.
+async fn remux_problem(
+    main: &Path,
+    audio: Option<&Path>,
+    out: &Path,
+    continuous: bool,
+) -> Option<String> {
     let input = file_len(main).await.unwrap_or(0)
         + match audio {
             Some(a) => file_len(a).await.unwrap_or(0),
             None => 0,
         };
-    file_len(out).await.is_some_and(|n| n >= input / 2)
+    if file_len(out).await.is_none_or(|n| n < input / 2) {
+        return Some("ffmpeg's MP4 came out far smaller than its input".into());
+    }
+    let Some(made) = mux::mp4_streams(out).await else {
+        return Some("ffmpeg's file is not a readable MP4".into());
+    };
+    let source = if main.extension().is_some_and(|e| e == "ts") {
+        mux::ts_streams(main).await
+    } else {
+        mux::mp4_streams(main).await
+    };
+    if source.is_some_and(|s| s.video) && !made.video {
+        return Some("ffmpeg's MP4 has no picture".into());
+    }
+    if (audio.is_some() || source.is_some_and(|s| s.audio)) && !made.audio {
+        return Some("ffmpeg's MP4 has no sound".into());
+    }
+    if let (true, Some(want), Some(got)) = (continuous, source.and_then(|s| s.secs), made.secs)
+        && got < want * 0.9 - 2.0
+    {
+        return Some(format!("ffmpeg's MP4 plays {got:.0}s of {want:.0}s"));
+    }
+    None
 }
 
 async fn file_head_is_text(path: &Path) -> bool {

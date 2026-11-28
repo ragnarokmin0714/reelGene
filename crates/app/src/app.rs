@@ -77,8 +77,14 @@ impl App {
             places.data_dir.display()
         );
         let file = places.settings_file();
-        let (settings, warning) = Settings::load(&file);
+        let (mut settings, warning) = Settings::load(&file);
         let mut warnings: Vec<String> = warning.into_iter().collect();
+        if let Some(note) = drop_archived_ffmpeg(&mut settings) {
+            warnings.push(match settings.save(&file) {
+                Ok(()) => note,
+                Err(e) => format!("{note}, but cannot write {}: {e}", file.display()),
+            });
+        }
         if !file.exists() {
             // Gives people a file to edit, with every option spelled out.
             if let Err(e) = settings.save(&file) {
@@ -421,12 +427,38 @@ pub async fn find_ffmpeg(
         (note, w) => w.or_else(|| note.clone()),
     };
     let Some(path) = mux::locate(configured, &tools) else {
+        log::info!("no ffmpeg found: playlists are kept as .ts");
         let warning = configured
             .map(|p| format!("the ffmpeg set in settings ({}) was not found", p.display()));
         return (None, with_note(warning));
     };
+    // Said in the log, so that a problem report shows which one made the MP4s.
+    let from = if configured.is_some() {
+        "set in settings"
+    } else if tools.iter().any(|d| path.parent() == Some(d)) {
+        "in the tools folder"
+    } else {
+        "on PATH"
+    };
+    let shown = path.display().to_string();
     let (found, warning) = probe_found(path, configured.is_none(), &tools, places, accept).await;
+    match &found {
+        Some(ff) => log::info!("ffmpeg {} {from}: {shown}", ff.version()),
+        None => log::info!("ffmpeg {from} not used: {shown}"),
+    }
     (found, with_note(warning))
+}
+
+/// An archive saved as the ffmpeg program by a version that let one be
+/// saved. It can never run, and kept it would only repeat the same warning
+/// at every start: cleared, so the ffmpeg found by itself is used.
+fn drop_archived_ffmpeg(settings: &mut Settings) -> Option<String> {
+    let set = settings.ffmpeg.take_if(|p| tools::is_archive(p))?;
+    Some(format!(
+        "the ffmpeg set in settings ({}) was an archive, not a program, so it is \
+         cleared and ffmpeg is looked for by itself; Get ffmpeg in Settings fetches one",
+        set.display()
+    ))
 }
 
 /// Said of an archive set as the ffmpeg program in settings.
@@ -600,6 +632,23 @@ mod tests {
         assert!(warning.contains("source code"), "{warning}");
         assert!(!warning.contains("does not work as ffmpeg"), "{warning}");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_archive_saved_as_ffmpeg_is_cleared_and_said_once() {
+        let zip = PathBuf::from("/tools/FFmpeg-n8.1.3.zip");
+        let mut settings = Settings {
+            ffmpeg: Some(zip.clone()),
+            ..Settings::default()
+        };
+        let note = drop_archived_ffmpeg(&mut settings).unwrap();
+        assert!(note.contains(&zip.display().to_string()), "{note}");
+        assert_eq!(settings.ffmpeg, None);
+        assert_eq!(drop_archived_ffmpeg(&mut settings), None, "said once");
+        let program = PathBuf::from("/tools/ffmpeg");
+        settings.ffmpeg = Some(program.clone());
+        assert_eq!(drop_archived_ffmpeg(&mut settings), None);
+        assert_eq!(settings.ffmpeg, Some(program), "a program stays");
     }
 
     #[test]

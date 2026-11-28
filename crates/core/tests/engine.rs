@@ -332,23 +332,55 @@ async fn ts_is_kept_with_a_notice_when_there_is_no_ffmpeg() {
     );
 }
 
+/// The start of an MP4 whose media runs to the end of the file: a picture
+/// track, two seconds long.
+fn mp4_head() -> Vec<u8> {
+    let b = |kind: &[u8; 4], body: &[u8]| {
+        let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend(kind);
+        b.extend(body);
+        b
+    };
+    let mut mvhd = vec![0; 12];
+    mvhd.extend(1000u32.to_be_bytes());
+    mvhd.extend(2000u32.to_be_bytes());
+    mvhd.resize(100, 0);
+    let mut hdlr = vec![0; 8];
+    hdlr.extend(b"vide");
+    hdlr.resize(25, 0);
+    let trak = b(b"trak", &b(b"mdia", &b(b"hdlr", &hdlr)));
+    let moov = b(b"moov", &[b(b"mvhd", &mvhd), trak].concat());
+    [
+        b(b"ftyp", b"isom\0\0\x02\0isom"),
+        moov,
+        b"\0\0\0\0mdat".to_vec(),
+    ]
+    .concat()
+}
+
 /// A stand-in that answers `-version` and copies its first input to its
-/// output, as `-c copy` does in size.
+/// output, as `-c copy` does in size: behind an MP4's start with `mp4`, as
+/// it is without, as a broken ffmpeg that still says it succeeded.
 #[cfg(unix)]
-async fn fake_ffmpeg(dir: &Path) -> reelgene_core::mux::Ffmpeg {
+async fn fake_ffmpeg(dir: &Path, mp4: bool) -> reelgene_core::mux::Ffmpeg {
     use std::os::unix::fs::PermissionsExt;
+    let head = dir.join("head.mp4");
+    std::fs::write(&head, if mp4 { mp4_head() } else { Vec::new() }).unwrap();
     let path = dir.join("ffmpeg");
     std::fs::write(
         &path,
-        r#"#!/bin/sh
-[ "$1" = -version ] && { echo "ffmpeg version 9.0-test"; exit 0; }
+        format!(
+            r#"#!/bin/sh
+[ "$1" = -version ] && {{ echo "ffmpeg version 9.0-test"; exit 0; }}
 input=
 while [ $# -gt 1 ]; do
-  [ "$1" = -i ] && [ -z "$input" ] && input=${2#file:}
+  [ "$1" = -i ] && [ -z "$input" ] && input=${{2#file:}}
   shift
 done
-cp "$input" "${1#file:}"
+cat "{}" "$input" > "${{1#file:}}"
 "#,
+            head.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -361,18 +393,50 @@ async fn an_mp4_made_by_ffmpeg_leaves_no_partial_files_behind() {
     let cdn = FakeCdn::start().await;
     put_episode(&cdn, 2, 0);
     let tools = scratch("remux-tools");
-    let ffmpeg = fake_ffmpeg(&tools).await;
+    let ffmpeg = fake_ffmpeg(&tools, true).await;
     let mut h = harness_with("remux", |cfg| cfg.ffmpeg = Some(ffmpeg)).await;
     let url = cdn.url("/index.m3u8");
     let ep = h.add(&url, &url).await;
 
     let output = h.done(ep).await;
     assert_eq!(output, h.out().join("Test Drama").join("01 ep01.mp4"));
-    assert_eq!(std::fs::read(&output).unwrap(), expected(2, 0));
+    let saved = std::fs::read(&output).unwrap();
+    assert!(saved.starts_with(&mp4_head()) && saved.ends_with(&expected(2, 0)));
     assert!(
         !h.out().join(".reelgene").exists(),
         "the parts and the joined TS go once the MP4 is saved"
     );
+    std::fs::remove_dir_all(&tools).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_mp4_that_cannot_be_read_is_not_kept_in_place_of_the_ts() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, 2, 0);
+    let tools = scratch("remux-broken-tools");
+    let ffmpeg = fake_ffmpeg(&tools, false).await;
+    let mut h = harness_with("remux-broken", |cfg| cfg.ffmpeg = Some(ffmpeg)).await;
+    let url = cdn.url("/index.m3u8");
+    let ep = h.add(&url, &url).await;
+
+    let notice = h
+        .until(
+            "a notice",
+            |e| matches!(e, Event::Notice { episode, .. } if *episode == ep),
+        )
+        .await;
+    let Event::Notice {
+        notice: Notice::KeptTs { reason },
+        ..
+    } = notice
+    else {
+        panic!("expected the TS kept, got {notice:?}");
+    };
+    assert!(reason.contains("not a readable MP4"), "{reason}");
+    let output = h.done(ep).await;
+    assert_eq!(output, h.out().join("Test Drama").join("01 ep01.ts"));
+    assert_eq!(std::fs::read(&output).unwrap(), expected(2, 0));
     std::fs::remove_dir_all(&tools).ok();
 }
 

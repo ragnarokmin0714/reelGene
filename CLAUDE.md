@@ -299,9 +299,17 @@ status 200: re-resolve, at most three times, then fail with that message. The
 check runs before decryption, or an encrypted segment's error page would show
 up as a decryption failure. The joined file must be exactly the recorded
 parts (else the episode is downloaded again: something changed them on disk),
-an ffmpeg MP4 under half its input means a lost stream (keep the source), and
-a TS file playing far shorter than its playlist (`mux::ts_duration`, first
-and last video PTS) gets `Notice::ShortDuration` but is kept.
+an ffmpeg MP4 replaces its source only when it passes `remux_problem`
+(else the source is kept, `Notice::KeptTs` saying why): at least half the
+input's size, a readable `moov` (`mux::mp4_streams`: `mvhd` length, `hdlr`
+track kinds, found by walking top-level boxes, so before or after the media),
+a picture and sound wherever the source had them (`mux::ts_streams`, PES
+stream ids in the head and tail), and, without a discontinuity, at least
+90% of the source's length. ffmpeg exiting 0 says nothing of these. A TS
+file playing far shorter than its playlist (`mux::ts_duration`, first and
+last video PTS) gets `Notice::ShortDuration` but is kept. The log says which
+ffmpeg is used and where it was found (settings, tools folder, PATH), and
+each MP4 it made.
 
 **Disk space** is checked before the disk is full, not when it is
 (`Worker::check_space`, `Error::DiskFull`, not transient). A file is checked
@@ -367,9 +375,9 @@ ffmpeg. ffmpeg's source code (GitHub's "Source code" zip, the site's
 tarballs: `configure` and `libavcodec/` at the top) is refused by that
 name, not as "no bin/ffmpeg". An archive is never the ffmpeg program
 (`tools::is_archive`): picked with the program's Browse… it is imported,
-typed it cannot be saved, and one already in settings is skipped with a
-warning rather than run (Windows answered "not a valid Win32
-application"). A dated snapshot build (`Ffmpeg::built`, BtbN's `-20261023`
+typed it cannot be saved, and one already in settings (saved by an older
+version) is cleared at start with a warning, once (`drop_archived_ffmpeg`),
+rather than run (Windows answered "not a valid Win32 application"). A dated snapshot build (`Ffmpeg::built`, BtbN's `-20261023`
 suffix) over 183 days old gets a warning (`app::ffmpeg_age_warning`);
 undated release and distribution builds are not judged, as distributions
 patch their own.

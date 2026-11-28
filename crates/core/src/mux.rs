@@ -22,10 +22,11 @@
 
 use crate::error::{Error, Result};
 use std::ffi::OsString;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -96,41 +97,75 @@ fn adts(head: &[u8]) -> bool {
     len >= 7 && head.get(len..).is_some_and(sync)
 }
 
+/// What a media file holds, as far as checking a conversion goes: its length
+/// and whether it has picture and sound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Streams {
+    /// `None` when the file does not say.
+    pub secs: Option<f64>,
+    pub video: bool,
+    pub audio: bool,
+}
+
 /// Rough length of an MPEG-TS file in seconds: the last video timestamp minus
 /// the first (PTS, 90 kHz), read from the head and tail only. `None` when no
 /// timestamps are found — not TS, or an unusual layout.
 pub async fn ts_duration(path: &Path) -> Option<f64> {
+    ts_streams(path).await?.secs
+}
+
+/// An MPEG-TS file's picture and sound and its rough length, read from the
+/// head and tail only. `None` when no timestamps are found at all.
+pub async fn ts_streams(path: &Path) -> Option<Streams> {
     const WINDOW: u64 = 2 << 20;
     let mut f = tokio::fs::File::open(path).await.ok()?;
     let len = f.metadata().await.ok()?.len();
     let mut head = vec![0; WINDOW.min(len) as usize];
     f.read_exact(&mut head).await.ok()?;
     let mut tail = vec![0; WINDOW.min(len) as usize];
-    tokio::io::AsyncSeekExt::seek(&mut f, std::io::SeekFrom::Start(len - tail.len() as u64))
+    f.seek(SeekFrom::Start(len - tail.len() as u64))
         .await
         .ok()?;
     f.read_exact(&mut tail).await.ok()?;
-    let first = timestamps(&head).into_iter().min()?;
-    let last = timestamps(&tail).into_iter().max()?;
-    // PTS is 33 bits and wraps after about 26.5 hours.
-    let span = if last >= first {
-        last - first
-    } else {
-        last + (1 << 33) - first
-    };
-    Some(span as f64 / 90_000.0)
+    let (head, tail) = (timestamps(&head), timestamps(&tail));
+    let video = !head.video.is_empty() || !tail.video.is_empty();
+    let audio = !head.audio.is_empty() || !tail.audio.is_empty();
+    if !video && !audio {
+        return None;
+    }
+    // The length is the picture's while there is one.
+    let of = |p: Pes| if video { p.video } else { p.audio };
+    let first = of(head).into_iter().min();
+    let last = of(tail).into_iter().max();
+    let secs = first.zip(last).map(|(first, last)| {
+        // PTS is 33 bits and wraps after about 26.5 hours.
+        let span = if last >= first {
+            last - first
+        } else {
+            last + (1 << 33) - first
+        };
+        span as f64 / 90_000.0
+    });
+    Some(Streams { secs, video, audio })
 }
 
-/// PTS of the video PES headers in a run of TS packets, or of the audio ones
-/// when there is no video.
-fn timestamps(buf: &[u8]) -> Vec<u64> {
+/// PTS of the PES headers in a run of TS packets, by kind.
+struct Pes {
+    video: Vec<u64>,
+    audio: Vec<u64>,
+}
+
+fn timestamps(buf: &[u8]) -> Pes {
     const PACKET: usize = 188;
+    let mut found = Pes {
+        video: Vec::new(),
+        audio: Vec::new(),
+    };
     let Some(sync) = (0..PACKET.min(buf.len()))
         .find(|&k| buf.get(k) == Some(&0x47) && buf.get(k + PACKET).is_none_or(|b| *b == 0x47))
     else {
-        return Vec::new();
+        return found;
     };
-    let (mut video, mut audio) = (Vec::new(), Vec::new());
     let (packets, _) = buf[sync..].as_chunks::<PACKET>();
     for p in packets {
         if p[0] != 0x47 || p[1] & 0x40 == 0 {
@@ -156,12 +191,110 @@ fn timestamps(buf: &[u8]) -> Vec<u64> {
             | u64::from(b[3]) << 7
             | u64::from(b[4] >> 1);
         match pes[3] {
-            0xE0..=0xEF => video.push(pts),
-            0xC0..=0xDF => audio.push(pts),
+            0xE0..=0xEF => found.video.push(pts),
+            0xC0..=0xDF => found.audio.push(pts),
             _ => {}
         }
     }
-    if video.is_empty() { audio } else { video }
+    found
+}
+
+/// An MP4's tracks and length, from its `moov` box alone, wherever in the
+/// file it is. `None` without one: not an MP4, or one cut short before its
+/// index was written.
+pub async fn mp4_streams(path: &Path) -> Option<Streams> {
+    // Hours of video index in a few MB; more is not an MP4 worth reading.
+    const MOOV_MAX: u64 = 256 << 20;
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let len = f.metadata().await.ok()?.len();
+    let mut at = 0;
+    while len - at >= 8 {
+        let mut head = [0; 16];
+        let n = (len - at).min(16) as usize;
+        f.seek(SeekFrom::Start(at)).await.ok()?;
+        f.read_exact(&mut head[..n]).await.ok()?;
+        let (size, header) = box_size(&head[..n], len - at)?;
+        if head[4..8] == *b"moov" {
+            let body = size - header;
+            if body > MOOV_MAX {
+                return None;
+            }
+            let mut moov = vec![0; body as usize];
+            f.seek(SeekFrom::Start(at + header)).await.ok()?;
+            f.read_exact(&mut moov).await.ok()?;
+            return Some(moov_streams(&moov));
+        }
+        at += size;
+    }
+    None
+}
+
+/// A box's size and header length from its first bytes, if it fits in the
+/// `room` left from where it starts.
+fn box_size(head: &[u8], room: u64) -> Option<(u64, u64)> {
+    let size = u64::from(u32::from_be_bytes(head.get(..4)?.try_into().ok()?));
+    let (size, header) = match size {
+        0 => (room, 8), // runs to the end
+        1 => (u64::from_be_bytes(head.get(8..16)?.try_into().ok()?), 16),
+        n => (n, 8),
+    };
+    (size >= header && size <= room).then_some((size, header))
+}
+
+/// The boxes inside a box's body, as (type, body).
+fn boxes(mut body: &[u8]) -> impl Iterator<Item = ([u8; 4], &[u8])> {
+    std::iter::from_fn(move || {
+        let (size, header) = box_size(body, body.len() as u64)?;
+        let kind = body.get(4..8)?.try_into().ok()?;
+        let (this, rest) = body.split_at(size as usize);
+        body = rest;
+        Some((kind, &this[header as usize..]))
+    })
+}
+
+fn moov_streams(moov: &[u8]) -> Streams {
+    let mut found = Streams {
+        secs: None,
+        video: false,
+        audio: false,
+    };
+    for (kind, body) in boxes(moov) {
+        match &kind {
+            b"mvhd" => found.secs = mvhd_secs(body),
+            b"trak" => {
+                let handler = boxes(body)
+                    .filter(|(k, _)| k == b"mdia")
+                    .flat_map(|(_, mdia)| boxes(mdia))
+                    .find(|(k, _)| k == b"hdlr")
+                    .and_then(|(_, hdlr)| hdlr.get(8..12));
+                match handler {
+                    Some(b"vide") => found.video = true,
+                    Some(b"soun") => found.audio = true,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The movie's length from its header; `None` for a fragmented MP4, whose
+/// header says 0 (or "unknown") and whose length is in the fragments.
+fn mvhd_secs(body: &[u8]) -> Option<f64> {
+    let be32 = |at: usize| Some(u32::from_be_bytes(body.get(at..at + 4)?.try_into().ok()?));
+    let (scale, duration) = match body.first()? {
+        0 => (
+            be32(12)?,
+            Some(be32(16)?).filter(|d| *d != u32::MAX).map(u64::from)?,
+        ),
+        1 => (
+            be32(20)?,
+            u64::from_be_bytes(body.get(24..32)?.try_into().ok()?),
+        ),
+        _ => return None,
+    };
+    (scale > 0 && duration > 0 && duration != u64::MAX).then(|| duration as f64 / f64::from(scale))
 }
 
 /// `path`, or `path (2)`, `path (3)`… — the first that does not exist yet.
@@ -558,6 +691,93 @@ mod tests {
         assert!(!looks_like_text(b""));
     }
 
+    #[tokio::test]
+    async fn sound_alone_is_told_from_picture_and_sound() {
+        let dir = scratch("tsstreams");
+        let path = dir.join("a.ts");
+        let mut ts = pes_packet(0xC0, 90_000);
+        ts.extend(pes_packet(0xC0, 90_000 * 11));
+        std::fs::write(&path, &ts).unwrap();
+        let s = ts_streams(&path).await.unwrap();
+        assert_eq!((s.video, s.audio, s.secs), (false, true, Some(10.0)));
+        ts.extend(pes_packet(0xE0, 90_000 * 3));
+        std::fs::write(&path, &ts).unwrap();
+        let s = ts_streams(&path).await.unwrap();
+        assert!(s.video && s.audio);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        b.extend(kind);
+        b.extend(body);
+        b
+    }
+
+    fn mvhd(scale: u32, duration: u32) -> Vec<u8> {
+        let mut body = vec![0; 12];
+        body.extend(scale.to_be_bytes());
+        body.extend(duration.to_be_bytes());
+        body.resize(100, 0);
+        mp4_box(b"mvhd", &body)
+    }
+
+    fn trak(handler: &[u8; 4]) -> Vec<u8> {
+        let mut hdlr = vec![0; 8];
+        hdlr.extend(handler);
+        hdlr.resize(25, 0);
+        let mdia = [mp4_box(b"mdhd", &[0; 24]), mp4_box(b"hdlr", &hdlr)].concat();
+        mp4_box(
+            b"trak",
+            &[mp4_box(b"tkhd", &[0; 84]), mp4_box(b"mdia", &mdia)].concat(),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_mp4s_picture_sound_and_length_are_read_from_its_index() {
+        let dir = scratch("mp4streams");
+        let path = dir.join("a.mp4");
+        let read = |bytes: Vec<u8>| {
+            std::fs::write(&path, bytes).unwrap();
+            mp4_streams(&path)
+        };
+        let ftyp = mp4_box(b"ftyp", b"isom\0\0\x02\0isomiso2avc1mp41");
+        let moov = mp4_box(
+            b"moov",
+            &[mvhd(1000, 289_030), trak(b"vide"), trak(b"soun")].concat(),
+        );
+        let mdat = mp4_box(b"mdat", &[0x5A; 4096]);
+        let both = Streams {
+            secs: Some(289.03),
+            video: true,
+            audio: true,
+        };
+        // At the front, as ffmpeg's +faststart puts it, or after the media.
+        assert_eq!(read([&ftyp[..], &moov, &mdat].concat()).await, Some(both));
+        assert_eq!(read([&ftyp[..], &mdat, &moov].concat()).await, Some(both));
+        // Media over 4 GB is sized in 64 bits.
+        let mut large = vec![0, 0, 0, 1];
+        large.extend(b"mdat");
+        large.extend(20u64.to_be_bytes());
+        large.extend([0; 4]);
+        assert_eq!(read([&ftyp[..], &large, &moov].concat()).await, Some(both));
+        // Picture alone.
+        let picture = mp4_box(b"moov", &[mvhd(90_000, 180_000), trak(b"vide")].concat());
+        let s = read([&ftyp[..], &picture].concat()).await.unwrap();
+        assert_eq!((s.video, s.audio, s.secs), (true, false, Some(2.0)));
+        // Fragmented: the header has no length.
+        let fragmented = mp4_box(b"moov", &[mvhd(1000, 0), trak(b"vide")].concat());
+        assert_eq!(
+            read([&ftyp[..], &fragmented].concat()).await.unwrap().secs,
+            None
+        );
+        // Cut short before its index, a box running past the end, TS.
+        assert_eq!(read([&ftyp[..], &mdat].concat()).await, None);
+        assert_eq!(read([&ftyp[..], &moov[..40]].concat()).await, None);
+        assert_eq!(read(pes_packet(0xE0, 0)).await, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn unique_path_counts_up_without_touching_existing_files() {
         let dir = scratch("unique");
@@ -633,6 +853,12 @@ mod tests {
                 .await
                 .unwrap();
             assert!(std::fs::metadata(&out).unwrap().len() > 1000);
+            let made = mp4_streams(&out).await.unwrap();
+            assert!(made.video && made.audio == audio.is_some(), "{made:?}");
+            assert!(
+                made.secs.is_some_and(|s| (1.5..2.5).contains(&s)),
+                "{made:?}"
+            );
         }
         std::fs::write(dir.join("evil.ts"), "ffconcat version 1.0\nfile v.ts\n").unwrap();
         let e = ff
