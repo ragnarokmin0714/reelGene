@@ -334,6 +334,7 @@ async fn ts_is_kept_with_a_notice_when_there_is_no_ffmpeg() {
 
 /// The start of an MP4 whose media runs to the end of the file: a picture
 /// track, two seconds long.
+#[cfg(unix)]
 fn mp4_head() -> Vec<u8> {
     let b = |kind: &[u8; 4], body: &[u8]| {
         let mut b = ((body.len() + 8) as u32).to_be_bytes().to_vec();
