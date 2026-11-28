@@ -24,7 +24,7 @@ use reelgene_app::app::{App, OpenError};
 use reelgene_app::handoff::{self, Reply, Request};
 use reelgene_app::settings::Settings;
 use reelgene_core::detect::{self, Link};
-use reelgene_core::engine::{Command, Discovery, Event, QualityOption, Target};
+use reelgene_core::engine::{Command, Discovery, EpisodeId, Event, QualityOption, Target};
 use reelgene_core::net;
 use reelgene_core::store::NewJob;
 use std::collections::VecDeque;
@@ -62,6 +62,8 @@ pub(crate) enum Msg {
         u64,
         Result<reelgene_core::resolver::pasted::Checked, reelgene_core::resolver::pasted::Failed>,
     ),
+    /// A finished file renamed: where it is now, or why not.
+    Renamed(EpisodeId, Result<PathBuf, String>),
     /// A path chosen in the system's file dialog.
     Picked(dialogs::Field, PathBuf),
     /// ffmpeg looked for again: its version, or why none is used (empty:
@@ -94,6 +96,7 @@ pub(crate) enum Dialog {
         label: String,
         delete_files: bool,
     },
+    Rename(Box<dialogs::Rename>),
 }
 
 pub(crate) struct Toast {
@@ -126,6 +129,10 @@ pub(crate) enum Action {
     Open(Dialog),
     Close,
     Add(NewJob),
+    /// Ask for a finished file's new name.
+    OpenRename(EpisodeId, PathBuf),
+    /// Rename it as the open window says.
+    Rename,
     /// Added from the pasted playlist's window, which remembers its name.
     AddPasted(Box<NewJob>, paste::Last),
     /// The settings, and whether ffmpeg and yt-dlp go along to a new tools
@@ -422,6 +429,25 @@ impl Gui {
                 }
             }
             Msg::PlaylistCopied => self.copied_playlist = true,
+            Msg::Renamed(ep, result) => {
+                let open = matches!(&mut self.dialog, Some(Dialog::Rename(f)) if f.ep == ep);
+                match result {
+                    Ok(path) => {
+                        if open {
+                            self.act(Action::Close);
+                        }
+                        let name = path.file_name().unwrap_or_default().to_string_lossy();
+                        self.toast((self.t.renamed)(&name), false);
+                    }
+                    Err(e) => match &mut self.dialog {
+                        Some(Dialog::Rename(form)) if open => {
+                            form.busy = false;
+                            form.error = Some(e);
+                        }
+                        _ => self.toast(e, true),
+                    },
+                }
+            }
             Msg::Checked(run, result) => {
                 if let Some(Dialog::Paste(form)) = &mut self.dialog
                     && form.run == run
@@ -504,6 +530,19 @@ impl Gui {
             Action::Add(job) => {
                 self.desktop.add(job);
                 self.act(Action::Close);
+            }
+            Action::OpenRename(ep, output) => {
+                let form = dialogs::Rename::new(ep, &output);
+                self.act(Action::Open(Dialog::Rename(Box::new(form))));
+            }
+            Action::Rename => {
+                if let Some(Dialog::Rename(form)) = &mut self.dialog
+                    && form.usable()
+                {
+                    form.busy = true;
+                    form.error = None;
+                    self.desktop.rename(form.ep, form.name.trim().to_owned());
+                }
             }
             Action::AddPasted(job, last) => {
                 self.last_paste = Some(last);

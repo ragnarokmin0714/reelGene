@@ -1744,3 +1744,78 @@ async fn a_pasted_playlist_starts_before_the_queue_and_beside_a_long_download() 
         "overtaken, and the limit kept"
     );
 }
+
+#[tokio::test]
+async fn a_finished_file_is_renamed_in_its_folder_never_over_another() {
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, 2, 0);
+    let mut h = harness("rename").await;
+    let url = cdn.url("/index.m3u8");
+    // One episode titled as its series: a single video.
+    let job = NewJob {
+        note: Default::default(),
+        title: "abc".into(),
+        source: url.clone(),
+        resolver: "direct".into(),
+        spec: json!({ "url": url.as_str(), "kind": "hls" }),
+        episodes: vec![EpisodeRef {
+            index: 1,
+            title: "abc".into(),
+            hint: json!({}),
+        }],
+        episode_count: 1,
+        out_dir: h.out(),
+        template: "{title}".into(),
+        quality: Quality::Best,
+    };
+    let id = h.engine.add(job).await.unwrap();
+    let ep = h.engine.snapshot().await.unwrap()[0].episodes[0].id;
+    let output = h.done(ep).await;
+    assert_eq!(output, h.out().join("abc.ts"));
+
+    // Not over another file; the extension stays; nothing typed is a path.
+    std::fs::write(h.out().join("Taken.ts"), "mine").unwrap();
+    let e = h.engine.rename(ep, "Taken").await.unwrap_err();
+    assert!(e.to_string().contains("Taken.ts already exists"), "{e}");
+    assert_eq!(std::fs::read(h.out().join("Taken.ts")).unwrap(), b"mine");
+    assert!(h.engine.rename(ep, "  ").await.is_err());
+    let name = reelgene_core::paths::sanitize_component("../My Show-03");
+    let renamed = h.engine.rename(ep, "../My Show-03").await.unwrap();
+    assert_eq!(
+        renamed,
+        h.out().join(format!("{name}.ts")),
+        "in its own folder"
+    );
+    assert!(!output.exists());
+    assert_eq!(std::fs::read(&renamed).unwrap(), expected(2, 0));
+    let event = h
+        .until("the rename", |e| matches!(e, Event::Renamed { .. }))
+        .await;
+    assert_eq!(
+        event,
+        Event::Renamed {
+            job: id,
+            episode: ep,
+            title: name.clone(),
+            job_title: Some(name.clone()),
+            output: renamed.clone(),
+        }
+    );
+    // Case alone is a rename of its own, not a clash with itself.
+    let upper = name.to_uppercase();
+    let cased = h.engine.rename(ep, &upper).await.unwrap();
+    assert_eq!(std::fs::read(&cased).unwrap(), expected(2, 0));
+
+    // Kept across a restart: the queue has the new path and title.
+    h.engine.shutdown().await;
+    let engine = Engine::start(config(&h.dir)).await.unwrap();
+    let jobs = engine.snapshot().await.unwrap();
+    assert_eq!(jobs[0].title, upper);
+    assert_eq!(jobs[0].episodes[0].title, upper);
+    assert_eq!(
+        jobs[0].episodes[0].status,
+        Status::Done {
+            output: cased.clone()
+        }
+    );
+}

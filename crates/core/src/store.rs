@@ -343,6 +343,33 @@ impl Store {
         .await
     }
 
+    /// A finished episode's file renamed: its path and title, and with
+    /// `job`, the job's title too (a single video, named as its file).
+    pub async fn rename_done(
+        &self,
+        ep: EpisodeId,
+        output: PathBuf,
+        title: String,
+        job: Option<JobId>,
+    ) -> Result<()> {
+        self.call(move |conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE episode SET output = ?2, title = ?3 WHERE id = ?1",
+                params![ep.0, output.to_string_lossy(), title],
+            )?;
+            if let Some(job) = job {
+                tx.execute(
+                    "UPDATE job SET title = ?2 WHERE id = ?1",
+                    params![job.0, title],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn set_plan(
         &self,
         ep: EpisodeId,

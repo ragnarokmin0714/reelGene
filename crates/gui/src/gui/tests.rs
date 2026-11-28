@@ -518,6 +518,64 @@ fn a_playlist_pasted_into_the_link_field_is_checked_and_downloaded() {
 }
 
 #[test]
+fn a_finished_file_is_renamed_from_its_row() {
+    let env = env("rename");
+    let mut h = window(&env, english());
+    let input = h.get_by_role(egui::accesskit::Role::TextInput);
+    input.focus();
+    settle(&mut h);
+    h.event(egui::Event::Paste(pasted_playlist()));
+    settle(&mut h);
+    until(&mut h, "the check to pass", |h| {
+        h.query_by_label_contains((EN.paste_passed)(false))
+            .is_some()
+    });
+    h.get_by_label(EN.paste_add).click();
+    settle(&mut h);
+    h.get_by_label(EN.start).click();
+    until(&mut h, "the download to finish", |h| {
+        h.query_by_label_contains(EN.done).is_some()
+    });
+    let downloads = env.dir.join("downloads");
+    assert!(downloads.join("abc.ts").exists());
+
+    let button = egui::accesskit::Role::Button;
+    h.get_by_role_and_label(button, EN.rename_title).click();
+    settle(&mut h);
+    assert_eq!(
+        field_value(&h, EN.rename_title),
+        "abc",
+        "without its extension"
+    );
+    // Another file's name is refused, and the window stays to try again.
+    std::fs::write(downloads.join("Taken.ts"), "mine").unwrap();
+    retype(&mut h, EN.rename_title, "Taken");
+    h.get_by_role_and_label(button, EN.rename).click();
+    until(&mut h, "the refusal", |h| {
+        h.query_by_label_contains("Taken.ts already exists")
+            .is_some()
+    });
+    assert_eq!(std::fs::read(downloads.join("Taken.ts")).unwrap(), b"mine");
+
+    retype(&mut h, EN.rename_title, "My Show-03");
+    h.key_press(egui::Key::Enter);
+    until(&mut h, "the rename", |h| {
+        h.query_by_label(&(EN.renamed)("My Show-03.ts")).is_some()
+    });
+    assert!(
+        h.query_by_label(EN.rename_help).is_none(),
+        "the window closed"
+    );
+    assert!(!downloads.join("abc.ts").exists());
+    assert_eq!(
+        std::fs::read(downloads.join("My Show-03.ts")).unwrap(),
+        [ts_piece(1), ts_piece(2)].concat()
+    );
+    // The row and its card say the new name.
+    assert!(h.query_all_by_label("My Show-03").count() >= 2);
+}
+
+#[test]
 fn a_copied_playlist_is_one_row_that_opens_its_window() {
     let env = env("pasted-copied");
     let mut h = window(&env, english());
@@ -1622,6 +1680,14 @@ mod screens {
             g.settings.ffmpeg = Some(PathBuf::from("/tools/FFmpeg-n8.1.3.zip"));
             let form = g.settings_form();
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+        });
+        shoot("rename", Dark, "zh-TW", |g| {
+            demo(g);
+            let form = super::super::dialogs::Rename::new(
+                EpisodeId(1),
+                std::path::Path::new("/downloads/霸道總裁的契約新娘-02.mp4"),
+            );
+            g.dialog = Some(super::super::Dialog::Rename(Box::new(form)));
         });
         shoot_sized("narrow", [560.0, 460.0], Dark, "zh-TW", demo);
         for (name, theme, language) in [("paste", Dark, "zh-TW"), ("paste-light", Light, "en")] {

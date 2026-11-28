@@ -579,6 +579,16 @@ impl Desktop {
 
     /// Try a pasted playlist off the window's thread, the way its download
     /// would start (`pasted::check`); the window hears how it went.
+    /// Rename a finished file; the answer comes back as `Msg::Renamed`.
+    pub fn rename(self: &Arc<Self>, ep: EpisodeId, name: String) {
+        let me = Arc::clone(self);
+        self.rt.spawn(async move {
+            let result = me.engine.rename(ep, &name).await.map_err(|e| e.to_string());
+            let _ = me.tx.send(Msg::Renamed(ep, result));
+            me.wake();
+        });
+    }
+
     pub fn check_pasted(self: &Arc<Self>, run: u64, text: String, headers: Vec<(String, String)>) {
         let me = Arc::clone(self);
         let quality = self.settings().quality();

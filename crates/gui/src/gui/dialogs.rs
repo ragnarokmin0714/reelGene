@@ -5,7 +5,7 @@ use super::{Action, Dialog, Gui};
 use eframe::egui::{self, RichText};
 use reelgene_app::app::ToolsDirProblem;
 use reelgene_app::settings::Settings;
-use reelgene_core::engine::{Command, Discovery, QualityOption};
+use reelgene_core::engine::{Command, Discovery, EpisodeId, QualityOption};
 use reelgene_core::hls::Quality;
 use reelgene_core::paths::{self, NameVars};
 use std::path::{Path, PathBuf};
@@ -282,6 +282,46 @@ pub(crate) struct SettingsForm {
     pub(crate) tab: Tab,
 }
 
+/// A finished file's new name: the part before its extension, which stays.
+pub(crate) struct Rename {
+    pub(crate) ep: EpisodeId,
+    pub(crate) name: String,
+    /// `.mp4`, or empty for a file without one.
+    ext: String,
+    old: String,
+    /// Why the last try was refused (the name taken, the file gone).
+    pub(crate) error: Option<String>,
+    /// Sent, waiting for the engine's answer.
+    pub(crate) busy: bool,
+}
+
+impl Rename {
+    pub(crate) fn new(ep: EpisodeId, output: &Path) -> Self {
+        let name = output
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let ext = output
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+        Self {
+            ep,
+            old: name.clone(),
+            name,
+            ext,
+            error: None,
+            busy: false,
+        }
+    }
+
+    pub(crate) fn usable(&self) -> bool {
+        let name = self.name.trim();
+        !self.busy && !name.is_empty() && name != self.old
+    }
+}
+
 /// The settings window's pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Tab {
@@ -460,6 +500,7 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
         Dialog::Pick(pick) => pick_ui(t, pick, ui, actions),
         Dialog::Settings(form) => settings_ui(t, form, &tools, ui, actions),
         Dialog::Paste(form) => super::paste::ui(t, form, &settings, &places, ext, ui, actions),
+        Dialog::Rename(form) => rename_ui(t, form, ui, actions),
         Dialog::Remove {
             target,
             label,
@@ -488,6 +529,57 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
     if response.should_close() {
         actions.push(Action::Close);
     }
+}
+
+fn rename_ui(
+    t: &super::text::Text,
+    form: &mut Rename,
+    ui: &mut egui::Ui,
+    actions: &mut Vec<Action>,
+) {
+    let p = super::theme::palette(ui);
+    ui.set_width(420.0);
+    ui.heading(t.rename_title);
+    ui.label(RichText::new(t.rename_help).color(p.weak).size(12.0));
+    ui.add_space(8.0);
+    let field = ui
+        .horizontal(|ui| {
+            let field = ui
+                .add(egui::TextEdit::singleline(&mut form.name).desired_width(330.0))
+                .on_hover_text(t.rename_title);
+            ui.label(RichText::new(&form.ext).color(p.weak));
+            field
+        })
+        .inner;
+    if !field.has_focus() && !field.lost_focus() && form.error.is_none() && !form.busy {
+        field.request_focus();
+    }
+    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if let Some(error) = &form.error {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            widgets::icon(ui, widgets::Icon::Warning, 16.0, p.danger);
+            ui.add(egui::Label::new(RichText::new(error).color(p.danger)).wrap());
+        });
+    }
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        let clicked = ui
+            .add_enabled_ui(form.usable(), |ui| {
+                widgets::button(ui, Kind::Primary, None, t.rename)
+            })
+            .inner
+            .clicked();
+        if clicked || (enter && form.usable()) {
+            actions.push(Action::Rename);
+        }
+        if widgets::button(ui, Kind::Secondary, None, t.cancel).clicked() {
+            actions.push(Action::Close);
+        }
+        if form.busy {
+            ui.add(egui::Spinner::new().size(14.0));
+        }
+    });
 }
 
 fn pick_ui(t: &super::text::Text, pick: &mut Pick, ui: &mut egui::Ui, actions: &mut Vec<Action>) {

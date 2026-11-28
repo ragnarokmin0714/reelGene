@@ -36,7 +36,8 @@ network or leaving it overnight, and pick up where they stopped.
   by byte. Signed links that expire are fetched again by themselves. If the
   video changed on the server in the meantime, the episode starts over
   instead of splicing two versions into a broken file.
-- **A queue you control**: pause, resume, retry, remove; how many episodes
+- **A queue you control**: pause, resume, retry, remove, rename what is
+  finished; how many episodes
   at once; how many connections per site (kept low by default, which also
   keeps accounts from looking like abuse). Rate limits from servers are
   respected, and a temporary failure retries by itself later.
@@ -94,7 +95,9 @@ Run `reelgene` with no arguments. Paste a link in the box at the top — Ctrl+V,
 the **Paste link** button (which reads it at once), or the box's right-click
 menu — or just copy one anywhere, and it is read and queued; a series opens
 the episode picker first. **Start** and **Stop** run or hold the whole queue; each series
-and episode has its own pause, resume, retry, remove and open-folder buttons.
+and episode has its own pause, resume, retry, remove and open-folder buttons,
+and a finished one can be renamed in place (the pencil): it stays in its
+folder, keeps its extension, and is never given another file's name.
 **Settings** covers the download folder, file names, quality, how much runs
 at once, ffmpeg, the clipboard, sounds, animations and language, and can
 export a problem report; it is split into pages (downloads, connections,

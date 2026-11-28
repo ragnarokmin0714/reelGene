@@ -291,6 +291,15 @@ pub enum Event {
         job: JobId,
         episode: EpisodeId,
     },
+    /// A finished episode's file was renamed (`Engine::rename`); a single
+    /// video's job took the name too.
+    Renamed {
+        job: JobId,
+        episode: EpisodeId,
+        title: String,
+        job_title: Option<String>,
+        output: PathBuf,
+    },
     Running(bool),
     /// Held by the download hours, or released.
     Held(bool),
@@ -576,6 +585,14 @@ impl Engine {
         self.ask(Msg::Snapshot).await
     }
 
+    /// Rename a finished episode's file in its folder, keeping its
+    /// extension: `name` is the part before it. Refused when another file
+    /// has that name. Returns the new path.
+    pub async fn rename(&self, ep: EpisodeId, name: &str) -> Result<PathBuf> {
+        let name = name.to_owned();
+        self.ask(|reply| Msg::Rename(ep, name, reply)).await?
+    }
+
     /// Stop all work and wait until every download has flushed what it has.
     /// Running episodes stay queued for next time.
     pub async fn shutdown(&self) {
@@ -594,6 +611,7 @@ enum Msg {
     Command(Command),
     Add(Box<NewJob>, oneshot::Sender<Result<JobId>>),
     Snapshot(oneshot::Sender<Vec<JobView>>),
+    Rename(EpisodeId, String, oneshot::Sender<Result<PathBuf>>),
     Shutdown(oneshot::Sender<()>),
     Finished(EpisodeId, Result<PathBuf>),
     Wake(EpisodeId),
@@ -684,6 +702,9 @@ impl Scheduler {
                 }
                 Msg::Snapshot(reply) => {
                     let _ = reply.send(self.views());
+                }
+                Msg::Rename(ep, name, reply) => {
+                    let _ = reply.send(self.rename(ep, &name).await);
                 }
                 Msg::Shutdown(reply) => {
                     self.stopping.push(reply);
@@ -810,6 +831,57 @@ impl Scheduler {
             }
             Command::SetConcurrency(n) => self.max = n.max(1),
         }
+    }
+
+    async fn rename(&mut self, id: EpisodeId, name: &str) -> Result<PathBuf> {
+        let slot = self
+            .slots
+            .get(&id)
+            .ok_or_else(|| Error::Invalid("that download is no longer in the queue".into()))?;
+        let (EpisodeState::Done, Some(output)) = (slot.rec.state, slot.rec.output.clone()) else {
+            return Err(Error::Invalid(
+                "only a finished download can be renamed".into(),
+            ));
+        };
+        if name.trim().is_empty() {
+            return Err(Error::Invalid("the new name is empty".into()));
+        }
+        let title = paths::sanitize_component(name.trim());
+        let mut file = std::ffi::OsString::from(&title);
+        if let Some(ext) = output.extension() {
+            file.push(".");
+            file.push(ext);
+        }
+        let target = output.with_file_name(file);
+        if target != output {
+            rename_to_free(&output, &target).await?;
+        }
+        let job = slot.rec.job;
+        // A single video's card shows the job's title; an episode of a
+        // series (even the only one picked) leaves the series' name alone.
+        let single = self
+            .jobs
+            .get(&job)
+            .is_some_and(|j| j.episode_count <= 1 && j.title == slot.rec.title);
+        self.sh
+            .store
+            .rename_done(id, target.clone(), title.clone(), single.then_some(job))
+            .await?;
+        if let Some(slot) = self.slots.get_mut(&id) {
+            slot.rec.output = Some(target.clone());
+            slot.rec.title.clone_from(&title);
+        }
+        if single && let Some(j) = self.jobs.get_mut(&job) {
+            j.title.clone_from(&title);
+        }
+        self.sh.emit(Event::Renamed {
+            job,
+            episode: id,
+            title: title.clone(),
+            job_title: single.then_some(title),
+            output: target.clone(),
+        });
+        Ok(target)
     }
 
     async fn add(&mut self, job: NewJob) -> Result<JobId> {
@@ -1123,6 +1195,37 @@ impl Scheduler {
     }
 }
 
+/// Rename `from` to `to` unless another file has that name. A change of
+/// case alone is let through: on a case-insensitive disk the name "taken"
+/// is the file's own, but a file listed under exactly that name is another.
+async fn rename_to_free(from: &Path, to: &Path) -> Result<()> {
+    let same_but_case = from.file_name().zip(to.file_name()).is_some_and(|(a, b)| {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    });
+    let listed = |dir: &Path, name: &std::ffi::OsStr| {
+        std::fs::read_dir(dir)
+            .map(|entries| entries.flatten().any(|e| e.file_name() == name))
+            .unwrap_or(false)
+    };
+    let taken = match (to.parent(), to.file_name()) {
+        (Some(dir), Some(name)) if same_but_case => listed(dir, name),
+        _ => tokio::fs::try_exists(to).await.unwrap_or(true),
+    };
+    if taken {
+        return Err(Error::Invalid(format!(
+            "{} already exists",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        )));
+    }
+    tokio::fs::rename(from, to).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound && !from.exists() {
+            Error::Invalid(format!("the file is no longer at {}", from.display()))
+        } else {
+            Error::io(to, e)
+        }
+    })
+}
+
 /// Cancel a running worker and decide what happens when it has stopped. A
 /// pending removal is never downgraded to a pause or a requeue.
 fn stop(slot: &mut Slot, next: Then) {
@@ -1164,6 +1267,33 @@ fn status_of(slot: &Slot) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_change_of_case_alone_never_replaces_another_file() {
+        let dir = std::env::temp_dir().join(format!("reelgene-rename-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (lower, upper) = (dir.join("abc.ts"), dir.join("ABC.ts"));
+        std::fs::write(&lower, "mine").unwrap();
+        // On a case-sensitive disk the other case can be another file.
+        if !upper.exists() {
+            std::fs::write(&upper, "other").unwrap();
+            let e = rename_to_free(&lower, &upper).await.unwrap_err();
+            assert!(e.to_string().contains("ABC.ts already exists"), "{e}");
+            assert_eq!(std::fs::read(&upper).unwrap(), b"other");
+            std::fs::remove_file(&upper).unwrap();
+        }
+        rename_to_free(&lower, &upper).await.unwrap();
+        assert_eq!(std::fs::read(&upper).unwrap(), b"mine");
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["ABC.ts"], "renamed, not copied");
+        let gone = rename_to_free(&dir.join("gone.ts"), &dir.join("new.ts")).await;
+        assert!(gone.unwrap_err().to_string().contains("no longer at"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_quality_chosen_is_the_one_the_download_takes() {

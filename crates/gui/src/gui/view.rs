@@ -23,7 +23,8 @@ const ENTER: f64 = 0.35;
 /// The status column's width when there is room; it shrinks before the title
 /// does in a narrow window.
 const STATUS_W: f32 = 270.0;
-const ACTIONS_W: f32 = 70.0;
+/// Three icon buttons: a finished row's rename, folder and remove.
+const ACTIONS_W: f32 = 102.0;
 const ROW_H: f32 = 32.0;
 
 pub(super) fn draw(g: &mut Gui, ui: &mut egui::Ui) {
@@ -468,6 +469,9 @@ fn episode_row(
                 Status::Done { output } => {
                     if widgets::icon_button(ui, Icon::Folder, t.open_folder, None).clicked() {
                         actions.push(Action::Reveal(output.clone()));
+                    }
+                    if widgets::icon_button(ui, Icon::Rename, t.rename_title, None).clicked() {
+                        actions.push(Action::OpenRename(ep.id, output.clone()));
                     }
                 }
                 Status::Paused => {

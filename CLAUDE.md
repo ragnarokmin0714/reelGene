@@ -348,7 +348,13 @@ episode picked from many. The template is chosen when the job is made
 (`Settings::template_for`) and stored with it, like the series one. Naming a
 single video (`retitle`: `--title`, the extension's page title, the picker)
 renames its episode too, or the file would keep the name guessed from its
-link.
+link. A finished file is renamed through the engine (`Engine::rename`, the
+row's pencil; Roger, 2026-11-28), which owns the queue's record of it: same
+folder, same extension, the name sanitised, never over another file
+(`rename_to_free`: a change of case alone passes unless a file of exactly
+that name is listed, which only a case-sensitive disk can hold); the
+episode's title follows, and a single video's job title too, by the same
+rule as `is_single`; `Event::Renamed` tells the window.
 
 **ffmpeg** is not bundled (size, security updates, GPL obligations) and is
 optional, but separate sound is only joined with it, and some sites never

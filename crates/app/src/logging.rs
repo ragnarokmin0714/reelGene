@@ -194,6 +194,18 @@ fn record(event: &Event) {
         Event::Removed { job, episode } => {
             log::info!(target: QUEUE, "job {} episode {}: removed", job.0, episode.0)
         }
+        Event::Renamed {
+            job,
+            episode,
+            output,
+            ..
+        } => log::info!(
+            target: QUEUE,
+            "job {} episode {}: renamed to {}",
+            job.0,
+            episode.0,
+            output.display()
+        ),
         Event::Running(on) => {
             log::info!(target: QUEUE, "queue {}", if *on { "started" } else { "stopped" })
         }

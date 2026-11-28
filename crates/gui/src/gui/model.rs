@@ -145,6 +145,22 @@ impl Model {
                 }
                 self.jobs.retain(|j| !j.episodes.is_empty());
             }
+            Event::Renamed {
+                job,
+                episode,
+                title,
+                job_title,
+                output,
+            } => {
+                if let (Some(title), Some(j)) =
+                    (job_title, self.jobs.iter_mut().find(|j| j.id == job))
+                {
+                    j.title = title;
+                }
+                let ep = self.episode_mut(episode)?;
+                ep.title = title;
+                ep.status = Status::Done { output };
+            }
             Event::Running(r) => self.running = r,
             Event::Held(h) => self.held = h,
             Event::Idle { done, failed } => return Some(Effect::BatchDone { done, failed }),

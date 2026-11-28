@@ -29,6 +29,7 @@ pub enum Icon {
     Sun,
     Moon,
     Paste,
+    Rename,
 }
 
 /// Draw `icon` filling `rect` (square is best).
@@ -142,6 +143,18 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             );
             line(&[p(0.36, 0.50), p(0.64, 0.50)]);
             line(&[p(0.36, 0.66), p(0.58, 0.66)]);
+        }
+        Icon::Rename => {
+            // A pencil writing a line: its body, its tip, the line.
+            line(&[
+                p(0.28, 0.62),
+                p(0.64, 0.26),
+                p(0.76, 0.38),
+                p(0.40, 0.74),
+                p(0.28, 0.62),
+            ]);
+            line(&[p(0.28, 0.62), p(0.22, 0.80), p(0.40, 0.74)]);
+            line(&[p(0.56, 0.84), p(0.82, 0.84)]);
         }
         Icon::Plus => {
             line(&[p(0.5, 0.20), p(0.5, 0.80)]);
