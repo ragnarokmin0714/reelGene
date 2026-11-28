@@ -955,6 +955,43 @@ fn an_archive_is_never_taken_as_the_ffmpeg_program() {
     assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled());
 }
 
+/// An archive an older version saved as ffmpeg greys Save on every page:
+/// the page being edited says so and leads to where it is.
+#[test]
+fn a_greyed_save_says_which_page_holds_the_reason() {
+    let env = env("save-blocked");
+    let archive = env.dir.join("FFmpeg-n8.1.3.zip");
+    let mut h = window(
+        &env,
+        Settings {
+            ffmpeg: Some(archive),
+            ..english()
+        },
+    );
+    h.get_by_label(EN.settings).click();
+    settle(&mut h);
+    // On the first page, nothing of ffmpeg in sight.
+    assert!(h.query_by_label(EN.ffmpeg_is_archive).is_none());
+    let blocked = (EN.save_blocked)(EN.section_tools);
+    let _ = h.get_by_label(&blocked);
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled());
+
+    h.get_by_label(EN.go_there).click();
+    settle(&mut h);
+    let _ = h.get_by_label(EN.ffmpeg_is_archive);
+    assert!(h.query_by_label(EN.go_there).is_none(), "already there");
+    let field = h.get_by_role_and_label(egui::accesskit::Role::TextInput, EN.ffmpeg);
+    field.scroll_to_me();
+    field.focus();
+    h.run_steps(2);
+    h.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    h.key_press(egui::Key::Backspace);
+    settle(&mut h);
+    assert_eq!(field_value(&h, EN.ffmpeg), "");
+    assert!(h.query_by_label(&blocked).is_none());
+    assert!(!egui_kittest::kittest::NodeT::accesskit_node(&h.get_by_label(EN.save)).is_disabled());
+}
+
 #[test]
 fn a_yt_dlp_mirror_is_checked_as_typed_and_used_once_saved() {
     let env = env("yt-source");
@@ -1577,6 +1614,12 @@ mod screens {
             g.toast("已加入：霸道總裁的契約新娘".into(), false);
         });
         shoot_sized("settings", [900.0, 820.0], Dark, "zh-TW", |g| {
+            let form = g.settings_form();
+            g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
+        });
+        // Save greyed by an archive an older version saved as ffmpeg.
+        shoot_sized("settings-blocked", [900.0, 820.0], Dark, "zh-TW", |g| {
+            g.settings.ffmpeg = Some(PathBuf::from("/tools/FFmpeg-n8.1.3.zip"));
             let form = g.settings_form();
             g.dialog = Some(super::super::Dialog::Settings(Box::new(form)));
         });

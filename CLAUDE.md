@@ -448,7 +448,10 @@ persists only the window's size and place (`<data>/window.ron`, so portable
 installs keep it beside them); `persist_egui_memory` is off because stale UI
 state survives updates and hides layout changes. Folder and file pickers are
 `rfd` (the desktop portal on Linux, no GTK), run on a thread of their own
-because the dialog blocks its thread until it closes.
+because the dialog blocks its thread until it closes. Whatever greys
+Settings' Save is marked on its tab and named above the button with a way
+there (`SettingsForm::blocked_tabs`): a Save greyed on one page for a field
+on another looked like saving was broken (Roger, 2026-11-28).
 
 **Windows that come and go.** Wayland cannot hide a window, so there
 closing to the tray really closes it: `run` loops over `run_native`, and with

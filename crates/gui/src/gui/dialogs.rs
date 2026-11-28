@@ -389,6 +389,28 @@ impl SettingsForm {
         self.proxy.parse::<reelgene_core::http::Proxy>().is_ok()
     }
 
+    /// The pages with something typed that stops Save, in the tabs' order.
+    /// Each page says what at its field; the tabs and the footer say where,
+    /// or a greyed Save on one page has its reason on another.
+    fn blocked_tabs(&self, places: &reelgene_app::places::Places) -> Vec<Tab> {
+        let mut tabs = Vec::new();
+        if self.folder_problem().is_some() {
+            tabs.push(Tab::Downloads);
+        }
+        // Saving an unusable proxy would stop every download at the next start.
+        if !self.proxy_ok() {
+            tabs.push(Tab::Connections);
+        }
+        if !self.yt_source_ok()
+            || self.tools_problem(places).is_some()
+            || folder_problem(&self.tools).is_some()
+            || self.ffmpeg_is_archive()
+        {
+            tabs.push(Tab::Tools);
+        }
+        tabs
+    }
+
     fn finish(&self) -> Settings {
         let path = |s: &str| {
             let p = PathBuf::from(s.trim());
@@ -631,6 +653,26 @@ pub(crate) struct Tools {
     pub browser: super::desktop::BrowserState,
 }
 
+const TABS: [Tab; 6] = [
+    Tab::Downloads,
+    Tab::Connections,
+    Tab::Look,
+    Tab::Behaviour,
+    Tab::Tools,
+    Tab::Browser,
+];
+
+fn tab_label(t: &super::text::Text, tab: Tab) -> &'static str {
+    match tab {
+        Tab::Downloads => t.section_downloads,
+        Tab::Connections => t.section_connections,
+        Tab::Look => t.section_look,
+        Tab::Behaviour => t.section_behaviour,
+        Tab::Tools => t.section_tools,
+        Tab::Browser => t.section_browser,
+    }
+}
+
 fn settings_ui(
     t: &super::text::Text,
     form: &mut SettingsForm,
@@ -652,16 +694,16 @@ fn settings_ui(
     });
     ui.add_space(8.0);
     // Pages rather than one long list: room for more settings later.
+    let blocked = form.blocked_tabs(&tools.places);
     ui.horizontal(|ui| {
-        for (tab, label) in [
-            (Tab::Downloads, t.section_downloads),
-            (Tab::Connections, t.section_connections),
-            (Tab::Look, t.section_look),
-            (Tab::Behaviour, t.section_behaviour),
-            (Tab::Tools, t.section_tools),
-            (Tab::Browser, t.section_browser),
-        ] {
-            ui.selectable_value(&mut form.tab, tab, label);
+        for tab in TABS {
+            let label = tab_label(t, tab);
+            if blocked.contains(&tab) {
+                ui.selectable_value(&mut form.tab, tab, RichText::new(label).color(p.danger));
+                widgets::icon(ui, widgets::Icon::Warning, 14.0, p.danger);
+            } else {
+                ui.selectable_value(&mut form.tab, tab, label);
+            }
         }
     });
     ui.separator();
@@ -879,14 +921,19 @@ fn settings_ui(
             }
         });
     ui.add_space(18.0);
+    let blocked = form.blocked_tabs(&tools.places);
+    if let Some(&tab) = blocked.first() {
+        ui.horizontal(|ui| {
+            widgets::icon(ui, widgets::Icon::Warning, 16.0, p.danger);
+            ui.label(RichText::new((t.save_blocked)(tab_label(t, tab))).color(p.danger));
+            if form.tab != tab && ui.link(t.go_there).clicked() {
+                form.tab = tab;
+            }
+        });
+        ui.add_space(6.0);
+    }
     ui.horizontal(|ui| {
-        // Saving an unusable proxy would stop every download at the next start.
-        let ok = form.proxy_ok()
-            && form.yt_source_ok()
-            && form.tools_problem(&tools.places).is_none()
-            && form.folder_problem().is_none()
-            && folder_problem(&form.tools).is_none()
-            && !form.ffmpeg_is_archive();
+        let ok = blocked.is_empty();
         if ui
             .add_enabled_ui(ok, |ui| widgets::button(ui, Kind::Primary, None, t.save))
             .inner
