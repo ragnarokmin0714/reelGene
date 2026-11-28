@@ -126,6 +126,8 @@ pub(crate) enum Action {
     Open(Dialog),
     Close,
     Add(NewJob),
+    /// Added from the pasted playlist's window, which remembers its name.
+    AddPasted(Box<NewJob>, paste::Last),
     /// The settings, and whether ffmpeg and yt-dlp go along to a new tools
     /// folder.
     SaveSettings(Box<Settings>, bool),
@@ -173,6 +175,8 @@ pub struct Gui {
     pub(crate) grabbed: Vec<Grabbed>,
     /// The clipboard took a playlist's text, said among the detected links.
     pub(crate) copied_playlist: bool,
+    /// The name of the video last added from a pasted playlist.
+    pub(crate) last_paste: Option<paste::Last>,
     pub(crate) dialog: Option<Dialog>,
     /// Multi-episode discoveries waiting for the picker to be free.
     waiting: VecDeque<desktop::Waiting>,
@@ -215,6 +219,7 @@ impl Gui {
             input: String::new(),
             grabbed: stash.grabbed,
             copied_playlist: stash.playlist,
+            last_paste: None,
             dialog: None,
             waiting: stash.waiting,
             toasts: Vec::new(),
@@ -408,7 +413,10 @@ impl Gui {
             Msg::Picked(dialogs::Field::Playlist, path) => {
                 if let Some(Dialog::Paste(form)) = &mut self.dialog {
                     match read_playlist_file(&path) {
-                        Ok(text) => form.set_text(self.t, text),
+                        Ok(text) => {
+                            form.set_text(self.t, text);
+                            self.check_when_ready();
+                        }
                         Err(e) => self.toast(format!("{}: {e}", path.display()), true),
                     }
                 }
@@ -497,6 +505,10 @@ impl Gui {
                 self.desktop.add(job);
                 self.act(Action::Close);
             }
+            Action::AddPasted(job, last) => {
+                self.last_paste = Some(last);
+                self.act(Action::Add(*job));
+            }
             Action::SaveSettings(new, carry) => {
                 self.save_settings(*new, carry);
                 self.act(Action::Close);
@@ -534,11 +546,15 @@ impl Gui {
             Action::ClearInput => self.input.clear(),
             Action::OpenPasted(text) => {
                 let text = text.or_else(|| self.clipboard_playlist());
-                let form = paste::PasteForm::new(self.t, text);
+                let form = paste::PasteForm::new(self.t, text, self.last_paste.as_ref());
                 self.act(Action::Open(Dialog::Paste(Box::new(form))));
+                self.check_when_ready();
             }
             Action::PasteInto => match (self.clipboard_playlist(), &mut self.dialog) {
-                (Some(text), Some(Dialog::Paste(form))) => form.set_text(self.t, text),
+                (Some(text), Some(Dialog::Paste(form))) => {
+                    form.set_text(self.t, text);
+                    self.check_when_ready();
+                }
                 (None, _) => self.toast(self.t.paste_not_playlist.to_owned(), true),
                 _ => {}
             },
@@ -560,6 +576,16 @@ impl Gui {
                 }
             }
             Action::DismissCopied => self.copied_playlist = false,
+        }
+    }
+
+    /// A pasted playlist is checked as soon as it is read, unasked: its
+    /// links expire, and the check is what says whether it can be added.
+    fn check_when_ready(&mut self) {
+        if let Some(Dialog::Paste(form)) = &self.dialog
+            && form.ready_to_check()
+        {
+            self.act(Action::CheckPasted);
         }
     }
 

@@ -262,11 +262,17 @@ one fails after the usual re-resolves and the user pastes a fresh copy.
 the quality the settings get, its key, the first piece fetched, decrypted
 and checked by `mux::looks_like_media` (TS sync bytes at 0/188/376, ISO BMFF
 box types, ID3, two ADTS frames in a row) — and names the stage that failed.
-The clipboard watcher reports a copied playlist as `Copied::Playlist`, one
-row, never its text or its pieces; Ctrl+V of one into the link field is
-taken from the input events before the one-line field flattens it. Only
-links the user's browser received are used, with no cookies: the same line
-as the extension.
+The window checks unasked as soon as a text is read (`Gui::check_when_ready`),
+and names the file `Title-03` from a title and an optional episode, the next
+window starting with the same title and the episode after (`paste::Last`,
+kept for the session). `Resolver::links_expire` (only `pasted`) makes the
+scheduler start such jobs before the rest of the queue and, when every place
+is taken, in one place over `max`: a signature can lapse while a long
+download holds the only place. The clipboard watcher reports a copied
+playlist as `Copied::Playlist`, one row, never its text or its pieces;
+Ctrl+V of one into the link field is taken from the input events before the
+one-line field flattens it. Only links the user's browser received are used,
+with no cookies: the same line as the extension.
 
 **HTTP policy** (`http.rs`): reqwest's own retry only covers protocol NACKs,
 so reelgene retries transient failures itself (network, 408/425/429/5xx) with

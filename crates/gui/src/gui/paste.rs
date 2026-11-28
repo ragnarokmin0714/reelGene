@@ -20,14 +20,25 @@ pub(crate) enum Check {
     Failed(Failed),
 }
 
+/// What the last video added from this window was called: the next one is
+/// most often the same series' next episode.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Last {
+    pub(crate) title: String,
+    pub(crate) episode: String,
+}
+
 pub(crate) struct PasteForm {
     /// Never shown whole: a long video's playlist runs to hundreds of KB.
     text: String,
     /// What reading it found, or why it cannot be used.
     read: Result<String, String>,
+    /// The series' or the video's name; left empty, the folder's.
     pub(crate) title: String,
-    /// The name it came with, replaced by the next text's unless edited.
+    /// The playlist's folder name, the name when none is typed.
     auto_title: String,
+    /// Optional: `3` names the file `Title-03`.
+    pub(crate) episode: String,
     pub(crate) referer: String,
     pub(crate) check: Check,
     /// Bumped with every new text and every check, so that a late answer
@@ -36,12 +47,15 @@ pub(crate) struct PasteForm {
 }
 
 impl PasteForm {
-    pub(crate) fn new(t: &Text, text: Option<String>) -> Self {
+    /// `last`: the video added before, whose title is kept and whose
+    /// episode is counted on by one.
+    pub(crate) fn new(t: &Text, text: Option<String>, last: Option<&Last>) -> Self {
         let mut form = Self {
             text: String::new(),
             read: Err(t.paste_none.to_owned()),
-            title: String::new(),
+            title: last.map(|l| l.title.clone()).unwrap_or_default(),
             auto_title: String::new(),
+            episode: last.map(|l| next_episode(&l.episode)).unwrap_or_default(),
             referer: String::new(),
             check: Check::Idle,
             run: 0,
@@ -57,10 +71,7 @@ impl PasteForm {
         self.check = Check::Idle;
         self.read = match pasted::read(&text) {
             Ok(read) => {
-                if self.title.trim().is_empty() || self.title == self.auto_title {
-                    self.title.clone_from(&read.title);
-                }
-                self.auto_title = read.title.clone();
+                self.auto_title = read.title;
                 Ok(summary(t, &read.playlist))
             }
             Err(_) if !pasted::looks_like_playlist(&text) => Err(t.paste_not_playlist.to_owned()),
@@ -93,18 +104,71 @@ impl PasteForm {
         self.read.is_ok() && self.headers().is_some()
     }
 
+    /// Whether to check it now, unasked: read, and not checked yet.
+    pub(crate) fn ready_to_check(&self) -> bool {
+        self.usable() && matches!(self.check, Check::Idle)
+    }
+
+    /// `Title-03`, `Title`, or the folder's name.
+    pub(crate) fn name(&self) -> String {
+        let title = match self.title.trim() {
+            "" => self.auto_title.as_str(),
+            typed => typed,
+        };
+        match episode_label(&self.episode) {
+            Some(episode) => format!("{title}-{episode}"),
+            None => title.to_owned(),
+        }
+    }
+
+    /// What to start the next video's window with.
+    pub(crate) fn last(&self) -> Last {
+        Last {
+            title: self.title.trim().to_owned(),
+            episode: self.episode.trim().to_owned(),
+        }
+    }
+
     /// The job to add; `None` until there is something that can be.
     pub(crate) fn job(&self, settings: &Settings, places: &Places) -> Option<NewJob> {
-        let title = self.title.trim();
-        if !self.usable() || title.is_empty() {
+        if !self.usable() {
             return None;
         }
         let (source, mut d) = pasted::discovery(&self.text).ok()?;
         d.give_headers(&self.headers()?);
         let mut job = super::desktop::job(settings, places, source, d);
-        job.retitle(title.to_owned());
+        job.retitle(self.name());
         Some(job)
     }
+}
+
+/// An episode as it goes in a name: a number with at least two digits, so
+/// that files sort in order; anything else (`SP`) as typed.
+fn episode_label(typed: &str) -> Option<String> {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        return None;
+    }
+    Some(match number(typed) {
+        Some(n) => format!("{n:0width$}", width = typed.len().max(2)),
+        None => typed.to_owned(),
+    })
+}
+
+/// The episode after `typed`, as wide: `09` → `10`, `3` → `4`; nothing
+/// after one that is no number.
+fn next_episode(typed: &str) -> String {
+    number(typed).map_or_else(String::new, |n| {
+        format!("{:0width$}", n + 1, width = typed.len())
+    })
+}
+
+fn number(typed: &str) -> Option<u32> {
+    typed
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| typed.parse().ok())
+        .flatten()
 }
 
 /// "3 pieces · 0:15 · AES-128 encrypted", or a master's qualities.
@@ -139,11 +203,13 @@ fn line(ui: &mut egui::Ui, icon: Option<Icon>, color: egui::Color32, text: &str)
     });
 }
 
+/// `ext`: what the file will end in, `mp4` with ffmpeg and `ts` without.
 pub(super) fn ui(
     t: &Text,
     form: &mut PasteForm,
     settings: &Settings,
     places: &Places,
+    ext: &str,
     ui: &mut egui::Ui,
     actions: &mut Vec<Action>,
 ) {
@@ -179,8 +245,20 @@ pub(super) fn ui(
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label(t.paste_name);
-            ui.add(egui::TextEdit::singleline(&mut form.title).desired_width(330.0))
-                .on_hover_text(t.paste_name);
+            ui.add(
+                egui::TextEdit::singleline(&mut form.title)
+                    .hint_text(&form.auto_title)
+                    .desired_width(330.0),
+            )
+            .on_hover_text(t.paste_name);
+            ui.end_row();
+            ui.label(t.paste_episode);
+            ui.add(
+                egui::TextEdit::singleline(&mut form.episode)
+                    .hint_text(t.paste_optional)
+                    .desired_width(80.0),
+            )
+            .on_hover_text(t.paste_episode_help);
             ui.end_row();
             ui.label(t.paste_referer);
             ui.vertical(|ui| {
@@ -198,6 +276,15 @@ pub(super) fn ui(
             });
             ui.end_row();
         });
+    if form.read.is_ok() {
+        ui.add_space(4.0);
+        let name = format!("{}.{ext}", form.name());
+        ui.label(
+            RichText::new((t.paste_saves_as)(&name))
+                .color(p.weak)
+                .size(12.0),
+        );
+    }
     ui.add_space(8.0);
     let running = matches!(form.check, Check::Running);
     ui.add_enabled_ui(form.usable() && !running, |ui| {
@@ -234,7 +321,7 @@ pub(super) fn ui(
             if widgets::button(ui, Kind::Primary, Some(Icon::Plus), t.paste_add).clicked()
                 && let Some(job) = job
             {
-                actions.push(Action::Add(job));
+                actions.push(Action::AddPasted(Box::new(job), form.last()));
             }
         });
         if widgets::button(ui, Kind::Secondary, None, t.cancel).clicked() {
@@ -246,6 +333,20 @@ pub(super) fn ui(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_episode_pads_to_two_digits_and_counts_on() {
+        assert_eq!(episode_label(" 3 ").as_deref(), Some("03"));
+        assert_eq!(episode_label("12").as_deref(), Some("12"));
+        assert_eq!(episode_label("003").as_deref(), Some("003"));
+        assert_eq!(episode_label("SP").as_deref(), Some("SP"));
+        assert_eq!(episode_label("  "), None);
+        assert_eq!(next_episode("03"), "04");
+        assert_eq!(next_episode("09"), "10");
+        assert_eq!(next_episode("9"), "10");
+        assert_eq!(next_episode("SP"), "");
+        assert_eq!(next_episode(""), "");
+    }
 
     #[test]
     fn lengths_read_as_a_clock() {

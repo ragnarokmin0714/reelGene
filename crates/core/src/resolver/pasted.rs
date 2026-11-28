@@ -40,6 +40,12 @@ impl Resolver for Pasted {
         false
     }
 
+    /// Signed in the browser for minutes or hours, and only a fresh copy
+    /// from there renews them.
+    fn links_expire(&self) -> bool {
+        true
+    }
+
     async fn discover(&self, _url: &Url, _cx: Ctx<'_>) -> Result<Discovered> {
         Err(Error::resolver(
             ID,

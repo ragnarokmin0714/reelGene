@@ -44,6 +44,11 @@ pub struct Text {
     /// Qualities in a master playlist.
     pub paste_read_master: fn(usize) -> String,
     pub paste_name: &'static str,
+    pub paste_episode: &'static str,
+    pub paste_episode_help: &'static str,
+    pub paste_optional: &'static str,
+    /// The file name it will be saved under.
+    pub paste_saves_as: fn(&str) -> String,
     pub paste_referer: &'static str,
     pub paste_referer_help: &'static str,
     pub paste_referer_bad: &'static str,
@@ -300,7 +305,11 @@ pub static EN: Text = Text {
         format!("{pieces} pieces · {length}{lock}")
     },
     paste_read_master: |n| format!("A master playlist with {n} qualities"),
-    paste_name: "Name",
+    paste_name: "Title",
+    paste_episode: "Episode",
+    paste_episode_help: "Optional: 3 names the file Title-03. The next playlist pasted starts with the same title and the next episode.",
+    paste_optional: "optional",
+    paste_saves_as: |name| format!("Saved as {name}"),
     paste_referer: "Web page (optional)",
     paste_referer_help: "The page the video plays on: some servers check it (Referer)",
     paste_referer_bad: "Not a web address: it starts with http:// or https://.",
@@ -624,7 +633,11 @@ pub static ZH_TW: Text = Text {
         format!("{pieces} 段 · {length}{lock}")
     },
     paste_read_master: |n| format!("主播放清單，有 {n} 種畫質"),
-    paste_name: "名稱",
+    paste_name: "片名",
+    paste_episode: "集數",
+    paste_episode_help: "選填：填 3 會存成「片名-03」。下一份貼上的清單會沿用同一個片名，集數自動加一。",
+    paste_optional: "選填",
+    paste_saves_as: |name| format!("存成 {name}"),
     paste_referer: "網頁網址（選填）",
     paste_referer_help: "影片所在的網頁：有些伺服器會檢查（Referer）",
     paste_referer_bad: "不是網址：要以 http:// 或 https:// 開頭。",

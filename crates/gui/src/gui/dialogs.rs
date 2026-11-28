@@ -430,13 +430,14 @@ pub(super) fn show(g: &mut Gui, ctx: &egui::Context, actions: &mut Vec<Action>) 
         browser: g.desktop.browser_state(),
     };
     let (settings, places) = (g.settings.clone(), g.desktop.places.clone());
+    let ext = if g.ffmpeg().is_some() { "mp4" } else { "ts" };
     let Some(dialog) = &mut g.dialog else { return };
     let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(22));
     let modal = egui::Modal::new(egui::Id::unique("dialog")).frame(frame);
     let response = modal.show(ctx, |ui| match dialog {
         Dialog::Pick(pick) => pick_ui(t, pick, ui, actions),
         Dialog::Settings(form) => settings_ui(t, form, &tools, ui, actions),
-        Dialog::Paste(form) => super::paste::ui(t, form, &settings, &places, ui, actions),
+        Dialog::Paste(form) => super::paste::ui(t, form, &settings, &places, ext, ui, actions),
         Dialog::Remove {
             target,
             label,

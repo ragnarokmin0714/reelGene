@@ -134,6 +134,14 @@ pub trait Resolver: Send + Sync {
     fn playlist_text<'a>(&self, _spec: &'a Value) -> Option<&'a str> {
         None
     }
+
+    /// Whether its links carry signatures that soon expire and that it
+    /// cannot renew (a pasted playlist's). Its jobs start before the rest
+    /// of the queue, one over the limit if need be, rather than wait out a
+    /// long download and fail on links gone stale.
+    fn links_expire(&self) -> bool {
+        false
+    }
 }
 
 /// Every resolver compiled into this build.

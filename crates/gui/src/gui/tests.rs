@@ -474,13 +474,18 @@ fn a_playlist_pasted_into_the_link_field_is_checked_and_downloaded() {
         h.state_mut().gui().input.is_empty(),
         "not flattened into the link field"
     );
-    assert_eq!(field_value(&h, EN.paste_name), "abc");
+    // Untitled, it is named after its folder.
+    assert_eq!(field_value(&h, EN.paste_name), "");
+    let _ = h.get_by_label(&(EN.paste_saves_as)("abc.ts"));
 
-    h.get_by_label(EN.paste_check).click();
+    // Checked unasked: its links expire.
     until(&mut h, "the check to pass", |h| {
         h.query_by_label_contains((EN.paste_passed)(false))
             .is_some()
     });
+    retype(&mut h, EN.paste_name, "My Show");
+    retype(&mut h, EN.paste_episode_help, "3");
+    let _ = h.get_by_label(&(EN.paste_saves_as)("My Show-03.ts"));
     h.get_by_label(EN.paste_add).click();
     settle(&mut h);
     assert!(
@@ -491,11 +496,25 @@ fn a_playlist_pasted_into_the_link_field_is_checked_and_downloaded() {
     until(&mut h, "the download to finish", |h| {
         h.query_by_label_contains(EN.done).is_some()
     });
-    let file = env.dir.join("downloads").join("abc.ts");
+    let file = env.dir.join("downloads").join("My Show-03.ts");
     assert_eq!(
         std::fs::read(file).unwrap(),
         [ts_piece(1), ts_piece(2)].concat()
     );
+
+    // The next one is most often the next episode.
+    let input = h.get_by_role(egui::accesskit::Role::TextInput);
+    input.focus();
+    settle(&mut h);
+    h.event(egui::Event::Paste(pasted_playlist()));
+    settle(&mut h);
+    assert_eq!(field_value(&h, EN.paste_name), "My Show");
+    assert_eq!(
+        field_value(&h, EN.paste_episode_help),
+        "4",
+        "as wide as typed"
+    );
+    let _ = h.get_by_label(&(EN.paste_saves_as)("My Show-04.ts"));
 }
 
 #[test]
@@ -1575,7 +1594,12 @@ mod screens {
                     ));
                 }
                 text.push_str("#EXT-X-ENDLIST\n");
-                let mut form = super::super::paste::PasteForm::new(g.t, Some(text));
+                // The series' second episode, the first added just before.
+                let last = super::super::paste::Last {
+                    title: "霸道總裁的契約新娘".into(),
+                    episode: "1".into(),
+                };
+                let mut form = super::super::paste::PasteForm::new(g.t, Some(text), Some(&last));
                 form.check =
                     super::super::paste::Check::Passed(reelgene_core::resolver::pasted::Checked {
                         pieces: 288,

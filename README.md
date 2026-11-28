@@ -265,9 +265,14 @@ row, not as every piece in it. The window tells how many pieces and how long
 it is, and whether it is encrypted. **Check** does what the download would
 start with: it fetches the key and the first piece, decrypts the piece and
 looks at what came out, and says where it stopped if it did (the key refused,
-the piece refused, or a key or IV that does not fit). **Add to the queue**
-then downloads it as one video. A web page can be given for servers that
-check the Referer.
+the piece refused, or a key or IV that does not fit); it runs by itself as
+soon as a playlist is pasted. Give it a **Title** and, for a series, an
+**Episode**: `3` saves it as `Title-03`, and the next playlist pasted starts
+with the same title and the next episode (left empty, the title is the
+playlist's folder name). **Add to the queue** then downloads it as one
+video, ahead of anything waiting in the queue and, if every place is taken,
+in one more beside them, so that its links do not lapse while it waits. A
+web page can be given for servers that check the Referer.
 
 Its links must be absolute: a relative one meant "beside wherever the
 playlist came from", which a pasted copy no longer knows; for those, add the

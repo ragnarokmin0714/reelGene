@@ -62,6 +62,11 @@ supply (a browser to test in, real samples, a site to try).
   fall back to ffmpeg, then to `.ts`.
 - **`reelgene doctor` resolver checks**: one real request per resolver, to
   tell which ones a site change has broken.
+- **A fresh copy for a pasted playlist that lapsed mid-download**: paste it
+  into the failed job, keep the pieces already fetched (matched by path
+  without the query), fetch the rest. Waits for a download that actually
+  outlived its signatures: pasted jobs start first now, and a 5-minute
+  video took 14 s (2026-11-28).
 
 ## Later
 

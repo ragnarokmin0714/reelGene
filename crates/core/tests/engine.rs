@@ -1701,3 +1701,45 @@ async fn a_pasted_playlist_is_checked_then_downloaded_and_decrypted() {
     let whole: Vec<u8> = (0..3).flat_map(ts_piece).collect();
     assert_eq!(std::fs::read(&output).unwrap(), whole);
 }
+
+#[tokio::test]
+async fn a_pasted_playlist_starts_before_the_queue_and_beside_a_long_download() {
+    use reelgene_core::resolver::pasted;
+    let cdn = FakeCdn::start().await;
+    put_episode(&cdn, 2, 0);
+    cdn.serve("/later.m3u8", playlist("seg", 2, true));
+    // The first download hangs on its first segment for the whole test.
+    cdn.fail("/seg000.ts", [Fault::Stall(Duration::from_secs(60))]);
+    let text = put_pasted(&cdn, &[0x91; 16]);
+    let mut h = harness_with("expiring-first", |cfg| cfg.episodes = 1).await;
+    let first = cdn.url("/index.m3u8");
+    let running = h.add(&first, &first).await;
+    h.status("the first download to start", running, |s| {
+        matches!(s, Status::Downloading)
+    })
+    .await;
+    let later = cdn.url("/later.m3u8");
+    let queued = h.add(&later, &later).await;
+
+    let (source, d) = pasted::discovery(&text).unwrap();
+    let id = h.engine.add(d.into_job(source, h.out())).await.unwrap();
+    let jobs = h.engine.snapshot().await.unwrap();
+    let pasted = jobs.iter().find(|j| j.id == id).unwrap().episodes[0].id;
+    h.done(pasted).await;
+
+    let jobs = h.engine.snapshot().await.unwrap();
+    let status = |ep: EpisodeId| {
+        jobs.iter()
+            .flat_map(|j| &j.episodes)
+            .find(|e| e.id == ep)
+            .unwrap()
+            .status
+            .clone()
+    };
+    assert_eq!(status(running), Status::Downloading, "not stopped for it");
+    assert_eq!(
+        status(queued),
+        Status::Queued,
+        "overtaken, and the limit kept"
+    );
+}

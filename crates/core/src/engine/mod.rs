@@ -901,7 +901,11 @@ impl Scheduler {
         if !self.running || self.held || !self.stopping.is_empty() {
             return;
         }
-        let mut room = self.max.saturating_sub(self.active());
+        let active = self.active();
+        let mut room = self.max.saturating_sub(active);
+        // Links that expire may take one place over the limit: waiting for
+        // a long download to end can outlast their signatures.
+        let mut room_urgent = (self.max + 1).saturating_sub(active);
         let now = tokio::time::Instant::now();
         // Paced sites with an item running wait for it.
         let mut busy: HashSet<String> = match self.pace {
@@ -915,13 +919,19 @@ impl Scheduler {
         };
         let mut ready = Vec::new();
         let mut earliest: Option<tokio::time::Instant> = None;
-        for (id, s) in &self.slots {
-            if room == 0 {
+        // Links that expire first, then the order they were added in.
+        let mut waiting: Vec<(EpisodeId, bool)> = self
+            .slots
+            .iter()
+            .filter(|(_, s)| s.rec.state == EpisodeState::Queued && matches!(s.run, Run::Idle))
+            .map(|(id, s)| (*id, self.urgent(s)))
+            .collect();
+        waiting.sort_by_key(|&(id, urgent)| (!urgent, id));
+        for (id, urgent) in waiting {
+            if room_urgent == 0 || (!urgent && room == 0) {
                 break;
             }
-            if s.rec.state != EpisodeState::Queued || !matches!(s.run, Run::Idle) {
-                continue;
-            }
+            let s = &self.slots[&id];
             if self.pace.is_some()
                 && let Some(site) = site(&self.jobs, &s.rec)
             {
@@ -934,8 +944,9 @@ impl Scheduler {
                 }
                 busy.insert(site);
             }
-            ready.push(*id);
-            room -= 1;
+            ready.push(id);
+            room = room.saturating_sub(1);
+            room_urgent -= 1;
         }
         for id in ready {
             self.spawn(id);
@@ -948,6 +959,14 @@ impl Scheduler {
                 let _ = tx.send(Msg::Tick);
             });
         }
+    }
+
+    /// Whether the episode's links expire (`Resolver::links_expire`).
+    fn urgent(&self, s: &Slot) -> bool {
+        self.jobs
+            .get(&s.rec.job)
+            .and_then(|j| self.sh.registry.get(&j.resolver))
+            .is_some_and(|r| r.links_expire())
     }
 
     fn spawn(&mut self, id: EpisodeId) {
